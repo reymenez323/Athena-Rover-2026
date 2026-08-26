@@ -1,0 +1,10 @@
+# Recortes generados a partir de data/raw/ — se pueden regenerar, no se versionan.
+data/crops/
+# Modelos entrenados: pesan y se regeneran con scripts/train_classifier.py
+models/*.tflite
+models/*.h5
+models/*.keras
+__pycache__/
+*.py[cod]
+.venv/
+venv/

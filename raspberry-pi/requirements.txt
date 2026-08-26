@@ -1,0 +1,21 @@
+# Dependencias de la Raspberry Pi 4B.
+#
+# Instalación recomendada (Raspberry Pi OS de 64 bits):
+#
+#   sudo apt install python3-opencv python3-numpy python3-serial
+#   pip install --break-system-packages tflite-runtime
+#
+# Se prefiere apt para OpenCV y NumPy: los paquetes del sistema vienen
+# compilados con las optimizaciones NEON del procesador ARM. Instalarlos con
+# pip descarga ruedas genéricas que corren notablemente más lento.
+
+numpy>=1.24
+opencv-python>=4.8        # o python3-opencv desde apt (preferido en la Pi)
+pyserial>=3.5
+
+# Solo el intérprete de TFLite (~2 MB), no TensorFlow completo (~500 MB).
+# Si no está instalado, el sistema corre igual en modo degradado.
+tflite-runtime>=2.14 ; platform_machine == "aarch64"
+
+# Solo para ENTRENAR, y solo en la computadora, nunca en la Pi:
+#   pip install "tensorflow>=2.15"

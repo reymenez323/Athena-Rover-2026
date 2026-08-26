@@ -23,8 +23,8 @@ git config --global user.email "tu-correo@ejemplo.com"
 ## Clonar el repositorio
 
 ```bash
-git clone https://github.com/<usuario-u-org>/rover-2025.git
-cd rover-2025
+git clone https://github.com/reymenez323/Athena-Rover-2026.git
+cd Athena-Rover-2026
 ```
 
 ## Trabajando desde el mismo chat de Claude

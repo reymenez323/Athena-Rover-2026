@@ -19,11 +19,15 @@ Robot autónomo diseñado para competir en el reto **"Retos del Rover – H07"**
 
 ```
 Athena-Rover-2026/
-├── firmware-esp32/     # Firmware del ESP32-S3 (control de motores, servos, sensores)
-├── raspberry-pi/       # Código de alto nivel: visión (cámara), lógica de misión, comunicación serial
-├── hardware/           # Diseños CAD, esquemáticos electrónicos, diagramas de cableado
-├── docs/                # Documentación del proyecto, reglas del reto, notas de diseño
-└── README.md
+├── firmware-esp32/     Firmware del ESP32-S3: TODO en un solo main.cpp,
+│                       7 tareas FreeRTOS independientes, cero librerías externas
+├── raspberry-pi/       Visión (cámara USB + CNN INT8) y lógica de misión
+│   ├── src/athena/      paquete principal
+│   ├── data/            dataset para entrenar el modelo
+│   ├── scripts/         captura, entrenamiento, benchmark, bucle principal
+│   └── tests/           28 tests, ninguno necesita hardware
+├── hardware/           Conexiones, esquemáticos, CAD
+└── docs/               Reglas del reto y decisiones de diseño
 ```
 
 ## Reglas de la competencia (resumen)
@@ -34,6 +38,28 @@ Ver [`docs/reglas-reto-rover-2025.md`](docs/reglas-reto-rover-2025.md) para el d
 - Cada ronda: depositar llave (cubo ~20x20x20 mm) en la zona neutra amarilla → luego buscar y capturar la bandera enemiga (cilindro 5 cm diám. x 15 cm alto) → llevarla a la zona segura propia.
 - Pista real (medidas confirmadas por el equipo, según plano acotado): **170 cm x 83.5 cm**, zona neutra central de 27 x 29 cm.
 - Ronda: máx. 10 minutos; pierde quien saque 2 ruedas de la pista o busque la bandera antes de depositar la llave.
+
+## Documentos clave
+
+| Documento | Para qué |
+|-----------|----------|
+| [`hardware/conexiones-esp32-s3.md`](hardware/conexiones-esp32-s3.md) | **Cómo cablear todo.** Incluye los 5 errores que queman hardware. Léelo antes de conectar nada. |
+| [`firmware-esp32/README.md`](firmware-esp32/README.md) | Las 7 tareas de FreeRTOS y cómo se aíslan entre sí |
+| [`raspberry-pi/README.md`](raspberry-pi/README.md) | El pipeline de visión y por qué está diseñado así |
+| [`docs/reglas-reto-rover-2025.md`](docs/reglas-reto-rover-2025.md) | Reglas del reto y medidas reales de la pista |
+| [`docs/arquitectura-firmware-esp32.md`](docs/arquitectura-firmware-esp32.md) | El *porqué* de las decisiones de diseño del firmware |
+
+## Estado actual
+
+- [x] Firmware ESP32-S3 con 7 tareas FreeRTOS aisladas
+- [x] Drivers propios de PCA9685 y TCS34725 (sin librerías externas)
+- [x] Protocolo binario ESP32 ↔ RPi, verificado byte a byte por tests
+- [x] Pipeline de visión en 2 etapas optimizado para la Pi 4B
+- [x] Máquina de estados de la misión, con las reglas de descalificación probadas
+- [ ] Calibrar sensores de color y reflectancia sobre la pista real
+- [ ] Capturar el dataset y entrenar el modelo
+- [ ] Calibrar la focal de la cámara
+- [ ] Resolver el retorno a la zona propia (necesita odometría o referencia visual)
 
 ## Cómo colaborar
 
