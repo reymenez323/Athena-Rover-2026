@@ -1,0 +1,24 @@
+# PlatformIO / ESP32 (Arduino)
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+*.bin
+
+# Python (Raspberry Pi)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / builds
+*.log
+build/
+dist/
