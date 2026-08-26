@@ -1,4 +1,4 @@
-# Rover 2025 — Retos del Rover H07
+# Athena Rover 2026 — Retos del Rover H07
 
 Proyecto universitario del Instituto Tecnológico de Santo Domingo (INTEC) — Ingeniería Mecatrónica.
 
@@ -13,12 +13,12 @@ Robot autónomo diseñado para competir en el reto **"Retos del Rover – H07"**
 - **Sensores de color:** uno delantero y uno trasero, para detectar las líneas de zona en el piso (negro, amarillo, rojo, azul).
 - **Sensores de reflectancia:** 2 delanteros (izquierda y derecha).
 - **Cámara web USB** para detectar la bandera del oponente y la llave.
-- **Cómputo:** Raspberry Pi (visión e inteligencia de alto nivel) ↔ comunicación serial ↔ **ESP32-S3** (control de actuadores y lectura de sensores de bajo nivel).
+- **Cómputo:** Raspberry Pi (visión e inteligencia de alto nivel) ↔ comunicación serial ↔ **ESP32-S3** (control de actuadores y lectura de sensores de bajo nivel, firmware basado en **FreeRTOS** con una tarea independiente por subsistema — ver [`docs/arquitectura-firmware-esp32.md`](docs/arquitectura-firmware-esp32.md)).
 
 ## Estructura del repositorio
 
 ```
-rover-2025/
+Athena-Rover-2026/
 ├── firmware-esp32/     # Firmware del ESP32-S3 (control de motores, servos, sensores)
 ├── raspberry-pi/       # Código de alto nivel: visión (cámara), lógica de misión, comunicación serial
 ├── hardware/           # Diseños CAD, esquemáticos electrónicos, diagramas de cableado
