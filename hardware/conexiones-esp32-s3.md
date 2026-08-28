@@ -191,15 +191,11 @@ Cada módulo trae 2 LED blancos para iluminar la superficie que está leyendo
 arruina la clasificación de color). Se controlan con el pin marcado **LED**
 en la placa.
 
-> ⚠️ **Supuesto a verificar con tu módulo:** esto describe el diseño de
-> referencia (el de Adafruit, que casi todos los clones copian tal cual):
-> el pin **LED** es activo en alto y trae su propio pull-up hacia VIN, así
-> que si lo dejas sin conectar los LED quedan encendidos siempre. Conectarlo
-> a un GPIO da control por software (apagarlos cuando no hacen falta, o para
-> que el sensor delantero no le meta luz al trasero). Si tu módulo es de
-> otra marca, confirma el pinout en su datasheet antes de cablear — por las
-> dudas, mide con un multímetro en modo continuidad entre el pin LED y el
-> ánodo de los LED antes de energizar.
+> Confirmado: el equipo usa un clon del diseño de referencia de Adafruit, así
+> que el pin **LED** es activo en alto y trae su propio pull-up hacia VIN —
+> si lo dejas sin conectar, los LED quedan encendidos siempre. Conectarlo a
+> un GPIO da control por software (apagarlos cuando no hacen falta, o evitar
+> que el sensor delantero le meta luz al trasero).
 
 | Señal | GPIO ESP32-S3 |
 |-------|:-------------:|
