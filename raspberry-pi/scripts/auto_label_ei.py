@@ -98,23 +98,28 @@ def main() -> int:
         if img is None:
             continue
 
-        propuestas = generator.generate(img)
-        cajas_foto: list[dict] = []
+        carpeta_origen = ruta.parent.name.strip().upper()
+        se_esperaba_objeto = carpeta_origen not in CARPETAS_FONDO
 
-        for color_hint, etiqueta in (("rojo", ETIQUETA_ROJO), ("azul", ETIQUETA_AZUL)):
-            p = mejor_caja(propuestas, color_hint)
-            if p is not None:
-                cajas_foto.append({
-                    "label": etiqueta,
-                    "x": p.box.x, "y": p.box.y,
-                    "width": p.box.w, "height": p.box.h,
-                })
+        cajas_foto: list[dict] = []
+        if se_esperaba_objeto:
+            # Solo se corre el detector de color en carpetas donde SÍ puede
+            # haber bandera. En "fondo" confiamos en la carpeta, no en el
+            # color: un reflejo o la piel/pelo de alguien puede disparar el
+            # detector igual, y eso metería cajas falsas justo en la clase de
+            # negativos que más nos importa tener limpia.
+            propuestas = generator.generate(img)
+            for color_hint, etiqueta in (("rojo", ETIQUETA_ROJO), ("azul", ETIQUETA_AZUL)):
+                p = mejor_caja(propuestas, color_hint)
+                if p is not None:
+                    cajas_foto.append({
+                        "label": etiqueta,
+                        "x": p.box.x, "y": p.box.y,
+                        "width": p.box.w, "height": p.box.h,
+                    })
 
         nombre = ruta.name
         bounding_boxes[nombre] = cajas_foto
-
-        carpeta_origen = ruta.parent.name.strip().upper()
-        se_esperaba_objeto = carpeta_origen not in CARPETAS_FONDO
 
         if cajas_foto:
             for c in cajas_foto:
