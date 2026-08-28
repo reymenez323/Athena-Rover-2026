@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Calibración de sensores IR — Athena Rover 2026.
 
-Coordina con el firmware de ``firmware/`` (ESP32 WROVER-E de banco, NO el
-ESP32-S3 del rover): manda el comando ``'R'`` por serial, recibe
-``DATA,<analog>,<rc>,<generic>``, y guarda las muestras en un .csv dentro de
-``data_logs/``.
+Coordina con el firmware de ``firmware/`` (mismo ESP32-S3 del rover, pero
+subido aparte con solo el sensor bajo prueba conectado): manda el comando
+``'R'`` por serial, recibe ``DATA,<analog>,<rc>,<generic>``, y guarda las
+muestras en un .csv dentro de ``data_logs/``.
 
 Uso::
 

@@ -24,8 +24,9 @@ Athena-Rover-2026/
 ├── pruebas-platformio/ Proyectos PlatformIO pequeños e independientes, uno por
 │                       comportamiento, para validar con hardware real antes
 │                       de integrar al firmware principal
-├── calibracion-ir/     Banco de pruebas aparte (ESP32 WROVER-E, no el S3) para
-│                       caracterizar sensores IR antes de fijar umbrales
+├── calibracion-ir/     Mismo ESP32-S3, subido aparte con solo el sensor bajo
+│                       prueba conectado, para caracterizar sensores IR
+│                       antes de fijar umbrales
 ├── raspberry-pi/       Visión (cámara USB + CNN INT8) y lógica de misión
 │   ├── src/athena/      paquete principal
 │   ├── data/            dataset para entrenar el modelo

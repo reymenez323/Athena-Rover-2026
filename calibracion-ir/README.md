@@ -6,14 +6,26 @@ sobre distintas superficies, **antes** de fijar umbrales en el firmware o en
 las pruebas de PlatformIO. No es parte del firmware de vuelo ni de
 `pruebas-platformio/`.
 
-## ⚠️ Esta NO es la placa del rover
+## Mismo ESP32-S3, pero solo con el sensor conectado
 
-El sketch de `firmware/` corre en un **ESP32 WROVER-E (Freenove)** de banco,
-no en el ESP32-S3 del chasis. Los pines (`GPIO35`, `GPIO25`, `GPIO4`,
-`GPIO26`, `GPIO14`) solo existen en esa placa; no tienen relación con
-[`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md).
-Es intencional: permite mover el sensor a mano sobre distintas superficies
-sin desarmar el robot.
+El equipo usa un único microcontrolador en todo el proyecto — el sketch de
+`firmware/` corre sobre el mismo ESP32-S3, no una placa aparte. Lo que sí es
+distinto es el contexto: se sube solo, con el sensor bajo prueba conectado y
+**nada más** (sin motores, sin PCA9685, sin TCS34725, sin LED RGB), así que
+se puede mover a mano sobre distintas superficies sin desarmar el robot.
+
+| Señal | GPIO | De dónde sale |
+|---|:---:|---|
+| `QTR_A_SENSOR` (analógico) | **1** | Mismo pin que `QTR_LEFT_OUT` en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md) |
+| `QTR_A_CTRL` | **42** | Mismo pin que `QTR_EMITTER_CTRL` |
+| `QTR_RC_SENSOR` (modo RC) | **2** | Reutiliza el pin de `QTR_RIGHT_OUT` (aquí como digital, no ADC) — el diseño de vuelo no tiene modo RC |
+| `QTR_RC_CTRL` | **39** | GPIO libre en este contexto (en el diseño final lo usa el LED RGB) |
+| `GENERIC_IR` | **38** | GPIO libre en este contexto (ídem) |
+
+Los últimos dos no tienen equivalente en el diseño de vuelo (no hay sensor
+RC ni IR genérico ahí), así que se les asignaron los GPIO que, en el
+firmware final, ocupa el LED RGB — sin conflicto porque este sketch nunca
+corre con esos otros periféricos conectados a la vez.
 
 ## Dos partes
 
@@ -24,7 +36,7 @@ sin desarmar el robot.
 
 ## Cómo usar
 
-1. Conectar el ESP32 WROVER-E y subir el sketch:
+1. Conectar el ESP32-S3 (solo, con el sensor bajo prueba — sin el resto de periféricos) y subir el sketch:
    ```bash
    cd firmware
    pio run -t upload
