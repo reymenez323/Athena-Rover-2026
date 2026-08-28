@@ -5,6 +5,21 @@ Generado a partir de los pines reales declarados en `firmware-esp32/src/main.cpp
 
 Placa asumida: **ESP32-S3-DevKitC-1**.
 
+## Índice
+
+1. [Antes de conectar nada — cinco cosas que queman hardware](#️-antes-de-conectar-nada--cinco-cosas-que-queman-hardware)
+2. [Pines PROHIBIDOS del ESP32-S3](#pines-prohibidos-del-esp32-s3)
+3. [Código de colores de cableado](#código-de-colores-de-cableado)
+4. [Motores — 2× L298N](#motores--2-l298n)
+5. [Servos — PCA9685](#servos--pca9685-i2c-dirección-0x40)
+6. [Sensores de color — 2× TCS34725](#sensores-de-color--2-tcs34725)
+7. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
+8. [LED de equipo](#led-de-equipo-lo-exige-el-reglamento)
+9. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
+10. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
+11. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
+12. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
+
 ---
 
 ## ⚠️ Antes de conectar nada — cinco cosas que queman hardware
@@ -31,6 +46,43 @@ No usar ninguno de estos, aunque el DevKit los saque al conector:
 | 33–37 | PSRAM Octal (módulos N8R8 / N16R8). |
 | 0, 45, 46 | Pines de *strapping*: su nivel al arrancar decide el modo de boot. |
 | 3 | Strapping de JTAG. Se puede usar, pero mejor dejarlo libre. |
+
+---
+
+## Código de colores de cableado
+
+El robot tiene **tres dominios de voltaje distintos** (3.3 V lógica, 5–6 V
+servos, 7.4–12 V motores) conviviendo en el mismo chasis — justo la clase de
+mezcla que aparece en la tabla de riesgos de arriba. Usar el mismo color de
+cable para dos cosas distintas es la forma más fácil de meter una pata en la
+oscuridad debajo del chasis. Esta tabla es la convención del equipo; úsala en
+todos los cables nuevos, incluso los que van dentro de un mismo módulo.
+
+| Color | Uso | Nunca lo uses para |
+|-------|-----|---------------------|
+| **Negro** | GND — todas las masas, sin excepción | nada que no sea masa |
+| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N | la alimentación de servos ni la lógica de 3.3 V |
+| **Naranja** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 | alimentar el ESP32 o cualquier sensor |
+| **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725 | nada a 5 V (revisar la tabla de riesgos: quema el sensor) |
+| **Blanco** | Señales digitales de control — IN1–IN4 de los L298N, CTRL de los QTR | líneas I2C (usa verde/violeta) |
+| **Azul** | PWM / salidas analógicas — ENA/ENB de los L298N, OUT de los QTR | señales digitales on/off |
+| **Verde** | I2C — SDA, en ambos buses | SCL |
+| **Violeta** | I2C — SCL, en ambos buses | SDA |
+| **Gris** | Cable USB-A→USB-C hacia la Raspberry Pi (ya viene armado, no se recablea) | — |
+
+Dos reglas simples que evitan la mayoría de los sustos:
+
+- **El rojo es solo para la batería de motores.** Es la línea que más
+  corriente mueve, así que un cruce ahí es el que más daño hace. Si se te
+  acaba el rojo, usa otro color antes que reutilizarlo para algo de 3.3 V o
+  5 V.
+- **Corta el negro y el color de señal de cada conector al mismo largo.** Así
+  se identifican por tacto (o a simple vista) cuál masa va con cuál señal sin
+  tener que seguir el cable completo.
+
+Si tu carrete de cable no tiene los nueve colores, prioriza tener **negro,
+rojo y amarillo** bien diferenciados — son los tres que, si se cruzan, queman
+algo — y usa marquillas o cinta de color en las puntas para el resto.
 
 ---
 
@@ -144,6 +196,11 @@ así te ahorras el multiplexor TCA9548A.
 |-----|:-------------:|------|
 | Rojo | **40** | Con resistencia en serie de 220–330 Ω |
 | Azul | **41** | Con resistencia en serie de 220–330 Ω |
+
+> Única excepción al [código de colores](#código-de-colores-de-cableado): la
+> señal de control de cada LED va en un cable del mismo color que el LED
+> (rojo con rojo, azul con azul) — es más claro seguir el color del LED que
+> el de la convención de "blanco = señal digital" para solo estos dos cables.
 
 ---
 
