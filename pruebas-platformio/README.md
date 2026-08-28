@@ -14,6 +14,7 @@ se abre y se compila por separado, no como sub-proyecto de otro.
 | Carpeta | Qué valida |
 |---|---|
 | [`01-mantente-en-cuadro/`](01-mantente-en-cuadro/) | Los 2 QTR delanteros + los 2 L298N: detectar el borde de cinta negra y quedarse dentro del cuadrado. |
+| [`02-cuadro-color-rgb/`](02-cuadro-color-rgb/) | Lo anterior + los 2 TCS34725 clasificando color (umbrales, sin KNN) + un LED RGB mostrando el color del sensor delantero. |
 
 ## Ideas para próximas pruebas
 
@@ -22,7 +23,5 @@ un `README.md` con qué se está validando y por qué):
 
 - Un solo servo por el PCA9685, para calibrar los ángulos del gripper
   desacoplado del mecanismo.
-- Un solo TCS34725, para ajustar los umbrales de `ClassifyColor()` sobre la
-  pista real.
 - Los 4 motores con telemetría de reflectancia por serial, para afinar
   velocidades antes de tocar la máquina de estados de la misión.
