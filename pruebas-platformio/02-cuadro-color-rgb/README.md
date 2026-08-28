@@ -23,6 +23,14 @@ pio run -t upload -t monitor
 El monitor usa el puerto **UART** del DevKit (no el "USB" nativo), igual que
 en la prueba 01.
 
+## Motor invertido
+
+Igual que en la prueba 01: con el cableado físico actual, la rueda trasera
+izquierda (conectada a OUT1/OUT2 del L298N izquierdo, `kMotorFL` en el
+código) gira al revés respecto a las otras tres. Se resuelve en la
+definición de `kMotorFL` (`invert = true`), y `MotorApply()` lo aplica sin
+importar la velocidad.
+
 ## Cableado nuevo — LED RGB
 
 No estaba en `hardware/conexiones-esp32-s3.md` (esa doc solo documenta los 2

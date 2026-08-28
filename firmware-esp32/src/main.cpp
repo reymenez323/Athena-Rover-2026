@@ -617,12 +617,18 @@ namespace {
 
 struct Motor {
     uint8_t in1, in2, en, ledc_channel;
+    bool invert;   // true si este motor gira al revés con el cableado físico
 };
 
-constexpr Motor kMotorFL = {Pins::L298N_L_IN1, Pins::L298N_L_IN2, Pins::L298N_L_ENA, 0};
-constexpr Motor kMotorRL = {Pins::L298N_L_IN3, Pins::L298N_L_IN4, Pins::L298N_L_ENB, 1};
-constexpr Motor kMotorFR = {Pins::L298N_R_IN1, Pins::L298N_R_IN2, Pins::L298N_R_ENA, 2};
-constexpr Motor kMotorRR = {Pins::L298N_R_IN3, Pins::L298N_R_IN4, Pins::L298N_R_ENB, 3};
+// kMotorFL va invertido: con el cableado físico actual, la rueda que quedó
+// en IN1/IN2/ENA (OUT1/OUT2 del L298N izquierdo) es la trasera izquierda, y
+// gira al revés respecto a las otras tres. Es un hecho fijo del cableado —
+// no cambia con la velocidad — así que se resuelve una sola vez aquí y
+// MotorApply() ya lo respeta sin importar qué velocidad se le mande.
+constexpr Motor kMotorFL = {Pins::L298N_L_IN1, Pins::L298N_L_IN2, Pins::L298N_L_ENA, 0, true};
+constexpr Motor kMotorRL = {Pins::L298N_L_IN3, Pins::L298N_L_IN4, Pins::L298N_L_ENB, 1, false};
+constexpr Motor kMotorFR = {Pins::L298N_R_IN1, Pins::L298N_R_IN2, Pins::L298N_R_ENA, 2, false};
+constexpr Motor kMotorRR = {Pins::L298N_R_IN3, Pins::L298N_R_IN4, Pins::L298N_R_ENB, 3, false};
 
 // La API de LEDC cambió entre el core 2.x y el 3.x de Arduino-ESP32. Estas
 // dos funciones absorben la diferencia para que el firmware compile en ambos.
@@ -658,7 +664,8 @@ void MotorSetup(const Motor &m) {
 // speed: -100..100. El signo define el sentido, la magnitud el duty.
 void MotorApply(const Motor &m, int speed) {
     speed = constrain(speed, -100, 100);
-    const bool forward = (speed >= 0);
+    bool forward = (speed >= 0);
+    if (m.invert) forward = !forward;
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);

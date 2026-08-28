@@ -21,6 +21,16 @@ pio run -t upload -t monitor
 El monitor usa el puerto **UART** del DevKit (no el "USB" nativo), igual que
 el firmware principal — ver `platformio.ini`.
 
+## Motor invertido
+
+Con el cableado físico actual, la rueda trasera izquierda —la que quedó
+conectada a OUT1/OUT2 del L298N izquierdo, que en el código es `kMotorFL`—
+gira al revés respecto a las otras tres. Es un hecho fijo del cableado, no
+depende de la velocidad, así que se resuelve en la definición de `kMotorFL`
+(`invert = true`) y `MotorApply()` ya lo aplica sin importar qué velocidad
+se le mande. Si en algún momento recableas ese motor para que coincida con
+los otros tres, cambia ese `true` a `false`.
+
 ## Cómo se calibra
 
 Al encender, los dos LED de equipo parpadean juntos durante 3 segundos: es
