@@ -7,12 +7,12 @@ PlatformIO. No es parte del firmware de vuelo ni de `pruebas-platformio/`.
 
 ## Mismo ESP32-S3, pero solo con los sensores conectados
 
-El equipo usa un único microcontrolador en todo el proyecto — el sketch de
-`firmware/` corre sobre el mismo ESP32-S3, no una placa aparte. Lo que sí es
-distinto es el contexto: se sube solo, con los sensores bajo prueba
-conectados y **nada más** (sin motores, sin PCA9685, sin TCS34725, sin LED
-RGB), así que se pueden mover a mano sobre distintas superficies sin
-desarmar el robot.
+El equipo usa un único microcontrolador en todo el proyecto — los sketches
+de esta carpeta corren sobre el mismo ESP32-S3, no una placa aparte. Lo que
+sí es distinto es el contexto: se suben solos, con los sensores bajo prueba
+(y, para `detector-color/`, un LED RGB) conectados y **nada más** (sin
+motores, sin PCA9685, sin TCS34725), así que los sensores se pueden mover a
+mano sobre distintas superficies sin desarmar el robot.
 
 | Señal | GPIO | Nota |
 |---|:---:|---|
@@ -34,12 +34,13 @@ marca como prohibido en el ESP32-S3 — este sketch usa `GPIO35`, dentro de
 ese rango, pero el equipo confirmó que en su módulo específico funciona sin
 problema en la práctica, así que se dejó tal cual en vez de recablear.
 
-## Dos partes
+## Tres partes
 
 | Parte | Qué hace |
 |---|---|
 | `firmware/` | Sketch del ESP32 de banco. Solo responde: recibe el comando `'R'` por serial y contesta `DATA,<analog_a>,<analog_b>,<generic>`. Usa la librería `QTRSensors` de Pololu (única excepción del proyecto a "cero dependencias" — es una herramienta de banco, no el firmware de vuelo). |
 | `calibrar_ir.py` | Script de Python que orquesta la prueba: pide moverse a cada punto, manda `'R'` repetidamente, y guarda todo en un `.csv` dentro de `data_logs/`. |
+| `detector-color/` | Sketch aparte (no habla con `calibrar_ir.py`): lee en bucle, clasifica NEGRO/GRIS con un umbral fijo sacado de los `.csv` ya capturados, imprime por consola y enciende el LED RGB — ver su [README](detector-color/README.md). |
 
 ## Cómo usar
 
