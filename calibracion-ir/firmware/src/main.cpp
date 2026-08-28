@@ -5,16 +5,20 @@
 //
 //  No es el firmware del rover (ese vive en firmware-esp32/), pero SÍ corre
 //  sobre el mismo ESP32-S3 — el equipo usa un solo microcontrolador en todo
-//  el proyecto. Este sketch se sube aparte, con nada más conectado que el
-//  sensor bajo prueba (sin motores, sin PCA9685, sin TCS34725, sin LED RGB),
-//  para caracterizar un QTRX-HD-01A/RC de banco antes de fijar umbrales —
-//  ver ../README.md para el procedimiento completo.
+//  el proyecto. Este sketch se sube aparte, con nada más conectado que los
+//  sensores bajo prueba (sin motores, sin PCA9685, sin TCS34725, sin LED
+//  RGB), para caracterizarlos antes de fijar umbrales — ver ../README.md
+//  para el procedimiento completo.
 //
 //  Pines: idénticos al cableado físico ya armado por el equipo — no se
 //  tocan aquí. GPIO35 cae en el rango que hardware/conexiones-esp32-s3.md
 //  marca como prohibido en el S3 (PSRAM octal); el equipo confirmó que en
 //  su módulo específico funciona sin problema en la práctica, así que se
 //  deja tal cual en vez de recablear.
+//
+//  AMBOS sensores son QTRX-HD-01A analógicos (no hay ningún sensor en modo
+//  RC conectado ahora mismo). Los nombres "B"/"segundo sensor" en vez de
+//  "RC" son a propósito, para no dar a entender un modo que ya no se usa.
 //
 //  Protocolo: este sketch no hace nada por su cuenta. Se queda esperando un
 //  comando por serial y responde una lectura cada vez que lo recibe. La
@@ -24,7 +28,7 @@
 //  también.
 //
 //    Comando recibido : 'R'
-//    Respuesta enviada : DATA,<analog>,<rc>,<generic>
+//    Respuesta enviada : DATA,<analog_a>,<analog_b>,<generic>
 //
 // ===========================================================================
 
@@ -35,18 +39,17 @@
 // PIN ASSIGNMENT - ESP32-S3 (mismo chip que firmware-esp32/)
 // =====================================================
 //
-// Cableado real del banco de pruebas. QTR_A_CTRL y QTR_RC_CTRL son EL MISMO
-// pin a propósito: las dos luces IR (la del sensor analógico y la del RC)
-// comparten un solo cable de control físico, así que se encienden y apagan
-// juntas — no son dos señales independientes.
+// Cableado real del banco de pruebas. QTR_A_CTRL y QTR_B_CTRL son EL MISMO
+// pin a propósito: las dos luces IR (una por sensor) comparten un solo
+// cable de control físico, así que se encienden y apagan juntas.
 
-// QTRX-HD-01A - ANALOG
+// QTRX-HD-01A — sensor A
 const uint8_t QTR_A_SENSOR = 35;
 const uint8_t QTR_A_CTRL   = 25;
 
-// QTRX-HD-01RC - RC
-const uint8_t QTR_RC_SENSOR = 4;
-const uint8_t QTR_RC_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL, ver nota arriba
+// QTRX-HD-01A — sensor B (mismo modelo que A, pin de control compartido)
+const uint8_t QTR_B_SENSOR = 4;
+const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL, ver nota arriba
 
 // Generic IR
 const uint8_t GENERIC_IR = 14;
@@ -55,11 +58,11 @@ const uint8_t GENERIC_IR = 14;
 // QTR OBJECTS
 // =====================================================
 
-QTRSensors qtrAnalog;
-QTRSensors qtrRC;
+QTRSensors qtrA;
+QTRSensors qtrB;
 
-uint16_t analogValues[1];
-uint16_t rcValues[1];
+uint16_t valuesA[1];
+uint16_t valuesB[1];
 
 // =====================================================
 // FUNCTIONS
@@ -67,20 +70,20 @@ uint16_t rcValues[1];
 
 void readSensors()
 {
-    qtrAnalog.read(analogValues);
-    qtrRC.read(rcValues);
+    qtrA.read(valuesA);
+    qtrB.read(valuesB);
 
     int genericValue = digitalRead(GENERIC_IR);
 
     /*
        IMPORTANT:
        Output format must remain:
-       DATA,analog,rc,generic
+       DATA,analog_a,analog_b,generic
     */
     Serial.print("DATA,");
-    Serial.print(analogValues[0]);
+    Serial.print(valuesA[0]);
     Serial.print(",");
-    Serial.print(rcValues[0]);
+    Serial.print(valuesB[0]);
     Serial.print(",");
     Serial.println(genericValue);
 }
@@ -101,24 +104,24 @@ void setup()
     analogReadResolution(12);
 
     // -------------------------
-    // Analog QTRX-HD-01A
+    // QTRX-HD-01A — sensor A
     // -------------------------
-    qtrAnalog.setTypeAnalog();
-    const uint8_t analogPins[] = { QTR_A_SENSOR };
-    qtrAnalog.setSensorPins(analogPins, 1);
+    qtrA.setTypeAnalog();
+    const uint8_t pinsA[] = { QTR_A_SENSOR };
+    qtrA.setSensorPins(pinsA, 1);
     // Average multiple ADC readings
-    qtrAnalog.setSamplesPerSensor(8);
-    qtrAnalog.setEmitterPin(QTR_A_CTRL);
+    qtrA.setSamplesPerSensor(8);
+    qtrA.setEmitterPin(QTR_A_CTRL);
 
     // -------------------------
-    // RC QTRX-HD-01RC
+    // QTRX-HD-01A — sensor B
     // -------------------------
-    qtrRC.setTypeRC();
-    const uint8_t rcPins[] = { QTR_RC_SENSOR };
-    qtrRC.setSensorPins(rcPins, 1);
-    // Maximum discharge measurement
-    qtrRC.setTimeout(5000);
-    qtrRC.setEmitterPin(QTR_RC_CTRL);
+    qtrB.setTypeAnalog();
+    const uint8_t pinsB[] = { QTR_B_SENSOR };
+    qtrB.setSensorPins(pinsB, 1);
+    // Average multiple ADC readings
+    qtrB.setSamplesPerSensor(8);
+    qtrB.setEmitterPin(QTR_B_CTRL);
 
     // -------------------------
     // Generic IR
@@ -143,7 +146,7 @@ void loop()
        Command:
        R
        Response:
-       DATA,analog,rc,generic
+       DATA,analog_a,analog_b,generic
     */
     if (Serial.available())
     {

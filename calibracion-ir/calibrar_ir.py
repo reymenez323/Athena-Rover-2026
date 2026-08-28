@@ -2,9 +2,10 @@
 """Calibración de sensores IR — Athena Rover 2026.
 
 Coordina con el firmware de ``firmware/`` (mismo ESP32-S3 del rover, pero
-subido aparte con solo el sensor bajo prueba conectado): manda el comando
-``'R'`` por serial, recibe ``DATA,<analog>,<rc>,<generic>``, y guarda las
-muestras en un .csv dentro de ``data_logs/``.
+subido aparte con solo los sensores bajo prueba conectados — 2x QTRX-HD-01A
+analógicos más un módulo IR genérico): manda el comando ``'R'`` por serial,
+recibe ``DATA,<analog_a>,<analog_b>,<generic>``, y guarda las muestras en un
+.csv dentro de ``data_logs/``.
 
 Uso::
 
@@ -51,7 +52,7 @@ def esperar_ready(ser: "serial.Serial", timeout_s: float = 5.0) -> None:
 
 
 def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int, int]:
-    """Manda el comando 'R' y parsea la respuesta DATA,analog,rc,generic."""
+    """Manda el comando 'R' y parsea la respuesta DATA,analog_a,analog_b,generic."""
     ser.write(b"R")
     limite = time.monotonic() + timeout_s
     while time.monotonic() < limite:
@@ -60,8 +61,8 @@ def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int
             partes = linea.split(",")
             if len(partes) != 4:
                 continue  # línea corrupta o de sobra, se ignora y se sigue leyendo
-            _, analog, rc, generic = partes
-            return int(analog), int(rc), int(generic)
+            _, analog_a, analog_b, generic = partes
+            return int(analog_a), int(analog_b), int(generic)
     raise TimeoutError("El ESP32 no respondió a 'R' a tiempo.")
 
 
@@ -125,7 +126,7 @@ def main() -> int:
         f.write(f"# Sample interval: {args.intervalo_ms} ms\n")
         f.write(f"# Movement time between points: {args.pausa_s:.0f} s\n")
         writer = csv.writer(f)
-        writer.writerow(["surface", "point", "sample", "analog_QTRX", "RC_QTRX_us", "generic_IR"])
+        writer.writerow(["surface", "point", "sample", "analog_QTRX_A", "analog_QTRX_B", "generic_IR"])
         f.flush()
 
         capturadas = 0
@@ -134,11 +135,11 @@ def main() -> int:
             print(f"Punto {punto}/{args.puntos} — capturando {args.muestras} muestras...")
 
             for muestra in range(1, args.muestras + 1):
-                analog, rc, generic = leer_muestra(ser)
-                writer.writerow([superficie, punto, muestra, analog, rc, generic])
+                analog_a, analog_b, generic = leer_muestra(ser)
+                writer.writerow([superficie, punto, muestra, analog_a, analog_b, generic])
                 f.flush()  # una muestra por línea en disco, no se pierde nada si algo falla a medio camino
                 capturadas += 1
-                print(f"\r  [{capturadas}/{total_muestras}] analog={analog} rc={rc} generic={generic}   ", end="", flush=True)
+                print(f"\r  [{capturadas}/{total_muestras}] analog_a={analog_a} analog_b={analog_b} generic={generic}   ", end="", flush=True)
                 time.sleep(args.intervalo_ms / 1000.0)
             print()
 

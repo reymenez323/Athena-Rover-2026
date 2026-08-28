@@ -1,26 +1,31 @@
 # Calibración IR
 
-Herramienta de banco para caracterizar un sensor de reflectancia
-(QTRX-HD-01A analógico + QTRX-HD-01RC en modo RC, más un módulo IR genérico)
-sobre distintas superficies, **antes** de fijar umbrales en el firmware o en
-las pruebas de PlatformIO. No es parte del firmware de vuelo ni de
-`pruebas-platformio/`.
+Herramienta de banco para caracterizar 2 sensores de reflectancia (ambos
+QTRX-HD-01A analógicos, más un módulo IR genérico) sobre distintas
+superficies, **antes** de fijar umbrales en el firmware o en las pruebas de
+PlatformIO. No es parte del firmware de vuelo ni de `pruebas-platformio/`.
 
-## Mismo ESP32-S3, pero solo con el sensor conectado
+## Mismo ESP32-S3, pero solo con los sensores conectados
 
 El equipo usa un único microcontrolador en todo el proyecto — el sketch de
 `firmware/` corre sobre el mismo ESP32-S3, no una placa aparte. Lo que sí es
-distinto es el contexto: se sube solo, con el sensor bajo prueba conectado y
-**nada más** (sin motores, sin PCA9685, sin TCS34725, sin LED RGB), así que
-se puede mover a mano sobre distintas superficies sin desarmar el robot.
+distinto es el contexto: se sube solo, con los sensores bajo prueba
+conectados y **nada más** (sin motores, sin PCA9685, sin TCS34725, sin LED
+RGB), así que se pueden mover a mano sobre distintas superficies sin
+desarmar el robot.
 
 | Señal | GPIO | Nota |
 |---|:---:|---|
-| `QTR_A_SENSOR` (analógico) | **35** | |
-| `QTR_A_CTRL` | **25** | Comparte pin físico con `QTR_RC_CTRL` — ver abajo |
-| `QTR_RC_SENSOR` (modo RC) | **4** | |
-| `QTR_RC_CTRL` | **25** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (del sensor analógico y del RC) comparten un solo cable de control, así que se encienden y apagan juntas |
+| `QTR_A_SENSOR` | **35** | QTRX-HD-01A, modo analógico |
+| `QTR_A_CTRL` | **25** | Comparte pin físico con `QTR_B_CTRL` — ver abajo |
+| `QTR_B_SENSOR` | **4** | QTRX-HD-01A, modo analógico — mismo modelo que A |
+| `QTR_B_CTRL` | **25** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (una por sensor) comparten un solo cable de control, así que se encienden y apagan juntas |
 | `GENERIC_IR` | **14** | |
+
+Los dos sensores bajo prueba son **el mismo modelo, en modo analógico** —
+no hay ningún sensor en modo RC conectado ahora mismo. Los nombres del
+código usan "A"/"B" en vez de "analog"/"rc" a propósito, para no dar a
+entender un modo que no se está usando.
 
 Estos son los pines del cableado físico ya armado por el equipo, sin
 cambios. `GPIO33–37` (PSRAM octal) está en el rango que
@@ -33,7 +38,7 @@ problema en la práctica, así que se dejó tal cual en vez de recablear.
 
 | Parte | Qué hace |
 |---|---|
-| `firmware/` | Sketch del ESP32 de banco. Solo responde: recibe el comando `'R'` por serial y contesta `DATA,<analog>,<rc>,<generic>`. Usa la librería `QTRSensors` de Pololu (única excepción del proyecto a "cero dependencias" — es una herramienta de banco, no el firmware de vuelo). |
+| `firmware/` | Sketch del ESP32 de banco. Solo responde: recibe el comando `'R'` por serial y contesta `DATA,<analog_a>,<analog_b>,<generic>`. Usa la librería `QTRSensors` de Pololu (única excepción del proyecto a "cero dependencias" — es una herramienta de banco, no el firmware de vuelo). |
 | `calibrar_ir.py` | Script de Python que orquesta la prueba: pide moverse a cada punto, manda `'R'` repetidamente, y guarda todo en un `.csv` dentro de `data_logs/`. |
 
 ## Cómo usar
@@ -73,15 +78,15 @@ solo:
 # Samples per point: 60
 # Sample interval: 250 ms
 # Movement time between points: 10 s
-surface,point,sample,analog_QTRX,RC_QTRX_us,generic_IR
-BLACK,1,1,4095,1055,1
+surface,point,sample,analog_QTRX_A,analog_QTRX_B,generic_IR
+BLACK,1,1,4095,3980,1
 ...
 ```
 
 | Columna | Qué es |
 |---|---|
-| `analog_QTRX` | Lectura del QTRX-HD-01A analógico, 0–4095 (ADC de 12 bits), promediada 8x por el sketch. |
-| `RC_QTRX_us` | Tiempo de descarga del QTRX-HD-01RC en modo RC, en microsegundos (tope 5000 µs). |
+| `analog_QTRX_A` | Lectura del sensor A (QTRX-HD-01A analógico), 0–4095 (ADC de 12 bits), promediada 8x por el sketch. |
+| `analog_QTRX_B` | Lectura del sensor B (mismo modelo, mismo modo), 0–4095, promediada 8x. |
 | `generic_IR` | Lectura digital (0/1) de un módulo IR genérico aparte, solo para comparar. |
 
 ## Por qué esto no reemplaza la calibración en vivo de las pruebas
@@ -90,9 +95,9 @@ BLACK,1,1,4095,1055,1
 calibran el QTR **en cada arranque**, sobre el ESP32-S3 y a la altura real
 de montaje en el chasis — eso sigue siendo lo que decide el umbral que
 efectivamente usa el robot. Esta herramienta es para entender **cómo se
-comporta el sensor** (analógico vs. RC vs. IR genérico, negro vs. gris)
-antes de decidir cuál de los tres métodos usar y con qué margen, no para
-generar el umbral final.
+comporta el sensor** (negro vs. gris, sensor A vs. sensor B, con el módulo
+IR genérico como referencia aparte) antes de decidir el margen del umbral,
+no para generar el umbral final.
 
 Análisis ya hecho con los primeros dos logs de esta herramienta: el negro
 satura consistentemente cerca del máximo del ADC analógico (~4060 de media,
