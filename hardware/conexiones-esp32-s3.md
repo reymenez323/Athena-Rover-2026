@@ -167,6 +167,7 @@ así te ahorras el multiplexor TCA9548A.
 | SCL | **9** |
 | VIN | 3.3 V |
 | GND | GND |
+| LED | **18** |
 
 ### Sensor TRASERO — bus I2C nº 1 (dedicado)
 
@@ -176,11 +177,38 @@ así te ahorras el multiplexor TCA9548A.
 | SCL | **48** |
 | VIN | 3.3 V |
 | GND | GND |
+| LED | **21** |
 
 > Cada bus necesita resistencias de pull-up de 4.7 kΩ a 3.3 V en SDA y SCL.
 > La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones tres
 > módulos con pull-ups en el mismo bus, la resistencia equivalente baja
 > demasiado. Si el I2C falla, es lo primero que hay que revisar.
+
+### LED de iluminación del propio TCS34725
+
+Cada módulo trae 2 LED blancos para iluminar la superficie que está leyendo
+(necesarios para no depender de la luz ambiente del salón, que cambia y
+arruina la clasificación de color). Se controlan con el pin marcado **LED**
+en la placa.
+
+> ⚠️ **Supuesto a verificar con tu módulo:** esto describe el diseño de
+> referencia (el de Adafruit, que casi todos los clones copian tal cual):
+> el pin **LED** es activo en alto y trae su propio pull-up hacia VIN, así
+> que si lo dejas sin conectar los LED quedan encendidos siempre. Conectarlo
+> a un GPIO da control por software (apagarlos cuando no hacen falta, o para
+> que el sensor delantero no le meta luz al trasero). Si tu módulo es de
+> otra marca, confirma el pinout en su datasheet antes de cablear — por las
+> dudas, mide con un multímetro en modo continuidad entre el pin LED y el
+> ánodo de los LED antes de energizar.
+
+| Señal | GPIO ESP32-S3 |
+|-------|:-------------:|
+| LED sensor delantero | **18** |
+| LED sensor trasero | **21** |
+
+Van en cable **blanco** (señal digital de control, como el resto — ver el
+[código de colores](#código-de-colores-de-cableado)), no en el color de
+ninguna línea de alimentación.
 
 ---
 
@@ -242,19 +270,20 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 
 | GPIO | Destino | GPIO | Destino |
 |:----:|---------|:----:|---------|
-| 1 | QTR izquierdo (ADC) | 13 | L298N‑D IN3 |
-| 2 | QTR derecho (ADC) | 14 | L298N‑D IN4 |
-| 4 | L298N‑I IN1 | 15 | L298N‑I IN4 |
-| 5 | L298N‑I IN2 | 16 | L298N‑I ENB |
-| 6 | L298N‑I ENA | 17 | L298N‑D ENB |
-| 7 | L298N‑I IN3 | 40 | LED rojo |
-| 8 | I2C0 SDA | 41 | LED azul |
-| 9 | I2C0 SCL | 42 | QTR emisores (CTRL) |
-| 10 | L298N‑D IN1 | 47 | I2C1 SDA |
-| 11 | L298N‑D IN2 | 48 | I2C1 SCL |
-| 12 | L298N‑D ENA | | |
+| 1 | QTR izquierdo (ADC) | 14 | L298N‑D IN4 |
+| 2 | QTR derecho (ADC) | 15 | L298N‑I IN4 |
+| 4 | L298N‑I IN1 | 16 | L298N‑I ENB |
+| 5 | L298N‑I IN2 | 17 | L298N‑D ENB |
+| 6 | L298N‑I ENA | 18 | LED TCS34725 delantero |
+| 7 | L298N‑I IN3 | 21 | LED TCS34725 trasero |
+| 8 | I2C0 SDA | 40 | LED rojo |
+| 9 | I2C0 SCL | 41 | LED azul |
+| 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL |
+| 13 | L298N‑D IN3 | | |
 
-**21 pines usados.** Quedan libres para ampliaciones: GPIO **18, 21, 38, 39**
+**23 pines usados.** Quedan libres para ampliaciones: GPIO **38, 39**
 (y 3, con cuidado por el strapping de JTAG).
 
 ---

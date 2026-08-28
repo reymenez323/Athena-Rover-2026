@@ -83,6 +83,12 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
+    // -------- LED de iluminación de cada TCS34725 ---------------------------
+    // Pin "LED" de la placa del sensor: enciende sus 2 LED blancos para no
+    // depender de la luz ambiente del salón al clasificar el color del piso.
+    constexpr uint8_t TCS_LED_FRONT = 18;
+    constexpr uint8_t TCS_LED_BACK  = 21;
+
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
     // ¡ALIMENTARLOS A 3.3 V! La salida del QTRX es proporcional a su VIN: a
     // 5 V entregaría hasta 5 V y eso quema la entrada ADC del ESP32-S3.
@@ -767,6 +773,15 @@ void PushDropOldest(QueueHandle_t queue, const T &item) {
 }
 
 void ColorSensorTask(void *) {
+    // LED de iluminación de cada sensor, encendidos de forma permanente. Es
+    // lo más simple y estable, igual que los emisores IR de los QTR: sin
+    // ellos, la clasificación de color dependería de la luz del salón de
+    // competencia, que cambia y no se puede controlar.
+    pinMode(Pins::TCS_LED_FRONT, OUTPUT);
+    pinMode(Pins::TCS_LED_BACK, OUTPUT);
+    digitalWrite(Pins::TCS_LED_FRONT, HIGH);
+    digitalWrite(Pins::TCS_LED_BACK, HIGH);
+
     bool front_ok = Tcs34725::Init(Wire);
     bool back_ok  = Tcs34725::Init(Wire1);
 
