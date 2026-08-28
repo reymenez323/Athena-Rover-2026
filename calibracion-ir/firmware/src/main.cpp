@@ -10,14 +10,12 @@
 //  RGB), para caracterizarlos antes de fijar umbrales — ver ../README.md
 //  para el procedimiento completo.
 //
-//  Pines: idénticos al cableado físico ya armado por el equipo, con una
-//  excepción — QTR_A_SENSOR se recableó de GPIO35 a GPIO5. GPIO35 no es un
-//  error de "mejor evitarlo": en el ESP32-S3 no tiene hardware de ADC en
-//  absoluto (a diferencia del ESP32 clásico, donde sí es un pin de ADC1
-//  válido y muy usado — de ahí probablemente venía ese número). No hay
-//  código que lo arregle; analogRead() ahí siempre tira
-//  "Pin 35 is not ADC pin!" y devuelve 0. GPIO5 es ADC1_CH4, un pin de ADC
-//  real en el S3.
+//  Pines: cableado físico actual confirmado por el equipo — sensores en
+//  GPIO1/GPIO2, control compartido en GPIO42. Son los MISMOS GPIO que
+//  QTR_LEFT_OUT/QTR_RIGHT_OUT/QTR_EMITTER_CTRL en
+//  hardware/conexiones-esp32-s3.md (el diseño de vuelo), así que además de
+//  válidos en ADC1 (GPIO1 y GPIO2 lo son) quedan documentados en dos
+//  sitios a la vez.
 //
 //  AMBOS sensores son QTRX-HD-01A analógicos (no hay ningún sensor en modo
 //  RC conectado ahora mismo). Los nombres "B"/"segundo sensor" en vez de
@@ -47,11 +45,11 @@
 // cable de control físico, así que se encienden y apagan juntas.
 
 // QTRX-HD-01A — sensor A
-const uint8_t QTR_A_SENSOR = 5;   // recableado desde GPIO35 (no es pin de ADC en el S3), ver nota arriba
-const uint8_t QTR_A_CTRL   = 25;
+const uint8_t QTR_A_SENSOR = 1;   // = QTR_LEFT_OUT en hardware/conexiones-esp32-s3.md
+const uint8_t QTR_A_CTRL   = 42;  // = QTR_EMITTER_CTRL en hardware/conexiones-esp32-s3.md
 
 // QTRX-HD-01A — sensor B (mismo modelo que A, pin de control compartido)
-const uint8_t QTR_B_SENSOR = 4;
+const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md
 const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL, ver nota arriba
 
 // Generic IR

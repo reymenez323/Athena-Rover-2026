@@ -16,10 +16,10 @@ mano sobre distintas superficies sin desarmar el robot.
 
 | Señal | GPIO | Nota |
 |---|:---:|---|
-| `QTR_A_SENSOR` | **5** | QTRX-HD-01A, modo analógico — recableado desde GPIO35, ver abajo |
-| `QTR_A_CTRL` | **25** | Comparte pin físico con `QTR_B_CTRL` — ver abajo |
-| `QTR_B_SENSOR` | **4** | QTRX-HD-01A, modo analógico — mismo modelo que A |
-| `QTR_B_CTRL` | **25** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (una por sensor) comparten un solo cable de control, así que se encienden y apagan juntas |
+| `QTR_A_SENSOR` | **1** | QTRX-HD-01A, modo analógico — mismo GPIO que `QTR_LEFT_OUT` en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md) |
+| `QTR_A_CTRL` | **42** | Mismo GPIO que `QTR_EMITTER_CTRL` — comparte pin físico con `QTR_B_CTRL`, ver abajo |
+| `QTR_B_SENSOR` | **2** | QTRX-HD-01A, modo analógico — mismo GPIO que `QTR_RIGHT_OUT` |
+| `QTR_B_CTRL` | **42** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (una por sensor) comparten un solo cable de control, así que se encienden y apagan juntas |
 | `GENERIC_IR` | **14** | |
 
 Los dos sensores bajo prueba son **el mismo modelo, en modo analógico** —
@@ -27,15 +27,14 @@ no hay ningún sensor en modo RC conectado ahora mismo. Los nombres del
 código usan "A"/"B" en vez de "analog"/"rc" a propósito, para no dar a
 entender un modo que no se está usando.
 
-**`QTR_A_SENSOR` se recableó de GPIO35 a GPIO5.** No era un caso de
-"prohibido pero funciona en la práctica" como GPIO26 o GPIO3 — GPIO35 no
-tiene hardware de ADC **en absoluto** en el ESP32-S3 (a diferencia del
-ESP32 clásico, donde sí es un pin de ADC1 válido y muy común — de ahí
-probablemente venía ese número originalmente). `analogRead()` ahí siempre
-tira `Pin 35 is not ADC pin!` por consola y devuelve 0, sin excepción — es
-justo lo que se veía en los primeros CSV capturados con el sensor A
-sospechosamente plano en 0. GPIO5 es ADC1_CH4, un pin de ADC real en el S3.
-El resto de los pines del cableado del equipo se dejan tal cual.
+**Historial de este cableado, para que quede constancia:** este proyecto
+pasó por GPIO35/25/4/26(→compartido) del archivo original, luego GPIO1/2/42
+(intento de reutilizar los pines del diseño de vuelo), vuelta a
+GPIO35/25/4/25 porque el equipo confirmó que ese era el cableado real,
+GPIO35→GPIO5 porque GPIO35 no tiene ADC en el S3, y ahora de nuevo a
+GPIO1/2/42, confirmado como el cableado físico actual. Si en algún momento
+esto vuelve a no coincidir con la placa real, dilo — no hay drama en seguir
+ajustando, pero cada vuelta cuesta una sesión de depuración.
 
 ## Tres partes
 

@@ -8,29 +8,29 @@
 //  ../calibrar_ir.py (ver ../data_logs/). Imprime el resultado por consola
 //  cada 200 ms y enciende el LED RGB: rojo para negro, verde para gris.
 //
-//  Por qué solo el sensor B decide (por ahora): en las dos capturas que dan
-//  el umbral de abajo (IR_NEGRO_2026-08-28_07-14-49.csv,
-//  IR_GRIS_2026-08-28_07-17-36.csv, 740 muestras en total) el sensor A
-//  quedó en 0 todo el tiempo. La causa: estaba en GPIO35, que en el
-//  ESP32-S3 no tiene hardware de ADC en absoluto — analogRead() ahí tira
-//  "Pin 35 is not ADC pin!" y devuelve 0 siempre, no es un problema de
-//  cableado ni de calibración. Ya se recableó a GPIO5 (sí es ADC1 en el
-//  S3), pero como el umbral de NEGRO/GRIS se calculó SIN el sensor A, este
-//  sketch lo sigue leyendo e imprimiendo solo como diagnóstico — no
-//  participa en la clasificación todavía.
+//  Por qué solo el sensor B decide (por ahora): el umbral de abajo se
+//  calculó con datos donde el sensor A no daba señal (estaba en GPIO35,
+//  que en el ESP32-S3 no tiene hardware de ADC — analogRead() ahí siempre
+//  tira "Pin 35 is not ADC pin!" y devuelve 0). Ya se recableó, así que A
+//  se sigue leyendo e imprimiendo, pero no participa en la clasificación
+//  todavía.
 //
-//  Pines: idénticos a ../firmware/src/main.cpp (el sketch de captura), más
-//  el LED RGB en los mismos GPIO que usa el diseño final
-//  (firmware-esp32/, pruebas-platformio/02-cuadro-color-rgb/).
+//  Pines: cableado físico actual confirmado por el equipo — sensores en
+//  GPIO1/GPIO2, control compartido en GPIO42 (los mismos GPIO que
+//  QTR_LEFT_OUT/QTR_RIGHT_OUT/QTR_EMITTER_CTRL del diseño de vuelo, ver
+//  hardware/conexiones-esp32-s3.md) — más el LED RGB en los mismos GPIO
+//  que usa el diseño final (firmware-esp32/,
+//  pruebas-platformio/02-cuadro-color-rgb/).
 //
-//  Sobre el umbral (145): con esas 740 muestras, NEGRO promedió 165.2
-//  (desviación 13.1) y GRIS promedió 124.4 (desviación 7.6) en el sensor B.
-//  145 es el punto medio razonable entre ambas — pero sigue siendo un
-//  umbral fijo sacado de un log, no una calibración en vivo. Si la luz del
-//  lugar cambia o el sensor se reposiciona, verifícalo de nuevo contra la
-//  superficie real. La calibración en vivo de pruebas-platformio/01 y 02
-//  (recalibra en cada arranque) sigue siendo la que manda para el robot de
-//  verdad — esto es solo una herramienta de banco.
+//  Sobre el umbral (145): calculado con 740 muestras del sensor B leído en
+//  GPIO4 (NEGRO promedió 165.2, desviación 13.1; GRIS promedió 124.4,
+//  desviación 7.6). El sensor B ahora se lee por GPIO2 en vez de GPIO4 —
+//  debería dar los mismos números (es el mismo sensor físico, ambos GPIO
+//  son ADC1 equivalentes), pero como no se volvió a capturar después del
+//  cambio de pines, conviene verificarlo contra la superficie real antes
+//  de confiar en el umbral a ciegas. La calibración en vivo de
+//  pruebas-platformio/01 y 02 (recalibra en cada arranque) sigue siendo la
+//  que manda para el robot de verdad — esto es solo una herramienta de banco.
 //
 // ===========================================================================
 
@@ -41,9 +41,9 @@
 // PINES — idénticos a ../firmware/src/main.cpp, más el LED RGB
 // =====================================================
 
-const uint8_t QTR_A_SENSOR = 5;   // recableado desde GPIO35 (no es pin de ADC en el S3), ver nota arriba
-const uint8_t QTR_A_CTRL   = 25;
-const uint8_t QTR_B_SENSOR = 4;   // el que sí decide
+const uint8_t QTR_A_SENSOR = 1;   // = QTR_LEFT_OUT en hardware/conexiones-esp32-s3.md
+const uint8_t QTR_A_CTRL   = 42;  // = QTR_EMITTER_CTRL en hardware/conexiones-esp32-s3.md
+const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md — el que sí decide
 const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL
 const uint8_t GENERIC_IR   = 14;
 

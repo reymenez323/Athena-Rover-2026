@@ -27,25 +27,25 @@ y `IR_GRIS_2026-08-28_07-17-36.csv`, 740 muestras del sensor B:
 | NEGRO | 165.2 | 13.1 |
 | GRIS | 124.4 | 7.6 |
 
-145 es el punto medio razonable entre las dos medias. Sigue siendo un
-umbral fijo sacado de un log puntual, no una calibración en vivo — si
-cambia la luz del lugar o se reposiciona el sensor, hay que revisarlo de
-nuevo. Para el umbral que de verdad usa el robot, manda la calibración en
-vivo de `pruebas-platformio/01-mantente-en-cuadro/` y `02-cuadro-color-rgb/`
+145 es el punto medio razonable entre las dos medias. Se calculó con el
+sensor B leído por GPIO4; ahora se lee por GPIO2 (ver cableado abajo) —
+debería dar los mismos números por ser el mismo sensor físico en un pin
+ADC1 equivalente, pero no se volvió a capturar después del cambio, así que
+conviene verificarlo contra la superficie real antes de confiar a ciegas.
+Para el umbral que de verdad usa el robot, manda la calibración en vivo de
+`pruebas-platformio/01-mantente-en-cuadro/` y `02-cuadro-color-rgb/`
 (recalibran en cada arranque); esto es solo una herramienta de banco para
 ver el clasificador funcionando rápido.
 
 ## Por qué solo decide el sensor B (por ahora)
 
-En las dos capturas de arriba, el sensor A dio **0 en las 740 muestras**,
-sin excepción. La causa no era ruido ni un cable suelto: estaba en GPIO35,
-que en el ESP32-S3 **no tiene hardware de ADC**. `analogRead()` ahí siempre
-falla con `Pin 35 is not ADC pin!` y devuelve 0. Ya se recableó a GPIO5 (sí
-es ADC1 en el S3), pero como el umbral de arriba se calculó sin el sensor
-A, este sketch lo sigue leyendo e imprimiendo solo como diagnóstico — no
-participa en la clasificación todavía. Si quieres sumarlo, hay que volver a
-capturar NEGRO/GRIS con `../calibrar_ir.py` (ahora sí con A dando datos
-reales) y recalcular el umbral.
+El umbral de arriba se calculó con datos donde el sensor A no daba señal
+(estaba en GPIO35, que en el ESP32-S3 no tiene hardware de ADC —
+`analogRead()` ahí siempre falla con `Pin 35 is not ADC pin!` y devuelve 0).
+Ya se recableó, así que A se sigue leyendo e imprimiendo, pero no participa
+en la clasificación todavía. Si quieres sumarlo, hay que volver a capturar
+NEGRO/GRIS con `../calibrar_ir.py` (ahora sí con A dando datos reales) y
+recalcular el umbral.
 
 ## Pines
 
@@ -53,9 +53,9 @@ Idénticos a `../firmware/src/main.cpp`, más el LED RGB:
 
 | Señal | GPIO |
 |---|:---:|
-| `QTR_A_SENSOR` | 5 (recableado desde GPIO35 — no es pin de ADC en el S3) |
-| `QTR_A_CTRL` / `QTR_B_CTRL` | 25 (compartido) |
-| `QTR_B_SENSOR` | 4 |
+| `QTR_A_SENSOR` | 1 (= `QTR_LEFT_OUT` en el diseño de vuelo) |
+| `QTR_A_CTRL` / `QTR_B_CTRL` | 42 (compartido, = `QTR_EMITTER_CTRL`) |
+| `QTR_B_SENSOR` | 2 (= `QTR_RIGHT_OUT`) |
 | `GENERIC_IR` | 14 |
 | LED RGB — R | 39 |
 | LED RGB — G | 38 |
