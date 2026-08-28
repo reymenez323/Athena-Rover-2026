@@ -63,7 +63,17 @@ struct Motor {
     uint8_t in1, in2, en, ledc_channel;
 };
 
-constexpr Motor kMotorFL = {Pins::L298N_L_IN1, Pins::L298N_L_IN2, Pins::L298N_L_ENA, 0};
+// kMotorFL: con el cableado físico actual, la rueda conectada a OUT1/OUT2
+// del L298N izquierdo (la trasera izquierda del chasis) gira al revés
+// respecto a las otras tres. Se resuelve intercambiando el ORDEN de los dos
+// GPIO aquí mismo: Pins::L298N_L_IN1 y L298N_L_IN2 siguen siendo,
+// físicamente, los pines soldados a los terminales IN1 e IN2 del L298N (ver
+// hardware/conexiones-esp32-s3.md) — lo único que cambia es cuál de los dos
+// hace de "in1" y cuál de "in2" para ESTE motor, así que MotorForwardFull()
+// queda idéntica para los 4 motores, sin funciones ni ramas especiales. Si
+// se recablea este motor para que coincida con los otros tres, basta con
+// volver a poner IN1, IN2 en orden aquí.
+constexpr Motor kMotorFL = {Pins::L298N_L_IN2, Pins::L298N_L_IN1, Pins::L298N_L_ENA, 0};
 constexpr Motor kMotorRL = {Pins::L298N_L_IN3, Pins::L298N_L_IN4, Pins::L298N_L_ENB, 1};
 constexpr Motor kMotorFR = {Pins::L298N_R_IN1, Pins::L298N_R_IN2, Pins::L298N_R_ENA, 2};
 constexpr Motor kMotorRR = {Pins::L298N_R_IN3, Pins::L298N_R_IN4, Pins::L298N_R_ENB, 3};
@@ -103,15 +113,6 @@ void MotorForwardFull(const Motor &m) {
     PwmWrite(m.en, m.ledc_channel, 255);
 }
 
-// Mismo motor, sentido contrario. Si una rueda gira al revés respecto a las
-// otras tres, no cambies el cableado físico: en setup(), llama esta función
-// para ESE motor en vez de MotorForwardFull() — ver el README.
-void MotorReverseFull(const Motor &m) {
-    digitalWrite(m.in1, LOW);
-    digitalWrite(m.in2, HIGH);
-    PwmWrite(m.en, m.ledc_channel, 255);
-}
-
 // ===========================================================================
 //  [3] setup() / loop()
 // ===========================================================================
@@ -126,11 +127,7 @@ void setup() {
     MotorSetup(kMotorFR);
     MotorSetup(kMotorRR);
 
-    // OJO: kMotorFL = IN1/IN2/ENA = OUT1/OUT2 del L298N izquierdo. El equipo
-    // reporta que la rueda TRASERA izquierda es la que está físicamente en
-    // OUT1/OUT2 (no la delantera, pese al nombre de la constante) y es la
-    // que gira al revés — por eso el MotorReverseFull() va en kMotorFL.
-    MotorReverseFull(kMotorFL);
+    MotorForwardFull(kMotorFL);
     MotorForwardFull(kMotorRL);
     MotorForwardFull(kMotorFR);
     MotorForwardFull(kMotorRR);

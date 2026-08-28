@@ -137,6 +137,21 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 | GND | GND | Masa común (obligatorio) |
 | 12 V | Batería de motores | Alimentación de potencia |
 
+> ⚠️ **El motor en OUT1/OUT2 de este driver gira al revés de los otros
+> tres.** Con el cableado físico actual, el motor conectado ahí (la rueda
+> trasera izquierda del chasis, no la delantera pese a como está descrita
+> la tabla de arriba) queda invertido respecto a las otras tres ruedas. La
+> corrección **no está aquí, en el cableado** — está en software, en cada
+> proyecto que controla motores (`firmware-esp32/src/main.cpp` y
+> `pruebas-platformio/{01-mantente-en-cuadro,02-cuadro-color-rgb,03-motores-adelante}/src/main.cpp`):
+> la definición de ese motor recibe **GPIO 5 (IN2) como "in1" y GPIO 4 (IN1)
+> como "in2"**, intercambiados a propósito, en vez de un flag de inversión o
+> una función aparte. Si en algún momento se recablean físicamente los 2
+> cables de ese motor para que coincida con los otros tres, hay que
+> **deshacer el intercambio en los 4 archivos de código** (volver a pasar
+> IN1, IN2 en orden) — esta tabla seguiría describiendo la conexión física
+> real (GPIO 4 → IN1, GPIO 5 → IN2), eso no cambia.
+
 ### L298N nº 2 — lado DERECHO
 
 | Pin L298N | GPIO ESP32-S3 | Función |

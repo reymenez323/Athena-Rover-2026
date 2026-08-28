@@ -27,9 +27,9 @@ en la prueba 01.
 
 Igual que en la prueba 01: con el cableado físico actual, la rueda trasera
 izquierda (conectada a OUT1/OUT2 del L298N izquierdo, `kMotorFL` en el
-código) gira al revés respecto a las otras tres. Se resuelve en la
-definición de `kMotorFL` (`invert = true`), y `MotorApply()` lo aplica sin
-importar la velocidad.
+código) gira al revés respecto a las otras tres. Se resuelve intercambiando
+el orden de `L298N_L_IN1`/`L298N_L_IN2` en la definición de `kMotorFL` — sin
+flags ni ramas en `MotorApply()`, que queda idéntica para los 4 motores.
 
 ## Cableado nuevo — LED RGB
 

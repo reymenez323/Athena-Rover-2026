@@ -36,23 +36,29 @@ el resto de las pruebas — ver `platformio.ini`.
 
 ## Si alguna rueda gira al revés
 
-No cambies el cableado físico. En `setup()`, para ese motor en particular,
-llama a `MotorReverseFull(...)` en vez de `MotorForwardFull(...)` — ya está
-en `src/main.cpp`, es la misma función con `IN1`/`IN2` invertidos.
+No cambies el cableado físico ni agregues una función aparte. En la
+definición de ese motor (arriba de `setup()`), intercambia el orden de los
+dos pines `IN1`/`IN2` que le pasas al struct `Motor` — `MotorForwardFull()`
+queda igual para los 4 motores, sin ramas ni casos especiales.
 
 > Ya aplicado: con el cableado físico actual, la rueda trasera izquierda es
 > la que quedó conectada a OUT1/OUT2 del L298N izquierdo — eso es `kMotorFL`
 > en el código (IN1/IN2/ENA), **no** `kMotorRL`, pese al nombre. Es esa rueda
-> la que gira al revés, así que en `setup()` usa `MotorReverseFull(kMotorFL)`.
-> Si en algún momento intercambias los 2 cables de ese motor en el borne
-> físico, vuelve a poner `MotorForwardFull(kMotorFL)` aquí.
+> la que gira al revés, así que su definición queda:
+> ```cpp
+> constexpr Motor kMotorFL = {Pins::L298N_L_IN2, Pins::L298N_L_IN1, Pins::L298N_L_ENA, 0};
+> ```
+> (nota el orden `IN2, IN1` en vez de `IN1, IN2`). Si en algún momento
+> intercambias los 2 cables de ese motor en el borne físico, vuelve a poner
+> `IN1, IN2` en orden.
 >
 > **Ojo con el nombre de la constante:** `kMotorFL`/`kMotorRL` describen qué
 > par de pines del L298N usan (IN1/IN2 vs. IN3/IN4), no necesariamente qué
 > rueda física es delantera o trasera en este chasis — eso depende de a qué
 > borne conectaron cada motor. No asumas front/rear por el nombre; verifica
 > contra el cableado real.
-> Esta corrección es **local a esta prueba** — si más adelante el firmware
-> principal (`firmware-esp32/`) o cualquier otra prueba también manda
-> `MotorMode::DRIVE` a ese mismo motor, va a necesitar el mismo ajuste, ya
-> que ninguno de los dos comparte código con este sketch.
+>
+> Esta corrección está aplicada por separado en cada proyecto que controla
+> motores (`01-mantente-en-cuadro`, `02-cuadro-color-rgb`, `firmware-esp32/`)
+> porque ninguno comparte código con este sketch — si agregan un proyecto
+> nuevo que controle motores, hay que repetirla ahí también.

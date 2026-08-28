@@ -26,10 +26,18 @@ el firmware principal — ver `platformio.ini`.
 Con el cableado físico actual, la rueda trasera izquierda —la que quedó
 conectada a OUT1/OUT2 del L298N izquierdo, que en el código es `kMotorFL`—
 gira al revés respecto a las otras tres. Es un hecho fijo del cableado, no
-depende de la velocidad, así que se resuelve en la definición de `kMotorFL`
-(`invert = true`) y `MotorApply()` ya lo aplica sin importar qué velocidad
-se le mande. Si en algún momento recableas ese motor para que coincida con
-los otros tres, cambia ese `true` a `false`.
+depende de la velocidad, así que se resuelve **una sola vez, en la
+definición de `kMotorFL`**, intercambiando el orden de `L298N_L_IN1` y
+`L298N_L_IN2`:
+
+```cpp
+constexpr Motor kMotorFL = {Pins::L298N_L_IN2, Pins::L298N_L_IN1, Pins::L298N_L_ENA, 0};
+```
+
+`MotorApply()` es idéntica para los 4 motores — no hay ninguna rama ni flag
+de inversión, solo cuál GPIO hace de "in1" y cuál de "in2" para este motor
+en particular. Si en algún momento recableas ese motor para que coincida
+con los otros tres, vuelve a poner `L298N_L_IN1, L298N_L_IN2` en orden.
 
 ## Cómo se calibra
 
