@@ -5,10 +5,14 @@
 //
 //  OBJETIVO: el robot avanza dentro del cuadrado delimitado por la cinta
 //  negra, siempre en el mismo sentido de avance que la prueba
-//  03-motores-adelante (nunca gira, nunca retrocede), y en cuanto un
-//  sensor de reflectancia delantero detecta el borde (fondo gris -> cinta
-//  negra), PARA de golpe y se queda detenido. No intenta esquivar la cinta
-//  ni retomar la marcha por su cuenta.
+//  03-motores-adelante (nunca gira, nunca retrocede), y en cuanto el sensor
+//  de reflectancia DERECHO detecta el borde (fondo gris -> cinta negra),
+//  PARA de golpe y se queda detenido. No intenta esquivar la cinta ni
+//  retomar la marcha por su cuenta.
+//
+//  Decide SOLO el sensor derecho — es el que confirmamos que mide bien. El
+//  izquierdo se sigue leyendo e imprimiendo como referencia, pero no
+//  participa en la decisión (ver [4]).
 //
 //  Es un sketch de banco, deliberadamente simple (setup/loop, sin FreeRTOS
 //  ni colas): sirve para validar el comportamiento de borde ANTES de
@@ -222,11 +226,16 @@ void MotorsStop() { DriveSides(0, 0); }
 // ===========================================================================
 //
 //  FORWARD: avanza recto (mismo sentido que 03-motores-adelante, nunca
-//           retrocede, nunca gira), mirando los sensores.
+//           retrocede, nunca gira), mirando el sensor DERECHO.
 //  STOPPED: se quedó sin cinta debajo, motores a 0 y ahí se queda. No hay
 //           forma de volver a FORWARD sin resetear el ESP32 — a propósito,
 //           para poder mirar exactamente dónde paró antes de que el robot
 //           haga cualquier otra cosa.
+//
+//  SOLO decide el sensor DERECHO (QTR_RIGHT_OUT). El IZQUIERDO se sigue
+//  leyendo, calibrando e imprimiendo por consola —sirve como referencia y
+//  por si hace falta reactivarlo más adelante— pero no participa en la
+//  decisión de parar: es el que confirmamos que mide bien.
 
 enum class State : uint8_t { FORWARD, STOPPED };
 
@@ -241,13 +250,11 @@ constexpr int kForwardSpeed = 55;
 // de ruido, poco como para que el robot avance mucho de más antes de parar.
 constexpr uint8_t kConfirmacionesNecesarias = 4;
 
-uint8_t g_confirmLeft  = 0;
 uint8_t g_confirmRight = 0;
 
 // Devuelve true solo cuando la lectura cruda lleva kConfirmacionesNecesarias
-// vueltas seguidas por encima del umbral. "contador" es el conteo de ESE
-// sensor (izquierdo o derecho), pasado por referencia para llevar su propio
-// historial independiente del otro.
+// vueltas seguidas por encima del umbral. "contador" se pasa por referencia
+// para que quien llame lleve su propio historial.
 bool Confirmar(bool crudo, uint8_t &contador) {
     if (crudo) {
         if (contador < kConfirmacionesNecesarias) contador++;
@@ -259,16 +266,14 @@ bool Confirmar(bool crudo, uint8_t &contador) {
 
 State g_state = State::FORWARD;
 
-void RunStateMachine(bool leftOnLine, bool rightOnLine) {
+void RunStateMachine(bool onLine) {
     switch (g_state) {
         case State::FORWARD: {
-            if (leftOnLine || rightOnLine) {
+            if (onLine) {
                 MotorsStop();
                 g_state = State::STOPPED;
-                DEBUG_LINK.printf("[Borde] linea negra detectada (izq=%d der=%d) -> STOP\n",
-                    leftOnLine, rightOnLine);
-                digitalWrite(Pins::LED_TEAM_RED,  leftOnLine  ? HIGH : LOW);
-                digitalWrite(Pins::LED_TEAM_BLUE, rightOnLine ? HIGH : LOW);
+                DEBUG_LINK.println("[Borde] linea negra detectada (sensor derecho) -> STOP");
+                digitalWrite(Pins::LED_TEAM_BLUE, HIGH);
             } else {
                 DriveSides(kForwardSpeed, kForwardSpeed);
             }
@@ -317,24 +322,24 @@ void loop() {
     const uint16_t left  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
     const uint16_t right = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
 
-    const bool leftRaw  = left  > g_leftThreshold;
+    const bool leftRaw  = left  > g_leftThreshold;   // referencia, no decide nada
     const bool rightRaw = right > g_rightThreshold;
 
     // No se actúa sobre la lectura cruda directamente: hace falta que se
     // sostenga varias vueltas seguidas (ver Confirmar()) antes de tratarla
-    // como negro de verdad.
-    const bool leftOnLine  = Confirmar(leftRaw, g_confirmLeft);
+    // como negro de verdad. Solo se confirma/decide con el sensor derecho.
     const bool rightOnLine = Confirmar(rightRaw, g_confirmRight);
 
-    RunStateMachine(leftOnLine, rightOnLine);
+    RunStateMachine(rightOnLine);
 
     // Telemetría de banco, para ajustar velocidades y umbrales con el
     // monitor serial abierto. Se puede comentar una vez calibrado a gusto.
+    // "izq" es solo referencia (no decide); "der" es el que manda.
     static uint32_t lastPrint = 0;
     if ((uint32_t)(millis() - lastPrint) > 200) {
         lastPrint = millis();
-        DEBUG_LINK.printf("izq=%u(%s,%u/%u) der=%u(%s,%u/%u) estado=%s\n",
-            left, leftRaw ? "NEGRO" : "gris", g_confirmLeft, kConfirmacionesNecesarias,
+        DEBUG_LINK.printf("izq=%u(%s, ref) der=%u(%s,%u/%u) estado=%s\n",
+            left, leftRaw ? "NEGRO" : "gris",
             right, rightRaw ? "NEGRO" : "gris", g_confirmRight, kConfirmacionesNecesarias,
             g_state == State::FORWARD ? "FORWARD" : "STOPPED");
     }

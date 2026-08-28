@@ -3,10 +3,14 @@
 Robot que avanza dentro del cuadrado delimitado por cinta negra (fondo gris
 de la pista), siempre en el mismo sentido que la prueba
 [`03-motores-adelante`](../03-motores-adelante/) — nunca gira, nunca
-retrocede — y en cuanto un sensor de reflectancia delantero detecta el
+retrocede — y en cuanto el sensor de reflectancia **derecho** detecta el
 borde (fondo gris -> cinta negra), **para en seco y se queda detenido**. No
 intenta esquivar la cinta ni retomar la marcha por su cuenta; hay que
 resetear el ESP32 para que vuelva a arrancar.
+
+**Decide solo el sensor derecho.** El izquierdo se sigue leyendo,
+calibrando e imprimiendo por consola como referencia, pero no participa en
+la decisión de parar — es el que confirmamos que mide bien.
 
 Es un sketch de banco, independiente del firmware principal
 (`firmware-esp32/`): sirve para validar el comportamiento de borde con
@@ -89,14 +93,14 @@ Todos están al principio de `src/main.cpp`, con comentarios:
 
 El ADC del QTR tiene ruido puntual, sobre todo cerca del umbral — una sola
 lectura de más no debería bastar para frenar el robot en seco. Por eso una
-lectura cruda por encima del umbral no para nada por sí sola: cada sensor
-lleva su propio contador (`Confirmar()` en `src/main.cpp`) que solo sube
-mientras la lectura siga marcando negro, y se reinicia a 0 en cuanto
+lectura cruda por encima del umbral no para nada por sí sola: el sensor
+derecho lleva su propio contador (`Confirmar()` en `src/main.cpp`) que solo
+sube mientras la lectura siga marcando negro, y se reinicia a 0 en cuanto
 aparece una sola lectura de gris. Recién cuando el contador llega a
 `kConfirmacionesNecesarias` (4, ~20 ms de negro sostenido a los ~5 ms por
 vuelta de `loop()`) se trata como una detección real. La telemetría por
-consola muestra el conteo de cada sensor (`izq=...,2/4`) para ver el
-debounce en acción sin adivinar.
+consola muestra ese conteo (`der=...,2/4`) para ver el debounce en acción
+sin adivinar.
 
 ## Qué mirar si no funciona
 
@@ -104,11 +108,11 @@ debounce en acción sin adivinar.
   `MotorApply` — debería comportarse igual que en
   [`03-motores-adelante`](../03-motores-adelante/), que ya tiene la
   dirección de `kMotorFL` corregida.
-- Si nunca detecta el borde (se sale del cuadro): abrir el monitor y ver los
-  valores crudos impresos cada 200 ms; comparar con el umbral calibrado que
-  se imprime al final de `RunCalibration()`.
+- Si nunca detecta el borde (se sale del cuadro): abrir el monitor y ver el
+  valor crudo del sensor **derecho**, impreso cada 200 ms; comparar con el
+  umbral calibrado que se imprime al final de `RunCalibration()`. El
+  izquierdo es solo referencia — no importa lo que marque.
 - Si para en todas partes (incluso sobre gris): la calibración no vio
   suficiente contraste — repetir el arranque pasando el sensor de forma más
   deliberada sobre ambas superficies durante el parpadeo de los LED.
-- Al parar, el LED rojo indica que fue el sensor izquierdo, el azul el
-  derecho — ambos si dispararon los dos a la vez.
+- Al parar, se enciende el LED azul (el que corresponde al sensor derecho).
