@@ -232,6 +232,31 @@ enum class State : uint8_t { FORWARD, STOPPED };
 
 constexpr int kForwardSpeed = 55;
 
+// Confirmación: una sola lectura por encima del umbral no basta para parar
+// (el ADC tiene ruido puntual, sobre todo cerca del umbral). Se exigen
+// kConfirmacionesNecesarias lecturas SEGUIDAS por encima del umbral —
+// cualquier lectura de gris en medio reinicia el conteo a 0 — antes de
+// confiar en que de verdad es la cinta negra. A ~5 ms por vuelta de loop(),
+// 4 lecturas son ~20 ms de negro sostenido: suficiente para filtrar un pico
+// de ruido, poco como para que el robot avance mucho de más antes de parar.
+constexpr uint8_t kConfirmacionesNecesarias = 4;
+
+uint8_t g_confirmLeft  = 0;
+uint8_t g_confirmRight = 0;
+
+// Devuelve true solo cuando la lectura cruda lleva kConfirmacionesNecesarias
+// vueltas seguidas por encima del umbral. "contador" es el conteo de ESE
+// sensor (izquierdo o derecho), pasado por referencia para llevar su propio
+// historial independiente del otro.
+bool Confirmar(bool crudo, uint8_t &contador) {
+    if (crudo) {
+        if (contador < kConfirmacionesNecesarias) contador++;
+    } else {
+        contador = 0;  // una sola lectura de gris descarta todo lo acumulado
+    }
+    return contador >= kConfirmacionesNecesarias;
+}
+
 State g_state = State::FORWARD;
 
 void RunStateMachine(bool leftOnLine, bool rightOnLine) {
@@ -292,8 +317,14 @@ void loop() {
     const uint16_t left  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
     const uint16_t right = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
 
-    const bool leftOnLine  = left  > g_leftThreshold;
-    const bool rightOnLine = right > g_rightThreshold;
+    const bool leftRaw  = left  > g_leftThreshold;
+    const bool rightRaw = right > g_rightThreshold;
+
+    // No se actúa sobre la lectura cruda directamente: hace falta que se
+    // sostenga varias vueltas seguidas (ver Confirmar()) antes de tratarla
+    // como negro de verdad.
+    const bool leftOnLine  = Confirmar(leftRaw, g_confirmLeft);
+    const bool rightOnLine = Confirmar(rightRaw, g_confirmRight);
 
     RunStateMachine(leftOnLine, rightOnLine);
 
@@ -302,9 +333,9 @@ void loop() {
     static uint32_t lastPrint = 0;
     if ((uint32_t)(millis() - lastPrint) > 200) {
         lastPrint = millis();
-        DEBUG_LINK.printf("izq=%u(%s) der=%u(%s) estado=%s\n",
-            left, leftOnLine ? "NEGRO" : "gris",
-            right, rightOnLine ? "NEGRO" : "gris",
+        DEBUG_LINK.printf("izq=%u(%s,%u/%u) der=%u(%s,%u/%u) estado=%s\n",
+            left, leftRaw ? "NEGRO" : "gris", g_confirmLeft, kConfirmacionesNecesarias,
+            right, rightRaw ? "NEGRO" : "gris", g_confirmRight, kConfirmacionesNecesarias,
             g_state == State::FORWARD ? "FORWARD" : "STOPPED");
     }
 

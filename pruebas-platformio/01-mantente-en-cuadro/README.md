@@ -81,8 +81,22 @@ Todos están al principio de `src/main.cpp`, con comentarios:
 | Constante | Qué controla |
 |---|---|
 | `kForwardSpeed` | Velocidad de avance (0–100 %) — es la única velocidad que existe, no hay retroceso ni giro |
+| `kConfirmacionesNecesarias` | Cuántas lecturas seguidas por encima del umbral hacen falta para confiar en que es negro de verdad (ver "Margen contra lecturas erróneas" abajo) |
 | `MIN_USABLE_SPAN` | Contraste mínimo para aceptar la calibración en vivo |
 | `FALLBACK_THRESHOLD` | Umbral de reserva si la calibración no sirvió |
+
+## Margen contra lecturas erróneas
+
+El ADC del QTR tiene ruido puntual, sobre todo cerca del umbral — una sola
+lectura de más no debería bastar para frenar el robot en seco. Por eso una
+lectura cruda por encima del umbral no para nada por sí sola: cada sensor
+lleva su propio contador (`Confirmar()` en `src/main.cpp`) que solo sube
+mientras la lectura siga marcando negro, y se reinicia a 0 en cuanto
+aparece una sola lectura de gris. Recién cuando el contador llega a
+`kConfirmacionesNecesarias` (4, ~20 ms de negro sostenido a los ~5 ms por
+vuelta de `loop()`) se trata como una detección real. La telemetría por
+consola muestra el conteo de cada sensor (`izq=...,2/4`) para ver el
+debounce en acción sin adivinar.
 
 ## Qué mirar si no funciona
 
