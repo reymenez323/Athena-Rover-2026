@@ -17,7 +17,7 @@ lo que hay que ajustar al calibrar.
 | PCA9685 | 1 | 2 servos del gripper, por I2C |
 | TCS34725 | 2 | Color del piso, delantero y trasero |
 | QTRX-HD-01A | 2 | Reflectancia delantera, izquierda y derecha |
-| LED rojo/azul | 2 | Identificación de equipo (lo exige el reglamento) |
+| LED RGB | 1 | Identificación de equipo (lo exige el reglamento); antes eran 2 LED discretos rojo/azul |
 
 **Las conexiones completas están en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md).**
 Léelo antes de cablear: incluye los cinco errores que queman hardware.

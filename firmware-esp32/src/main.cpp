@@ -18,7 +18,8 @@
 //    · 1x PCA9685 (I2C)    -> 2 servos del gripper (pinza + elevación)
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
-//    · LED rojo / azul     -> identificación de equipo (lo exige el reglamento)
+//    · LED RGB (1x)        -> identificación de equipo (lo exige el reglamento);
+//                             antes eran 2 LED discretos rojo/azul, ya no existen
 //    · Enlace con la Raspberry Pi por USB (CDC nativo)
 //
 //  ÍNDICE
@@ -98,9 +99,16 @@ namespace Pins {
     // apagar los LED infrarrojos para medir la luz ambiente y restarla.
     constexpr uint8_t QTR_EMITTER_CTRL = 42;
 
-    // -------- LED indicador de equipo --------------------------------------
-    constexpr uint8_t LED_TEAM_RED  = 40;
-    constexpr uint8_t LED_TEAM_BLUE = 41;
+    // -------- LED RGB indicador de equipo -----------------------------------
+    // Reemplaza a los 2 LED discretos rojo/azul que documentaba antes esta
+    // sección (GPIO 40/41): el equipo ya no los tiene montados, solo queda
+    // este único LED RGB. Usa los 3 GPIO que quedaban libres para
+    // ampliaciones (ver hardware/conexiones-esp32-s3.md). GPIO 3 es
+    // strapping de JTAG, pero solo importa su nivel al bootear/resetear: como
+    // salida PWM en operación normal no da problema.
+    constexpr uint8_t LED_RGB_R = 39;
+    constexpr uint8_t LED_RGB_G = 38;
+    constexpr uint8_t LED_RGB_B = 3;
 }
 
 namespace I2CAddr {
@@ -120,6 +128,10 @@ namespace Pwm {
     // punto sano, aunque queda dentro del rango audible (se oirá un zumbido).
     constexpr uint32_t MOTOR_FREQ_HZ    = 1000;
     constexpr uint8_t  MOTOR_RESOLUTION = 8;     // duty 0..255
+
+    // LED RGB. Fuera del rango audible y sin parpadeo visible a simple vista.
+    constexpr uint32_t RGB_FREQ_HZ    = 5000;
+    constexpr uint8_t  RGB_RESOLUTION = 8;       // duty 0..255
 
     // Servos por PCA9685: 50 Hz, 12 bits de resolución (0..4095 por periodo).
     // Un periodo de 20 ms en 4096 pasos -> 1.0 ms = 205 y 2.0 ms = 410.
@@ -614,12 +626,14 @@ constexpr Motor kMotorRR = {Pins::L298N_R_IN3, Pins::L298N_R_IN4, Pins::L298N_R_
 
 // La API de LEDC cambió entre el core 2.x y el 3.x de Arduino-ESP32. Estas
 // dos funciones absorben la diferencia para que el firmware compile en ambos.
-void PwmAttach(uint8_t pin, uint8_t channel) {
+// Reciben freq/resolución como parámetro porque no todos los canales PWM del
+// robot usan los mismos: los motores van a 1 kHz/8 bits, el LED RGB a 5 kHz.
+void PwmAttach(uint8_t pin, uint8_t channel, uint32_t freqHz, uint8_t resolution) {
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
     (void)channel;                       // en 3.x el canal se asigna solo
-    ledcAttach(pin, Pwm::MOTOR_FREQ_HZ, Pwm::MOTOR_RESOLUTION);
+    ledcAttach(pin, freqHz, resolution);
 #else
-    ledcSetup(channel, Pwm::MOTOR_FREQ_HZ, Pwm::MOTOR_RESOLUTION);
+    ledcSetup(channel, freqHz, resolution);
     ledcAttachPin(pin, channel);
 #endif
 }
@@ -637,7 +651,7 @@ void PwmWrite(uint8_t pin, uint8_t channel, uint32_t duty) {
 void MotorSetup(const Motor &m) {
     pinMode(m.in1, OUTPUT);
     pinMode(m.in2, OUTPUT);
-    PwmAttach(m.en, m.ledc_channel);
+    PwmAttach(m.en, m.ledc_channel, Pwm::MOTOR_FREQ_HZ, Pwm::MOTOR_RESOLUTION);
     PwmWrite(m.en, m.ledc_channel, 0);
 }
 
@@ -877,12 +891,52 @@ void ReflectanceTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.5  LedTask — LED indicador de equipo (lo exige el reglamento)
+//  8.5  LedTask — LED RGB indicador de equipo (lo exige el reglamento)
 // ---------------------------------------------------------------------------
+//  Hasta hace poco esto eran 2 LED discretos (rojo/azul) con digitalWrite.
+//  El equipo los reemplazó por un único LED RGB (validado primero en
+//  pruebas-platformio/02-cuadro-color-rgb/), así que ahora se maneja por PWM.
+//  Queda con margen para lo que haga falta más adelante: cualquier otra señal
+//  visual se resuelve mezclando los 3 canales, sin cablear nada nuevo.
+
+namespace RgbLed {
+    // Canales LEDC 4..6: los motores ya ocupan 0..3 (ver 8.1).
+    constexpr uint8_t CH_R = 4;
+    constexpr uint8_t CH_G = 5;
+    constexpr uint8_t CH_B = 6;
+
+    // POLARIDAD SIN CONFIRMAR con el LED físico (mismo TODO que en la prueba
+    // 02): se asume cátodo común, duty alto = canal más brillante. Si al
+    // probarlo los colores salen invertidos, es ánodo común — cambiar esta
+    // constante a true, no hace falta tocar el resto de la tarea.
+    constexpr bool kCommonAnode = false;
+
+    void Setup() {
+        PwmAttach(Pins::LED_RGB_R, CH_R, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
+        PwmAttach(Pins::LED_RGB_G, CH_G, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
+        PwmAttach(Pins::LED_RGB_B, CH_B, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
+    }
+
+    void SetRaw(uint8_t r, uint8_t g, uint8_t b) {
+        if (kCommonAnode) { r = 255 - r; g = 255 - g; b = 255 - b; }
+        PwmWrite(Pins::LED_RGB_R, CH_R, r);
+        PwmWrite(Pins::LED_RGB_G, CH_G, g);
+        PwmWrite(Pins::LED_RGB_B, CH_B, b);
+    }
+
+    void ApplyTeam(TeamColor team) {
+        switch (team) {
+            case TeamColor::RED:  SetRaw(255, 0, 0); break;
+            case TeamColor::BLUE: SetRaw(0, 0, 255); break;
+            case TeamColor::NONE:
+            default:              SetRaw(0, 0, 0);   break;
+        }
+    }
+}
 
 void LedTask(void *) {
-    pinMode(Pins::LED_TEAM_RED, OUTPUT);
-    pinMode(Pins::LED_TEAM_BLUE, OUTPUT);
+    RgbLed::Setup();
+    RgbLed::SetRaw(0, 0, 0);
 
     TeamColor team = TeamColor::NONE;
 
@@ -893,8 +947,7 @@ void LedTask(void *) {
         LedCommand cmd;
         if (xQueueReceive(g_ledCmdQueue, &cmd, 0) == pdTRUE) team = cmd.team;
 
-        digitalWrite(Pins::LED_TEAM_RED,  team == TeamColor::RED  ? HIGH : LOW);
-        digitalWrite(Pins::LED_TEAM_BLUE, team == TeamColor::BLUE ? HIGH : LOW);
+        RgbLed::ApplyTeam(team);
 
         Heartbeat(TaskId::LED_STATUS);
         vTaskDelayUntil(&last_wake, period);

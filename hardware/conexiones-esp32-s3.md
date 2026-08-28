@@ -3,10 +3,13 @@
 Generado a partir de los pines reales declarados en `firmware-esp32/src/main.cpp`
 (namespace `Pins`). **Si cambias un pin en el código, actualiza esta tabla.**
 
-> **Excepción:** el LED RGB (sección 9) todavía **no está en `firmware-esp32/`**
-> — solo en `pruebas-platformio/02-cuadro-color-rgb/src/main.cpp`, que fue lo
-> primero que lo usó. Cuando se integre al firmware principal, confirmar que
-> use los mismos GPIO.
+> El robot ya **no tiene los 2 LED discretos rojo/azul** que documentaban
+> versiones anteriores de este archivo (GPIO 40/41) — el equipo los
+> reemplazó por un único **LED RGB** (sección 8), que ahora cumple la
+> identificación de equipo que exige el reglamento y queda disponible para
+> cualquier otra señal visual que haga falta más adelante. Ya está integrado
+> tanto en `firmware-esp32/` como en `pruebas-platformio/02-cuadro-color-rgb/`,
+> con los mismos GPIO en los dos.
 
 Placa asumida: **ESP32-S3-DevKitC-1**.
 
@@ -19,12 +22,11 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 5. [Servos — PCA9685](#servos--pca9685-i2c-dirección-0x40)
 6. [Sensores de color — 2× TCS34725](#sensores-de-color--2-tcs34725)
 7. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
-8. [LED de equipo](#led-de-equipo-lo-exige-el-reglamento)
-9. [LED RGB indicador de color](#led-rgb-indicador-de-color)
-10. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
-11. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-12. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
-13. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
+8. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
+9. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
+10. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
+11. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
+12. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
 
@@ -82,11 +84,11 @@ blanco** — 6 colores, no 9), la prioridad es, en este orden:
 | Color | Uso |
 |-------|-----|
 | **Negro** | GND — todas las masas, sin excepción |
-| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N. Nada más lleva rojo, ni siquiera el LED rojo de equipo. |
+| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N. Nada más lleva rojo. |
 | **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725. Nunca a 5 V (revisar la tabla de riesgos: quema el sensor). |
 | **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685. ⚠️ **Única excepción del código**: también lleva la señal LED de cada TCS34725 — ver la nota abajo. |
-| **Azul** | **I2C — SDA, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT) — no se mezclan con el I2C porque están en zonas distintas del chasis. |
-| **Blanco** | **I2C — SCL, en ambos buses.** También: señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR) y el control de los 2 LED de equipo — mismo razonamiento. |
+| **Azul** | **I2C — SDA, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), y alguno de los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en zonas distintas del chasis. |
+| **Blanco** | **I2C — SCL, en ambos buses.** También: señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR) y el resto de canales del LED RGB de equipo — mismo razonamiento. |
 
 En el tramo del PCA9685/TCS34725, donde SDA y SCL corren juntos, no hace
 falta marquilla: el color ya dice cuál es cuál. Si en algún otro punto
@@ -108,9 +110,9 @@ Dos reglas simples que evitan la mayoría de los sustos:
 
 - **El rojo es solo para la batería de motores, sin excepción.** Es la línea
   que más corriente mueve, así que un cruce ahí es el que más daño hace.
-  Aunque el LED de equipo sea rojo, su cable de control va en **blanco**
-  (es una señal digital de bajo amperaje, no una línea de potencia) — así se
-  evita la tentación de "total, ya tengo rojo a mano".
+  Aunque el LED RGB de equipo pueda encender en rojo, sus 3 cables de señal
+  van en **azul/blanco** (son PWM de bajo amperaje, no una línea de
+  potencia) — así se evita la tentación de "total, ya tengo rojo a mano".
 - **Corta el negro y el color de señal de cada conector al mismo largo.** Así
   se identifican por tacto (o a simple vista) cuál masa va con cuál señal sin
   tener que seguir el cable completo.
@@ -248,26 +250,20 @@ LED por error sí puede dañar el sensor.
 
 ---
 
-## LED de equipo (lo exige el reglamento)
+## LED RGB indicador de equipo
 
-| LED | GPIO ESP32-S3 | Nota |
-|-----|:-------------:|------|
-| Rojo | **40** | Con resistencia en serie de 220–330 Ω |
-| Azul | **41** | Con resistencia en serie de 220–330 Ω |
+Un solo LED RGB en el chasis cumple la identificación de equipo que exige el
+reglamento (antes eran 2 LED discretos, rojo y azul — **el equipo ya no los
+tiene montados**, quedaron completamente reemplazados por este). Se controla
+por PWM (LEDC), un canal por color, y queda con margen para cualquier otra
+señal visual que haga falta más adelante (además de indicar equipo, la
+prueba `pruebas-platformio/02-cuadro-color-rgb/` ya lo usa para mostrar en
+vivo el color que detecta el TCS34725 delantero).
 
-> Aunque el LED sea rojo o azul, su cable de control va en **blanco**, como
-> el resto de las señales digitales — ver el [código de colores](#código-de-colores-de-cableado).
-> No uses rojo para el LED rojo: ese color está reservado sin excepción para
-> la batería de motores.
-
----
-
-## LED RGB indicador de color
-
-Un solo LED RGB en el chasis, controlado por PWM (LEDC) por canal. Usa los
-únicos 3 GPIO que quedaban libres para ampliaciones en este documento — ver
-el [resumen de pines](#resumen-mapa-completo-de-pines-usados) — así que con
-esto **ya no queda ningún GPIO libre** en el mapa.
+Usa los únicos 3 GPIO que quedaban libres para ampliaciones en este
+documento — ver el [resumen de pines](#resumen-mapa-completo-de-pines-usados) —
+así que con esto **ya no queda ningún GPIO libre** en el mapa. Los GPIO 40 y
+41, que documentaban los 2 LED discretos anteriores, están libres de nuevo.
 
 | Canal | GPIO ESP32-S3 | Nota |
 |-------|:-------------:|------|
@@ -275,17 +271,18 @@ esto **ya no queda ningún GPIO libre** en el mapa.
 | G | **38** | |
 | B | **3** | Strapping de JTAG: solo importa su nivel en el instante de encender/resetear. Como salida PWM normal después de bootear no da problema. |
 
-> ⚠️ **Polaridad sin confirmar.** El código (`pruebas-platformio/02-cuadro-color-rgb/`)
-> asume **cátodo común** (duty PWM alto = canal más brillante). Si al
-> probarlo los colores salen invertidos, es ánodo común — hay una constante
-> (`kRgbCommonAnode`) para cambiarlo sin tocar el resto del sketch. Actualizar
-> esta nota una vez confirmado con el LED físico.
+> ⚠️ **Polaridad sin confirmar con el LED físico.** Tanto `firmware-esp32/`
+> como `pruebas-platformio/02-cuadro-color-rgb/` asumen **cátodo común**
+> (duty PWM alto = canal más brillante). Si al probarlo los colores salen
+> invertidos, es ánodo común — hay una constante (`kCommonAnode` /
+> `kRgbCommonAnode`) en cada uno para cambiarlo sin tocar el resto del
+> código. Actualizar esta nota una vez confirmado con el LED físico.
 
 Cable de control: igual que el resto de señales digitales/PWM de bajo
-amperaje de este robot (LED de equipo, ENA/ENB, OUT de los QTR), usa
-**Azul** o **Blanco** según el [código de colores](#código-de-colores-de-cableado)
-— no comparte zona de cableado con el I2C, así que no hay riesgo de
-confundirlo con SDA/SCL.
+amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** o **Blanco**
+según el [código de colores](#código-de-colores-de-cableado) — no comparte
+zona de cableado con el I2C, así que no hay riesgo de confundirlo con
+SDA/SCL.
 
 ---
 
@@ -320,17 +317,17 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA | 40 | LED rojo |
-| 9 | I2C0 SCL | 41 | LED azul |
+| 8 | I2C0 SDA | 40 | *(libre)* |
+| 9 | I2C0 SCL | 41 | *(libre)* |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA |
 | 12 | L298N‑D ENA | 48 | I2C1 SCL |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**26 pines usados.** No queda ningún GPIO libre para ampliaciones (quedaban
-38, 39 y 3 — el LED RGB los usó los tres). Solo el estrictamente prohibido
-(ver arriba) sigue fuera de uso.
+**24 pines usados.** Quedan libres para ampliaciones: GPIO **40, 41** — antes
+eran los 2 LED discretos de equipo, liberados al pasar todo a un solo LED
+RGB (que sí usó los últimos 3 GPIO que quedaban libres: 38, 39 y 3).
 
 ---
 
@@ -362,7 +359,9 @@ depuración.
 
 1. **Solo el ESP32** por USB. Cargar el firmware, ver el mensaje de arranque en el
    puerto de depuración a 115200.
-2. **Añadir los LED** (GPIO 40/41). Comprobar que la Raspberry Pi los enciende.
+2. **Añadir el LED RGB** (GPIO 39/38/3). Comprobar que la Raspberry Pi lo
+   enciende en rojo y en azul, y de paso confirmar la polaridad (cátodo vs.
+   ánodo común — ver la nota en la sección del LED RGB).
 3. **Añadir el I2C**, un chip a la vez. El firmware avisa por la consola si el
    PCA9685 o algún TCS34725 no responde.
 4. **Añadir los servos** con el gripper DESACOPLADO del mecanismo, para no
