@@ -3,34 +3,50 @@
 //  Athena Rover 2026 · Retos del Rover H07 · INTEC · Reymildo & Montse
 // ===========================================================================
 //
-//  Lee el sensor B (QTRX-HD-01A analógico) y clasifica NEGRO vs. GRIS con un
-//  umbral fijo, calculado a partir de datos reales capturados con
-//  ../calibrar_ir.py (ver ../data_logs/). Imprime el resultado por consola
-//  cada 200 ms y enciende el LED RGB: rojo para negro, verde para gris.
+//  Lee los sensores A y B (QTRX-HD-01A analógicos) y clasifica la superficie
+//  entre 4 etiquetas, con umbrales fijos calculados a partir de datos reales
+//  capturados con ../calibrar_ir.py (ver ../data_logs/). Imprime el
+//  resultado por consola cada 200 ms y enciende el LED RGB.
 //
-//  Por qué solo el sensor B decide (por ahora): el umbral de abajo se
-//  calculó con datos donde el sensor A no daba señal (estaba en GPIO35,
-//  que en el ESP32-S3 no tiene hardware de ADC — analogRead() ahí siempre
-//  tira "Pin 35 is not ADC pin!" y devuelve 0). Ya se recableó, así que A
-//  se sigue leyendo e imprimiendo, pero no participa en la clasificación
-//  todavía.
+//  LÍMITE FÍSICO IMPORTANTE — léelo antes de tocar los umbrales:
+//  Un QTR analógico mide reflectancia INFRARROJA, no color visible. Con los
+//  5 colores capturados (NEGRO, GRIS, ROJO, AZUL, AMARILLO — ver la tabla
+//  abajo), ROJO y AZUL dieron promedios a menos de 110 unidades de
+//  distancia, bien dentro del ruido de cada uno (±355 y ±361 en el sensor
+//  A). No es un umbral mal elegido: ese sensor NO PUEDE distinguir rojo de
+//  azul de forma confiable, sin importar qué constante se le ponga. Por eso
+//  el diseño de vuelo usa el TCS34725 (sensor de color RGB de verdad) para
+//  las zonas de la pista, y el QTR solo para el borde de la cinta negra.
+//  Este sketch reporta "ROJO/AZUL (ambiguo)" en vez de fingir que sabe cuál
+//  de los dos es.
+//
+//  Datos de referencia (5 capturas, sensor A / sensor B, media ± desv.est.):
+//    NEGRO     A=3969±257  B=2925±23
+//    GRIS      A=3504±301  B=2867±55
+//    AZUL      A=2691±361  B=2613±181
+//    ROJO      A=2587±355  B=2677±187
+//    AMARILLO  A=2551±650  B=2288±291
+//
+//  De ahí salen los 3 umbrales de abajo: primero se separa "oscuro"
+//  (negro/gris, A alto) de "color" (rojo/azul/amarillo, A bajo) — es la
+//  separación más limpia de las cinco. Dentro de "oscuro", A vuelve a
+//  decidir negro vs. gris. Dentro de "color", el amarillo se distingue
+//  porque su B es notablemente más bajo que rojo/azul; lo que quede no se
+//  reparte, se reporta como ambiguo.
 //
 //  Pines: cableado físico actual confirmado por el equipo — sensores en
 //  GPIO1/GPIO2, control compartido en GPIO42 (los mismos GPIO que
 //  QTR_LEFT_OUT/QTR_RIGHT_OUT/QTR_EMITTER_CTRL del diseño de vuelo, ver
 //  hardware/conexiones-esp32-s3.md) — más el LED RGB en los mismos GPIO
 //  que usa el diseño final (firmware-esp32/,
-//  pruebas-platformio/02-cuadro-color-rgb/).
+//  pruebas-platformio/02-cuadro-color-rgb/). El módulo IR genérico no está
+//  en uso (no está cableado), así que este sketch ya no lo lee.
 //
-//  Sobre el umbral (145): calculado con 740 muestras del sensor B leído en
-//  GPIO4 (NEGRO promedió 165.2, desviación 13.1; GRIS promedió 124.4,
-//  desviación 7.6). El sensor B ahora se lee por GPIO2 en vez de GPIO4 —
-//  debería dar los mismos números (es el mismo sensor físico, ambos GPIO
-//  son ADC1 equivalentes), pero como no se volvió a capturar después del
-//  cambio de pines, conviene verificarlo contra la superficie real antes
-//  de confiar en el umbral a ciegas. La calibración en vivo de
-//  pruebas-platformio/01 y 02 (recalibra en cada arranque) sigue siendo la
-//  que manda para el robot de verdad — esto es solo una herramienta de banco.
+//  Como con cualquier umbral fijo sacado de un log puntual: si cambia la
+//  luz del lugar o se reposiciona el sensor, verifícalo de nuevo contra la
+//  superficie real. La calibración en vivo de pruebas-platformio/01 y 02
+//  (recalibra en cada arranque) sigue siendo la que manda para el robot de
+//  verdad — esto es solo una herramienta de banco.
 //
 // ===========================================================================
 
@@ -43,19 +59,20 @@
 
 const uint8_t QTR_A_SENSOR = 1;   // = QTR_LEFT_OUT en hardware/conexiones-esp32-s3.md
 const uint8_t QTR_A_CTRL   = 42;  // = QTR_EMITTER_CTRL en hardware/conexiones-esp32-s3.md
-const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md — el que sí decide
+const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md
 const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL
-const uint8_t GENERIC_IR   = 14;
 
 const uint8_t RGB_R = 39;
 const uint8_t RGB_G = 38;
 const uint8_t RGB_B = 3;
 
 // =====================================================
-// UMBRAL — ver análisis en el encabezado
+// UMBRALES — ver el análisis completo en el encabezado
 // =====================================================
 
-constexpr uint16_t UMBRAL_NEGRO_GRIS = 145;  // sensor B > esto => NEGRO, si no => GRIS
+constexpr uint16_t UMBRAL_A_OSCURO_COLOR = 3100;  // sensor A > esto => tier "oscuro" (negro/gris)
+constexpr uint16_t UMBRAL_A_NEGRO_GRIS   = 3700;  // dentro de "oscuro": A > esto => NEGRO, si no => GRIS
+constexpr uint16_t UMBRAL_B_AMARILLO     = 2450;  // dentro de "color": B < esto => AMARILLO
 
 // =====================================================
 // QTR OBJECTS
@@ -66,6 +83,29 @@ QTRSensors qtrB;
 
 uint16_t valuesA[1];
 uint16_t valuesB[1];
+
+// =====================================================
+// CLASIFICACIÓN
+// =====================================================
+
+enum class Color : uint8_t { NEGRO, GRIS, AMARILLO, ROJO_AZUL };
+
+const char *ColorNombre(Color c) {
+    switch (c) {
+        case Color::NEGRO:     return "NEGRO";
+        case Color::GRIS:      return "GRIS";
+        case Color::AMARILLO:  return "AMARILLO";
+        case Color::ROJO_AZUL: return "ROJO/AZUL (ambiguo)";
+        default:                return "?";
+    }
+}
+
+Color Clasificar(uint16_t a, uint16_t b) {
+    if (a > UMBRAL_A_OSCURO_COLOR) {
+        return (a > UMBRAL_A_NEGRO_GRIS) ? Color::NEGRO : Color::GRIS;
+    }
+    return (b < UMBRAL_B_AMARILLO) ? Color::AMARILLO : Color::ROJO_AZUL;
+}
 
 // =====================================================
 // LED RGB
@@ -122,6 +162,19 @@ namespace RgbLed {
         PwmWrite(RGB_G, CH_G, g);
         PwmWrite(RGB_B, CH_B, b);
     }
+
+    // Rojo=negro y verde=gris quedan igual que antes. Amarillo se mapea a
+    // amarillo. Para "ROJO/AZUL (ambiguo)" se usa púrpura a propósito: no es
+    // ni rojo ni azul puro, para no fingir una respuesta que el sensor no
+    // puede dar.
+    void ApplyColor(Color c) {
+        switch (c) {
+            case Color::NEGRO:     SetRaw(255,   0,   0); break;
+            case Color::GRIS:      SetRaw(  0, 255,   0); break;
+            case Color::AMARILLO:  SetRaw(255, 200,   0); break;
+            case Color::ROJO_AZUL: SetRaw(160,   0, 200); break;
+        }
+    }
 }
 
 // =====================================================
@@ -148,8 +201,6 @@ void setup()
     qtrB.setSamplesPerSensor(8);
     qtrB.setEmitterPin(QTR_B_CTRL);
 
-    pinMode(GENERIC_IR, INPUT);
-
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
 
@@ -164,20 +215,16 @@ void loop()
 {
     qtrA.read(valuesA);
     qtrB.read(valuesB);
-    int genericValue = digitalRead(GENERIC_IR);
 
-    const bool esNegro = valuesB[0] > UMBRAL_NEGRO_GRIS;
+    const Color color = Clasificar(valuesA[0], valuesB[0]);
 
-    RgbLed::SetRaw(esNegro ? 255 : 0, esNegro ? 0 : 255, 0);
+    RgbLed::ApplyColor(color);
 
-    Serial.print(esNegro ? "NEGRO" : "GRIS ");
-    Serial.print("  B=");
-    Serial.print(valuesB[0]);
+    Serial.print(ColorNombre(color));
     Serial.print("  A=");
     Serial.print(valuesA[0]);
-    if (valuesA[0] == 0) Serial.print(" [sin senal]");
-    Serial.print("  IR_generico=");
-    Serial.println(genericValue);
+    Serial.print("  B=");
+    Serial.println(valuesB[0]);
 
     delay(200);
 }
