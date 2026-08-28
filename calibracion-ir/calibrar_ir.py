@@ -111,9 +111,31 @@ def main() -> int:
     total_muestras = args.puntos * args.muestras
 
     with ser, destino.open("w", newline="", encoding="utf-8") as f:
-        time.sleep(2)  # el ESP32 se resetea al abrir el puerto; darle tiempo a arrancar
-        esperar_ready(ser)
-        print("ESP32 listo.\n")
+        time.sleep(2)  # si el ESP32 se resetea al abrir el puerto, darle tiempo a arrancar
+        try:
+            esperar_ready(ser)
+            print("ESP32 listo.\n")
+        except TimeoutError:
+            # Con USB nativo (el que usa este sketch) el ESP32 no siempre se
+            # resetea al abrir el puerto: si ya estaba corriendo de antes,
+            # el "READY" se mandó una sola vez al arrancar y nadie lo
+            # escuchaba todavía — no es necesariamente un error. Como
+            # respaldo, se prueba un 'R' directo: si responde con datos
+            # válidos, el sketch correcto SÍ está corriendo y se continúa.
+            print(
+                "No llegó 'READY' — probando un comando directo por si el "
+                "ESP32 ya estaba corriendo de antes...",
+            )
+            try:
+                leer_muestra(ser)
+            except TimeoutError:
+                raise TimeoutError(
+                    "El ESP32 no respondió ni a 'READY' ni a un comando "
+                    "'R' directo. Revisa el puerto, que el sketch de "
+                    "firmware/ esté cargado, y que no haya otra ventana "
+                    "(pio device monitor, Arduino IDE) usando el puerto."
+                ) from None
+            print("ESP32 responde bien, sigo aunque no vi 'READY'.\n")
 
         # Encabezado con los metadatos de la corrida, como comentarios (#) —
         # así el archivo sigue siendo CSV válido (pandas.read_csv(..., comment="#")
