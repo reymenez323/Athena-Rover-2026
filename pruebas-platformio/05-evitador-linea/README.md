@@ -1,10 +1,12 @@
 # Prueba 05 — Evitador de línea (QTR con prioridad + color de respaldo)
 
 Robot que se queda **siempre** dentro del rectángulo delimitado por cinta
-negra. Es un **evitador reactivo**: en cuanto detecta el borde, gira sobre
-su propio eje — sin avanzar ni retroceder — reevaluando los sensores en
-cada vuelta de `loop()`, hasta que confirma que ya no hay negro debajo.
-**No hay temporizadores fijos.**
+negra. En cuanto detecta el borde: retrocede ~1.5 s en línea recta
+(cronometrado) y después gira sobre su propio eje hacia un lado elegido
+**al azar** (izquierda o derecha, 50/50) — reevaluando los sensores en
+cada vuelta de `loop()` durante el giro, hasta que confirma que ya no hay
+negro debajo. El giro en sí sigue sin temporizador fijo: dura lo que el
+sensor diga.
 
 ## Dos tipos de sensor, con prioridad distinta (a propósito)
 
@@ -41,16 +43,24 @@ consola, como diagnóstico.
 
 | Estado | Qué hace | Cómo sale |
 |---|---|---|
-| `DRIVING` | Avanza recto. | QTR confirma negro (rápido) **o** color confirma negro por su cuenta (lento, solo si el QTR no lo hizo ya) → `AVOIDING`. |
-| `AVOIDING` | Gira en el sitio (un lado adelante, el otro atrás — **nunca** avanza ni retrocede). | SOLO cuando el QTR confirma que ya no hay negro → `DRIVING`. El color no participa en esta decisión. |
+| `DRIVING` | Avanza recto. | QTR confirma negro (rápido) **o** color confirma negro por su cuenta (lento, solo si el QTR no lo hizo ya) → `REVERSING`. |
+| `REVERSING` | Retrocede en línea recta durante `kReverseMs` (~1.5 s), cronometrado, sin mirar los sensores. | Al cumplirse el tiempo, sortea un lado al azar (50/50) → `TURNING`. |
+| `TURNING` | Gira en el sitio hacia el lado sorteado (un lado adelante, el otro atrás — **nunca** avanza ni retrocede). | SOLO cuando el QTR confirma que ya no hay negro → `DRIVING`. El color no participa en esta decisión. |
 
-Sin `kReverseMs`/`kTurn180Ms` ni nada cronometrado — la duración del giro
-la decide el sensor. Mismo razonamiento que en
-[`01-mantente-en-cuadro`](../01-mantente-en-cuadro/README.md#el-giro): un
-esquema a ciegas resultó frágil en la práctica.
+`kReverseMs` es el ÚNICO temporizador fijo del archivo — retroceder no
+tiene una señal de sensor que diga "ya retrocediste lo suficiente", así
+que es de lazo abierto (igual que en
+[`01-mantente-en-cuadro`](../01-mantente-en-cuadro/README.md#el-giro)). El
+giro que sigue no tiene ese problema: dura lo que el sensor diga, no un
+número cronometrado.
 
 El giro usa el máximo duty (`kTurnSpeed = 100`): un pivote en el sitio con
 4 ruedas motrices necesita mucho torque (las 4 raspan contra el piso).
+
+**El lado del giro (izquierda o derecha) se sortea al azar** con
+`esp_random()` (generador de números aleatorios por hardware del
+ESP32-S3, no una semilla fija) cada vez que termina la reversa — no
+depende de por dónde entró la cinta ni de qué sensor disparó la detección.
 
 ## Compilar y subir
 

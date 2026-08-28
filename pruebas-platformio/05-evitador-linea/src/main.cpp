@@ -4,11 +4,12 @@
 // ===========================================================================
 //
 //  OBJETIVO: el robot se queda SIEMPRE dentro del rectángulo delimitado por
-//  la cinta negra. Es un EVITADOR reactivo: en cuanto detecta el borde,
-//  gira sobre su propio eje — sin avanzar ni retroceder — reevaluando los
-//  sensores en cada vuelta de loop(), hasta que confirma que ya no hay
-//  negro debajo. No hay temporizadores fijos: la duración del giro la
-//  decide el sensor, no un número cronometrado.
+//  la cinta negra. En cuanto detecta el borde: retrocede ~1.5 s en línea
+//  recta (kReverseMs, cronometrado) y después gira sobre su propio eje
+//  hacia un lado elegido AL AZAR (izquierda o derecha, 50/50) hasta que
+//  confirma que ya no hay negro debajo — el giro en sí sigue siendo
+//  reactivo, sin temporizador: dura lo que el sensor diga, no un número
+//  cronometrado.
 //
 //  DOS TIPOS DE SENSOR, CON PRIORIDAD DISTINTA (no son iguales a propósito):
 //
@@ -478,31 +479,39 @@ void ActualizarColor() {
 //  [8] MÁQUINA DE ESTADOS — QTR con prioridad, color como respaldo
 // ===========================================================================
 //
-//  DRIVING:  avanza recto. Entra a AVOIDING si:
-//              - el QTR (izquierdo O derecho) confirma negro (rápido,
-//                kConfirmacionesQtr) -- esto SOLO decide el QTR; o
-//              - el color todavía no confirmó nada por QTR, pero confirma
-//                negro por su cuenta (más lento, kConfirmacionesColor) --
-//                red de seguridad si el QTR fallara o estuviera mal
-//                calibrado.
-//  AVOIDING: gira sobre su propio eje (un lado adelante, el otro atrás —
-//            NUNCA avanza ni retrocede). Vuelve a DRIVING SOLO cuando el
-//            QTR confirma que ya no hay negro — el color no participa en
-//            esta decisión, ni para bien ni para mal: tiene prioridad más
-//            baja, así que no puede vetar ni acelerar la salida.
-//
-//  Sin temporizadores fijos: la duración del giro la decide el sensor, no
-//  un número copiado de una prueba anterior — ver el mismo razonamiento en
-//  01-mantente-en-cuadro/README.md, sección "El giro".
+//  DRIVING:   avanza recto. Entra a REVERSING si:
+//               - el QTR (izquierdo O derecho) confirma negro (rápido,
+//                 kConfirmacionesQtr) -- esto SOLO decide el QTR; o
+//               - el color todavía no confirmó nada por QTR, pero confirma
+//                 negro por su cuenta (más lento, kConfirmacionesColor) --
+//                 red de seguridad si el QTR fallara o estuviera mal
+//                 calibrado.
+//  REVERSING: retrocede en línea recta durante kReverseMs (~1.5 s),
+//             cronometrado, a ciegas -- no mira los sensores. Al cumplirse
+//             el tiempo, sortea un lado al azar (50/50) y pasa a TURNING.
+//  TURNING:   gira sobre su propio eje hacia el lado sorteado (un lado
+//             adelante, el otro atrás -- NUNCA avanza ni retrocede en este
+//             estado). Vuelve a DRIVING SOLO cuando el QTR confirma que ya
+//             no hay negro -- el color no participa en esta decisión, ni
+//             para bien ni para mal: tiene prioridad más baja, así que no
+//             puede vetar ni acelerar la salida. Sin temporizador: dura lo
+//             que el sensor diga, no un número copiado de otra prueba.
 
-enum class State : uint8_t { DRIVING, AVOIDING };
+enum class State : uint8_t { DRIVING, REVERSING, TURNING };
 
 constexpr int kForwardSpeed = 55;
+constexpr int kReverseSpeed = -55;   // mismo duty que adelante, sentido invertido
 
 // Mismo razonamiento que en 01-mantente-en-cuadro: un giro en el sitio con
 // 4 ruedas motrices necesita mucho torque (las 4 raspan contra el piso).
 // Va al máximo duty a propósito.
 constexpr int kTurnSpeed = 100;
+
+// Único temporizador fijo del archivo: cuánto dura la reversa. A
+// diferencia del giro (reactivo, ver TURNING arriba), retroceder no tiene
+// una señal de sensor que le diga "ya retrocediste lo suficiente" -- así
+// que, igual que en 01-mantente-en-cuadro, es de lazo abierto.
+constexpr uint32_t kReverseMs = 1500;
 
 // Confirmación del QTR — rápida, es la señal CON prioridad. Mismo criterio
 // que 01-mantente-en-cuadro: ~20 ms de negro sostenido (4 lecturas a
@@ -513,9 +522,21 @@ uint8_t g_confirmQtrNegro = 0;
 uint8_t g_confirmQtrClaro = 0;
 
 State g_state = State::DRIVING;
+uint32_t g_stateEnteredAtMs = 0;
+bool g_giroDerecha = false;   // sorteado al entrar a TURNING, ver REVERSING
+
+void EnterState(State s) {
+    g_state = s;
+    g_stateEnteredAtMs = millis();
+}
 
 const char *NombreEstado(State s) {
-    return s == State::DRIVING ? "DRIVING" : "AVOIDING";
+    switch (s) {
+        case State::DRIVING:   return "DRIVING";
+        case State::REVERSING: return "REVERSING";
+        case State::TURNING:   return "TURNING";
+    }
+    return "?";
 }
 
 void RunStateMachine(bool qtrRawNegro) {
@@ -525,20 +546,38 @@ void RunStateMachine(bool qtrRawNegro) {
 
             if (qtrConfirma || g_colorConfirmaNegro) {
                 DEBUG_LINK.printf(
-                    "[Borde] negro confirmado (qtr=%d color_respaldo=%d) -> AVOIDING\n",
+                    "[Borde] negro confirmado (qtr=%d color_respaldo=%d) -> REVERSING\n",
                     qtrConfirma, g_colorConfirmaNegro);
                 digitalWrite(Pins::LED_TEAM_BLUE, HIGH);
                 g_confirmQtrClaro = 0;
                 g_confirmColorNegro = 0;   // arranca fresca, no re-dispara de inmediato al volver
-                g_state = State::AVOIDING;
+                EnterState(State::REVERSING);
             } else {
                 DriveSides(kForwardSpeed, kForwardSpeed);
             }
             break;
         }
 
-        case State::AVOIDING: {
-            DriveSides(kTurnSpeed, -kTurnSpeed);   // pivote: un lado adelante, el otro atrás
+        case State::REVERSING: {
+            DriveSides(kReverseSpeed, kReverseSpeed);
+            if ((uint32_t)(millis() - g_stateEnteredAtMs) >= kReverseMs) {
+                g_giroDerecha = (esp_random() % 2) == 0;   // 50/50, RNG de hardware del ESP32
+                DEBUG_LINK.printf("[Borde] reversa completa -> giro al azar hacia la %s\n",
+                    g_giroDerecha ? "DERECHA" : "IZQUIERDA");
+                EnterState(State::TURNING);
+            }
+            break;
+        }
+
+        case State::TURNING: {
+            // Pivote: un lado adelante, el otro atrás -- el sentido lo
+            // decide g_giroDerecha, sorteado una sola vez al entrar aquí
+            // (no se vuelve a sortear en cada vuelta de loop()).
+            if (g_giroDerecha) {
+                DriveSides(kTurnSpeed, -kTurnSpeed);
+            } else {
+                DriveSides(-kTurnSpeed, kTurnSpeed);
+            }
 
             // SOLO el QTR decide la salida -- el color no participa (tiene
             // prioridad más baja, ver encabezado).
@@ -547,7 +586,7 @@ void RunStateMachine(bool qtrRawNegro) {
                 DEBUG_LINK.println("[Borde] despejado (QTR) -> DRIVING");
                 digitalWrite(Pins::LED_TEAM_BLUE, LOW);
                 g_confirmQtrNegro = 0;
-                g_state = State::DRIVING;
+                EnterState(State::DRIVING);
             }
             break;
         }

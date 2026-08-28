@@ -1,0 +1,4 @@
+# Salida por defecto de generar_dataset_knn.py -- regenerable desde
+# data_logs/, no hace falta versionarla (a diferencia de los .csv, que sí
+# son datos irremplazables).
+dataset_color.h
