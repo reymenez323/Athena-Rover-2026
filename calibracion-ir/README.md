@@ -43,6 +43,11 @@ problema en la práctica, así que se dejó tal cual en vez de recablear.
 
 ## Cómo usar
 
+> Este sketch usa `Serial` en su configuración por defecto (UART0), **no**
+> el USB nativo que sí usan `firmware-esp32/` y las pruebas de
+> `pruebas-platformio/`. El puerto que le pasas a `--puerto` es el que te
+> aparezca normal al conectar el ESP32-S3, sin nada especial que ajustar.
+
 1. Conectar el ESP32-S3 (solo, con el sensor bajo prueba — sin el resto de periféricos) y subir el sketch:
    ```bash
    cd firmware
