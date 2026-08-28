@@ -21,6 +21,9 @@ Robot autónomo diseñado para competir en el reto **"Retos del Rover – H07"**
 Athena-Rover-2026/
 ├── firmware-esp32/     Firmware del ESP32-S3: TODO en un solo main.cpp,
 │                       7 tareas FreeRTOS independientes, cero librerías externas
+├── pruebas-platformio/ Proyectos PlatformIO pequeños e independientes, uno por
+│                       comportamiento, para validar con hardware real antes
+│                       de integrar al firmware principal
 ├── raspberry-pi/       Visión (cámara USB + CNN INT8) y lógica de misión
 │   ├── src/athena/      paquete principal
 │   ├── data/            dataset para entrenar el modelo
@@ -45,6 +48,7 @@ Ver [`docs/reglas-reto-rover-2025.md`](docs/reglas-reto-rover-2025.md) para el d
 |-----------|----------|
 | [`hardware/conexiones-esp32-s3.md`](hardware/conexiones-esp32-s3.md) | **Cómo cablear todo.** Incluye los 5 errores que queman hardware. Léelo antes de conectar nada. |
 | [`firmware-esp32/README.md`](firmware-esp32/README.md) | Las 7 tareas de FreeRTOS y cómo se aíslan entre sí |
+| [`pruebas-platformio/README.md`](pruebas-platformio/README.md) | Proyectos de prueba independientes, uno por comportamiento |
 | [`raspberry-pi/README.md`](raspberry-pi/README.md) | El pipeline de visión y por qué está diseñado así |
 | [`docs/reglas-reto-rover-2025.md`](docs/reglas-reto-rover-2025.md) | Reglas del reto y medidas reales de la pista |
 | [`docs/arquitectura-firmware-esp32.md`](docs/arquitectura-firmware-esp32.md) | El *porqué* de las decisiones de diseño del firmware |
