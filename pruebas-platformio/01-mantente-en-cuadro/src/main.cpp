@@ -21,20 +21,30 @@
 //  que corre tal cual sobre el chasis ya cableado.
 //
 //  SOBRE EL UMBRAL DE "esto es cinta negra":
-//  Los logs de calibración que trajo el equipo (IR_BLACK / IR_GREY) muestran
-//  que un número fijo es frágil: BLACK promedia ~4060 (satura cerca de 4095,
-//  desviación ~135), pero GREY varía muchísimo según el punto medido —de
-//  ~3400 a ~3960— y ese máximo de GREY se mete dentro del rango de BLACK.
-//  Con el sensor sostenido a mano a distintas alturas entre puntos, es
-//  esperable: la reflectancia que ve el QTR depende muchísimo de la
-//  distancia a la superficie, no solo del color. Sobre el chasis, a altura
-//  fija, el contraste real debería ser mucho más limpio — pero para no
-//  apostarlo todo a eso, este sketch CALIBRA EN CADA ARRANQUE (ver [2]) en
-//  vez de confiar en una constante copiada del log.
+//  Como SOLO decide el sensor derecho (= "sensor B" en calibracion-ir/, ver
+//  [4]), el umbral de reserva se saca del análisis de ESE sensor, no del
+//  izquierdo. Los logs más recientes con la atenuación del ADC ya fijada
+//  (calibracion-ir/data_logs/IR_NEGRO_2026-08-28_15-36-20.csv e
+//  IR_GRIS_2026-08-28_15-33-07.csv — ver el análisis completo en
+//  calibracion-ir/detector-color/src/main.cpp) dan, para el sensor B:
+//  NEGRO 2781–2938, GRIS 2747–2935 — un solape amplio, porque esas
+//  muestras se tomaron a mano, sin altura fija. Con el sensor sostenido a
+//  mano a distintas alturas, la reflectancia que ve el QTR depende
+//  muchísimo de la distancia a la superficie, no solo del color. Sobre el
+//  chasis, a altura fija, el contraste real debería ser mucho más limpio
+//  — pero para no apostarlo todo a eso, este sketch CALIBRA EN CADA
+//  ARRANQUE (ver [2]) en vez de confiar en una constante copiada del log.
 //
-//  Umbral de reserva (si el arranque no calibra, ver [2]): 3700 — el punto
-//  medio razonable entre el grueso de GREY (<3800 en 5 de 6 puntos medidos)
-//  y el piso de BLACK (>4030 en los 4 puntos medidos).
+//  Umbral de reserva (si el arranque no calibra, ver [2]): 2910 — el mejor
+//  punto de corte encontrado sobre esos mismos logs del sensor B (52/740
+//  errores; ver el detalle en calibracion-ir/detector-color/src/main.cpp).
+//  OJO: antes de este ajuste, esta constante valía 3700 — un número sacado
+//  del sensor IZQUIERDO (A), que dejó de decidir nada desde que el commit
+//  c4f9b47 pasó la decisión al sensor derecho (B) y nunca se actualizó
+//  este umbral. Con 3700, si la calibración en vivo del sensor derecho
+//  llegaba a fallar (span < MIN_USABLE_SPAN), el fallback NUNCA se
+//  activaba —el sensor B no pasa de ~2940— y el robot habría seguido de
+//  largo sobre la cinta negra sin detectarla nunca.
 //
 // ===========================================================================
 
@@ -92,7 +102,7 @@ namespace Pins {
 
 constexpr uint32_t CALIBRATION_MS = 3000;
 constexpr uint16_t MIN_USABLE_SPAN = 300;     // por debajo de esto, no hubo contraste real
-constexpr uint16_t FALLBACK_THRESHOLD = 3700; // ver análisis del log en el encabezado
+constexpr uint16_t FALLBACK_THRESHOLD = 2910; // sensor derecho (B); ver análisis del log en el encabezado
 
 uint16_t g_leftThreshold  = FALLBACK_THRESHOLD;
 uint16_t g_rightThreshold = FALLBACK_THRESHOLD;
