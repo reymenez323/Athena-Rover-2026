@@ -104,6 +104,17 @@ void setup()
     // de calibración entre versiones del core o entre placas.
     analogReadResolution(12);
 
+    // FIX: mismo problema que con la resolución, pero con la atenuación.
+    // Sin fijarla explícitamente, dos sesiones de calibración del mismo
+    // sensor sobre la misma superficie dieron lecturas de sensor B
+    // desplazadas ~15-20 cuentas entre sí (ver el análisis que motivó este
+    // cambio: comparando IR_NEGRO/IR_GRIS de 07:xx vs. 15:xx del
+    // 2026-08-28, ningún umbral fijo servía bien para las dos sesiones a
+    // la vez). 11 dB es la misma atenuación que usa firmware-esp32/ para
+    // estos sensores.
+    analogSetPinAttenuation(QTR_A_SENSOR, ADC_11db);
+    analogSetPinAttenuation(QTR_B_SENSOR, ADC_11db);
+
     // -------------------------
     // QTRX-HD-01A — sensor A
     // -------------------------

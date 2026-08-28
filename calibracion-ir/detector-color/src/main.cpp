@@ -11,22 +11,28 @@
 //  menos errores probando contra los datos reales. Se probaron A solo, B
 //  solo, y varias combinaciones lineales de ambos (A+B, A-B, promedios,
 //  A + w·B para w entre -3 y 3) sobre las 740 muestras de
-//  ../data_logs/IR_NEGRO_2026-08-28_07-42-21.csv e
-//  IR_GRIS_2026-08-28_07-44-29.csv. El ganador, por lejos, fue B solo:
+//  ../data_logs/IR_NEGRO_2026-08-28_15-36-20.csv e
+//  IR_GRIS_2026-08-28_15-33-07.csv — capturadas ya con la atenuación del
+//  ADC fijada explícitamente (ADC_11db, ver setup() más abajo y
+//  ../firmware/src/main.cpp). B solo volvió a ganar:
 //
 //      Umbral         Errores totales   Detalle
-//      A solo (3700)      80 / 740      66 negro→gris, 14 gris→negro
-//      A + 0.8·B          69 / 740      58 negro→gris, 11 gris→negro
-//      B solo (2922)       40 / 740      40 negro→gris,  0 gris→negro
+//      A solo (3697)     102 / 740      79 negro→gris, 23 gris→negro
+//      A + 1.9·B          96 / 740      78 negro→gris, 18 gris→negro
+//      B solo (2910)       52 / 740      42 negro→gris, 10 gris→negro
 //
-//  Con B, el rango de NEGRO fue 2804–2940 y el de GRIS 2457–2922 — se
-//  solapan solo en una franja angosta (2804–2922). Ahí es normal que
-//  algunas muestras de negro salgan como gris (nunca al revés, con este
-//  umbral) — es ruido real de esa franja, no un umbral mal elegido. Si
-//  hace falta más margen, el próximo paso NO es otro umbral: es fijar la
-//  atenuación del ADC explícitamente (analogSetPinAttenuation, como hace
-//  firmware-esp32/) en vez de dejar la que trae por defecto — ver
-//  ../README.md.
+//  Con B, el rango de NEGRO fue 2781–2938 y el de GRIS 2747–2935 — el
+//  solape (2781–2935) cubre casi todo el rango de ambas superficies. Fijar
+//  la atenuación del ADC (ver el historial de commits de este archivo) NO
+//  redujo el solape de forma notable: los rangos crudos apenas cambiaron
+//  respecto a las corridas de antes del fix. La causa del solape no es la
+//  configuración del ADC — es que ambas superficies se midieron a mano,
+//  sin altura ni ángulo fijos (el propio ../README.md ya documentaba esto
+//  mismo para el sensor A: el GRIS varía mucho según cómo se sostenga el
+//  sensor). Con el sensor MONTADO a altura fija en el chasis, como hace el
+//  robot real, el solape debería ser bastante menor — pero eso solo lo
+//  confirma la calibración en vivo del robot, no esta herramienta de
+//  banco.
 //
 //  El sensor A se sigue leyendo e imprimiendo (para tenerlo a la vista),
 //  pero ya NO participa en la decisión.
@@ -66,8 +72,12 @@ const uint8_t RGB_B = 3;
 // =====================================================
 // UMBRAL — ver el análisis completo en el encabezado
 // =====================================================
+//
+// Recalibrado 2026-08-28 con la atenuación del ADC ya fijada (ver
+// setup()). Reemplaza el valor anterior (2922), calibrado sin esa
+// atenuación fijada.
 
-constexpr uint16_t UMBRAL_NEGRO_GRIS = 2922;  // sensor B > esto => NEGRO, si no => GRIS
+constexpr uint16_t UMBRAL_NEGRO_GRIS = 2910;  // sensor B > esto => NEGRO, si no => GRIS
 
 // =====================================================
 // QTR OBJECTS
@@ -147,6 +157,18 @@ void setup()
     Serial.println("\nDetector NEGRO/GRIS - banco de calibracion");
 
     analogReadResolution(12);
+
+    // Misma atenuación que firmware-esp32/ y que ../firmware/ (banco de
+    // calibración). Sin fijarla, el ADC queda en el valor por defecto del
+    // core, que puede desplazar las lecturas de sesión a sesión — fue la
+    // causa raíz de que ningún umbral fijo generalizara entre la
+    // calibración de las 07:xx y la de las 15:xx del 2026-08-28. Como este
+    // sketch lee EN VIVO (no contra un CSV), el cambio aquí ya corrige la
+    // lectura hacia adelante; el UMBRAL_NEGRO_GRIS de abajo sigue siendo
+    // el de las corridas viejas y hay que reconfirmarlo con datos nuevos
+    // capturados con esta atenuación fijada.
+    analogSetPinAttenuation(QTR_A_SENSOR, ADC_11db);
+    analogSetPinAttenuation(QTR_B_SENSOR, ADC_11db);
 
     qtrA.setTypeAnalog();
     const uint8_t pinsA[] = { QTR_A_SENSOR };
