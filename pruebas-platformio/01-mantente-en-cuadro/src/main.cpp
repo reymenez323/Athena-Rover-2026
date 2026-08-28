@@ -4,9 +4,11 @@
 // ===========================================================================
 //
 //  OBJETIVO: el robot avanza dentro del cuadrado delimitado por la cinta
-//  negra, y cuando un sensor de reflectancia delantero detecta el borde
-//  (fondo gris -> cinta negra), retrocede, gira hacia el lado contrario y
-//  sigue avanzando. Nunca debe cruzar la cinta.
+//  negra, siempre en el mismo sentido de avance que la prueba
+//  03-motores-adelante (nunca gira, nunca retrocede), y en cuanto un
+//  sensor de reflectancia delantero detecta el borde (fondo gris -> cinta
+//  negra), PARA de golpe y se queda detenido. No intenta esquivar la cinta
+//  ni retomar la marcha por su cuenta.
 //
 //  Es un sketch de banco, deliberadamente simple (setup/loop, sin FreeRTOS
 //  ni colas): sirve para validar el comportamiento de borde ANTES de
@@ -216,96 +218,43 @@ void DriveSides(int leftSpeed, int rightSpeed) {
 void MotorsStop() { DriveSides(0, 0); }
 
 // ===========================================================================
-//  [4] MÁQUINA DE ESTADOS — evasión de borde
+//  [4] MÁQUINA DE ESTADOS — avanzar y parar en seco
 // ===========================================================================
 //
-//  FORWARD: avanza recto, mirando los sensores.
-//  BACK_UP: retrocede en línea recta un instante, para alejarse de la cinta
-//           antes de girar (si se gira sin retroceder, la rueda de afuera
-//           puede terminar pisando la cinta de todos modos).
-//  TURN:    gira sobre su eje, alejándose del lado que disparó.
-//
-//  Mientras está en BACK_UP o TURN se ignoran los sensores a propósito: si
-//  no, un QTR que sigue viendo negro durante la maniobra reinicia la
-//  maniobra en bucle y el robot nunca vuelve a FORWARD.
+//  FORWARD: avanza recto (mismo sentido que 03-motores-adelante, nunca
+//           retrocede, nunca gira), mirando los sensores.
+//  STOPPED: se quedó sin cinta debajo, motores a 0 y ahí se queda. No hay
+//           forma de volver a FORWARD sin resetear el ESP32 — a propósito,
+//           para poder mirar exactamente dónde paró antes de que el robot
+//           haga cualquier otra cosa.
 
-enum class State : uint8_t { FORWARD, BACK_UP, TURN };
+enum class State : uint8_t { FORWARD, STOPPED };
 
 constexpr int kForwardSpeed = 55;
-constexpr int kBackSpeed    = 55;
-constexpr int kTurnSpeed    = 60;
-
-constexpr uint32_t kBackUpMs      = 300;
-constexpr uint32_t kTurnMs        = 400;   // giro simple, un solo lado disparó
-constexpr uint32_t kTurnCornerMs  = 700;   // giro largo, los dos lados dispararon (esquina)
-
-enum class Edge : uint8_t { NONE, LEFT, RIGHT, BOTH };
 
 State g_state = State::FORWARD;
-Edge g_triggeredBy = Edge::NONE;
-uint32_t g_stateStartMs = 0;
-
-void EnterState(State s, Edge trigger = Edge::NONE) {
-    g_state = s;
-    g_stateStartMs = millis();
-    if (trigger != Edge::NONE) g_triggeredBy = trigger;
-}
-
-void UpdateEdgeLeds() {
-    digitalWrite(Pins::LED_TEAM_RED,  (g_state != State::FORWARD &&
-        (g_triggeredBy == Edge::LEFT  || g_triggeredBy == Edge::BOTH)) ? HIGH : LOW);
-    digitalWrite(Pins::LED_TEAM_BLUE, (g_state != State::FORWARD &&
-        (g_triggeredBy == Edge::RIGHT || g_triggeredBy == Edge::BOTH)) ? HIGH : LOW);
-}
 
 void RunStateMachine(bool leftOnLine, bool rightOnLine) {
     switch (g_state) {
         case State::FORWARD: {
-            if (leftOnLine && rightOnLine) {
-                DEBUG_LINK.println("[Borde] los dos sensores a la vez -> esquina");
-                EnterState(State::BACK_UP, Edge::BOTH);
-            } else if (leftOnLine) {
-                DEBUG_LINK.println("[Borde] izquierdo -> giro a la derecha");
-                EnterState(State::BACK_UP, Edge::LEFT);
-            } else if (rightOnLine) {
-                DEBUG_LINK.println("[Borde] derecho -> giro a la izquierda");
-                EnterState(State::BACK_UP, Edge::RIGHT);
+            if (leftOnLine || rightOnLine) {
+                MotorsStop();
+                g_state = State::STOPPED;
+                DEBUG_LINK.printf("[Borde] linea negra detectada (izq=%d der=%d) -> STOP\n",
+                    leftOnLine, rightOnLine);
+                digitalWrite(Pins::LED_TEAM_RED,  leftOnLine  ? HIGH : LOW);
+                digitalWrite(Pins::LED_TEAM_BLUE, rightOnLine ? HIGH : LOW);
             } else {
                 DriveSides(kForwardSpeed, kForwardSpeed);
             }
             break;
         }
 
-        case State::BACK_UP: {
-            DriveSides(-kBackSpeed, -kBackSpeed);
-            if ((uint32_t)(millis() - g_stateStartMs) > kBackUpMs) {
-                EnterState(State::TURN);
-            }
-            break;
-        }
-
-        case State::TURN: {
-            // Girar alejándose del lado que disparó: si fue el IZQUIERDO, la
-            // rueda izquierda avanza y la derecha retrocede (gira a la
-            // derecha), y viceversa. En esquina, gira largo hacia la derecha.
-            if (g_triggeredBy == Edge::LEFT) {
-                DriveSides(kTurnSpeed, -kTurnSpeed);
-            } else if (g_triggeredBy == Edge::RIGHT) {
-                DriveSides(-kTurnSpeed, kTurnSpeed);
-            } else {
-                DriveSides(kTurnSpeed, -kTurnSpeed);
-            }
-
-            const uint32_t limit = (g_triggeredBy == Edge::BOTH) ? kTurnCornerMs : kTurnMs;
-            if ((uint32_t)(millis() - g_stateStartMs) > limit) {
-                g_triggeredBy = Edge::NONE;
-                EnterState(State::FORWARD);
-            }
+        case State::STOPPED: {
+            MotorsStop();  // redundante a propósito: si algo lo perturbara, se vuelve a frenar
             break;
         }
     }
-
-    UpdateEdgeLeds();
 }
 
 // ===========================================================================
@@ -337,7 +286,6 @@ void setup() {
     RunCalibration();
 
     DEBUG_LINK.println("[Setup] listo, arrancando en FORWARD.");
-    g_stateStartMs = millis();
 }
 
 void loop() {
@@ -349,15 +297,15 @@ void loop() {
 
     RunStateMachine(leftOnLine, rightOnLine);
 
-    // Telemetría de banco, para ajustar velocidades y tiempos con el
+    // Telemetría de banco, para ajustar velocidades y umbrales con el
     // monitor serial abierto. Se puede comentar una vez calibrado a gusto.
     static uint32_t lastPrint = 0;
     if ((uint32_t)(millis() - lastPrint) > 200) {
         lastPrint = millis();
-        DEBUG_LINK.printf("izq=%u(%s) der=%u(%s) estado=%d\n",
+        DEBUG_LINK.printf("izq=%u(%s) der=%u(%s) estado=%s\n",
             left, leftOnLine ? "NEGRO" : "gris",
             right, rightOnLine ? "NEGRO" : "gris",
-            (int)g_state);
+            g_state == State::FORWARD ? "FORWARD" : "STOPPED");
     }
 
     delay(5);

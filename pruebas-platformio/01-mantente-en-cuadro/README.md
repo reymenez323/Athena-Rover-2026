@@ -1,9 +1,12 @@
 # Prueba 01 — Mantente en el cuadro
 
 Robot que avanza dentro del cuadrado delimitado por cinta negra (fondo gris
-de la pista) y, al detectar el borde con los sensores de reflectancia
-delanteros, retrocede y gira hacia el lado contrario antes de seguir. Nunca
-debe cruzar la cinta.
+de la pista), siempre en el mismo sentido que la prueba
+[`03-motores-adelante`](../03-motores-adelante/) — nunca gira, nunca
+retrocede — y en cuanto un sensor de reflectancia delantero detecta el
+borde (fondo gris -> cinta negra), **para en seco y se queda detenido**. No
+intenta esquivar la cinta ni retomar la marcha por su cuenta; hay que
+resetear el ESP32 para que vuelva a arrancar.
 
 Es un sketch de banco, independiente del firmware principal
 (`firmware-esp32/`): sirve para validar el comportamiento de borde con
@@ -77,20 +80,21 @@ Todos están al principio de `src/main.cpp`, con comentarios:
 
 | Constante | Qué controla |
 |---|---|
-| `kForwardSpeed` / `kBackSpeed` / `kTurnSpeed` | Velocidad (0–100 %) en cada estado |
-| `kBackUpMs` | Cuánto retrocede antes de girar |
-| `kTurnMs` | Cuánto gira cuando dispara un solo sensor |
-| `kTurnCornerMs` | Cuánto gira cuando disparan los dos a la vez (esquina) |
+| `kForwardSpeed` | Velocidad de avance (0–100 %) — es la única velocidad que existe, no hay retroceso ni giro |
 | `MIN_USABLE_SPAN` | Contraste mínimo para aceptar la calibración en vivo |
 | `FALLBACK_THRESHOLD` | Umbral de reserva si la calibración no sirvió |
 
 ## Qué mirar si no funciona
 
-- Si el robot gira hacia el mismo lado sin parar: revisar el sentido de giro
-  de las ruedas de ese lado en `MotorApply` (motor invertido físicamente).
-- Si nunca detecta el borde: abrir el monitor y ver los valores crudos
-  impresos cada 200 ms; comparar con el umbral calibrado que se imprime al
-  final de `RunCalibration()`.
-- Si detecta borde en todas partes (incluso sobre gris): la calibración no
-  vio suficiente contraste — repetir el arranque pasando el sensor de forma
-  más deliberada sobre ambas superficies durante el parpadeo de los LED.
+- Si el robot no avanza derecho: revisar el sentido de giro de las ruedas en
+  `MotorApply` — debería comportarse igual que en
+  [`03-motores-adelante`](../03-motores-adelante/), que ya tiene la
+  dirección de `kMotorFL` corregida.
+- Si nunca detecta el borde (se sale del cuadro): abrir el monitor y ver los
+  valores crudos impresos cada 200 ms; comparar con el umbral calibrado que
+  se imprime al final de `RunCalibration()`.
+- Si para en todas partes (incluso sobre gris): la calibración no vio
+  suficiente contraste — repetir el arranque pasando el sensor de forma más
+  deliberada sobre ambas superficies durante el parpadeo de los LED.
+- Al parar, el LED rojo indica que fue el sensor izquierdo, el azul el
+  derecho — ambos si dispararon los dos a la vez.
