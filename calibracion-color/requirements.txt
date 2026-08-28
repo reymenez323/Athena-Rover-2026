@@ -1,0 +1,4 @@
+# Dependencias de calibrar_color.py. Se corre desde una laptop conectada por
+# USB al ESP32 de banco, no en la Raspberry Pi.
+
+pyserial>=3.5
