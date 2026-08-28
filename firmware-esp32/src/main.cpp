@@ -577,23 +577,47 @@ namespace Tcs34725 {
 //  decisión deja de depender del brillo absoluto, que cambia muchísimo con la
 //  luz del salón, y pasa a depender solo del tono.
 //
-//  TODO IMPORTANTE: estos umbrales son un punto de partida razonable, NO
-//  valores calibrados. Hay que medirlos sobre la pista real con el script de
-//  calibración y ajustarlos aquí. Es la diferencia entre un robot que ve las
-//  líneas y uno que no.
+//  RECALIBRADO 2026-08-28 contra 970 muestras reales del TCS34725
+//  DELANTERO (calibracion-color/data_logs/, generadas con
+//  calibracion-color/calibrar_color.py) usando
+//  calibracion-color/analizar_umbrales_tcs.py — descenso de coordenadas
+//  sobre esta MISMA estructura de reglas. Error total 14.3% sobre esas 970
+//  muestras (era 58.1% con los umbrales anteriores, sin calibrar). El
+//  detalle completo —incluida la matriz de confusión por color— vive en
+//  calibracion-color/detector-tcs/src/main.cpp, que usa exactamente estos
+//  mismos números: si se recalibra, actualizar LOS DOS archivos o quedan
+//  desincronizados (pasó antes con el umbral IR, commit c4f9b47).
+//
+//  ⚠️ NEGRO es la clase que peor acierta (58.5%, confundido sobre todo con
+//  AZUL y GRIS): el rango de `clear` de NEGRO se solapa fuerte con el de
+//  AZUL y GRIS, y esta clasificación secuencial por umbrales no separa bien
+//  "oscuro" de "oscuro y además azul/gris". Es un límite estructural, no
+//  algo que otra vuelta de ajuste vaya a arreglar — el clasificador K-NN de
+//  pruebas-platformio/05-evitador-linea/ (mismo dataset, 4 dimensiones
+//  juntas con distancia real en vez de reglas con AND encadenados) le
+//  acierta bastante mejor a NEGRO. Si NEGRO/BLACK necesita ser confiable
+//  para la lógica de vuelo, vale la pena portar ese enfoque acá en vez de
+//  seguir afinando estos 9 umbrales.
+//
+//  ⚠️ TODAVÍA sin calibrar el sensor TRASERO: estos umbrales solo se
+//  probaron contra datos del DELANTERO — comparten el mismo juego de
+//  umbrales con el trasero por ahora, un supuesto sin verificar (ver
+//  calibracion-color/README.md). Cuando existan capturas del trasero,
+//  recalibrar y comparar antes de confiar en que un solo juego alcanza
+//  para los dos.
 // ---------------------------------------------------------------------------
 static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
     // Muy poca luz reflejada = cinta negra (o el sensor mirando al vacío).
-    if (s.c < 300) return ColorLabel::BLACK;
+    if (s.c < 392) return ColorLabel::BLACK;
 
     const float total = (float)s.c;
     const float r = (float)s.r / total;
     const float g = (float)s.g / total;
     const float b = (float)s.b / total;
 
-    if (r > 0.45f && g < 0.30f && b < 0.30f) return ColorLabel::RED;
-    if (b > 0.40f && r < 0.30f)              return ColorLabel::BLUE;
-    if (r > 0.35f && g > 0.35f && b < 0.25f) return ColorLabel::YELLOW;
+    if (r > 0.450f && g < 0.312f && b < 0.300f) return ColorLabel::RED;
+    if (b > 0.216f && r < 0.390f)               return ColorLabel::BLUE;
+    if (r > 0.416f && g > 0.350f && b < 0.250f) return ColorLabel::YELLOW;
 
     // Canales parejos = superficie gris: el tapete de la pista.
     return ColorLabel::FLOOR;
