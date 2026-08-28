@@ -42,7 +42,7 @@ ajustando, pero cada vuelta cuesta una sesión de depuración.
 |---|---|
 | `firmware/` | Sketch del ESP32 de banco. Solo responde: recibe el comando `'R'` por serial y contesta `DATA,<analog_a>,<analog_b>,<generic>`. Usa la librería `QTRSensors` de Pololu (única excepción del proyecto a "cero dependencias" — es una herramienta de banco, no el firmware de vuelo). |
 | `calibrar_ir.py` | Script de Python que orquesta la prueba: pide moverse a cada punto, manda `'R'` repetidamente, y guarda todo en un `.csv` dentro de `data_logs/`. |
-| `detector-color/` | Sketch aparte (no habla con `calibrar_ir.py`): lee en bucle, clasifica NEGRO/GRIS/AMARILLO/"ROJO-AZUL ambiguo" con umbrales fijos sacados de los `.csv` ya capturados, imprime por consola y enciende el LED RGB — ver su [README](detector-color/README.md) (incluye por qué el QTR no puede distinguir rojo de azul). |
+| `detector-color/` | Sketch aparte (no habla con `calibrar_ir.py`): lee en bucle, clasifica NEGRO/GRIS con un umbral elegido probando varias combinaciones contra los `.csv` ya capturados (no solo A o solo B a ojo), imprime por consola y enciende el LED RGB — ver su [README](detector-color/README.md). |
 
 ## Cómo usar
 
