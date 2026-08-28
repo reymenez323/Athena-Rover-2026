@@ -58,26 +58,34 @@ el mismo color de cable para dos cosas distintas es la forma más fácil de
 meter una pata en la oscuridad debajo del chasis.
 
 Ajustada al carrete real del equipo (**negro, rojo, amarillo, verde, azul,
-blanco** — 6 colores, no 9), la prioridad es que **cada línea de
-alimentación tenga su propio color sin compartir con ninguna otra**, porque
-esas son las que revientan hardware. Las señales lógicas (I2C, control
-digital, PWM) se agrupan en los dos colores que sobran: si esas se cruzan,
-en el peor caso el robot se porta mal, pero no se quema nada — se
-diagnostica y se corrige.
+blanco** — 6 colores, no 9), la prioridad es, en este orden:
 
-| Color | Uso | Nunca lo uses para |
-|-------|-----|---------------------|
-| **Negro** | GND — todas las masas, sin excepción | nada que no sea masa |
-| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N | absolutamente nada más, ni siquiera el LED rojo de equipo |
-| **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725 | nada a 5 V (revisar la tabla de riesgos: quema el sensor) |
-| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 | alimentar el ESP32 o cualquier sensor |
-| **Azul** | PWM / salidas analógicas — ENA/ENB de los L298N, OUT de los QTR | líneas de alimentación |
-| **Blanco** | Todo lo demás digital: IN1–IN4 de los L298N, CTRL de los QTR, el bus I2C completo (SDA y SCL) y el control de los 2 LED de equipo | líneas de alimentación |
+1. **Cada línea de alimentación tiene su propio color, sin compartir con
+   ninguna otra** — son las que revientan hardware.
+2. **SDA y SCL van en colores distintos entre sí**, porque son dos cables
+   que corren pegados hasta el mismo conector y cambiarlos es el descuido
+   más fácil de cometer con la mano.
+3. Con los 6 colores ya repartidos entre lo anterior, el resto de señales
+   (control de motores, salidas de los QTR, LED de equipo) reutiliza el
+   color de Azul o Blanco según le corresponda por tipo — **no pasa nada
+   porque nunca conviven en el mismo conector que el I2C**: los cables junto
+   al L298N o al QTR no se van a confundir por el ojo con los que salen del
+   PCA9685/TCS34725, que están en otra zona del chasis. Si se cruzaran, el
+   peor caso es que el robot se porte mal, no que se queme algo.
 
-Como Blanco agrupa varias señales distintas (I2C SDA, I2C SCL, controles
-digitales, LEDs), **marca la punta de cada cable blanco** con cinta o
-marcador al conectarlo — un bus I2C con SDA y SCL cambiados simplemente no
-responde, pero cuesta menos tiempo si la punta ya dice cuál es cuál.
+| Color | Uso |
+|-------|-----|
+| **Negro** | GND — todas las masas, sin excepción |
+| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N. Nada más lleva rojo, ni siquiera el LED rojo de equipo. |
+| **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725. Nunca a 5 V (revisar la tabla de riesgos: quema el sensor). |
+| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 |
+| **Azul** | **I2C — SDA, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT) — no se mezclan con el I2C porque están en zonas distintas del chasis. |
+| **Blanco** | **I2C — SCL, en ambos buses.** También: señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR) y el control de los 2 LED de equipo — mismo razonamiento. |
+
+En el tramo del PCA9685/TCS34725, donde SDA y SCL corren juntos, no hace
+falta marquilla: el color ya dice cuál es cuál. Si en algún otro punto
+tuvieras dos cables Azul o dos Blanco muy cerca uno del otro (por ejemplo,
+un ENA junto a un OUT de QTR), ahí sí marca la punta.
 
 Dos reglas simples que evitan la mayoría de los sustos:
 
