@@ -51,38 +51,44 @@ No usar ninguno de estos, aunque el DevKit los saque al conector:
 
 ## Código de colores de cableado
 
-El robot tiene **tres dominios de voltaje distintos** (3.3 V lógica, 5–6 V
-servos, 7.4–12 V motores) conviviendo en el mismo chasis — justo la clase de
-mezcla que aparece en la tabla de riesgos de arriba. Usar el mismo color de
-cable para dos cosas distintas es la forma más fácil de meter una pata en la
-oscuridad debajo del chasis. Esta tabla es la convención del equipo; úsala en
-todos los cables nuevos, incluso los que van dentro de un mismo módulo.
+El robot tiene **cuatro dominios de voltaje/masa distintos** (GND, 3.3 V
+lógica, 5–6 V servos, 7.4–12 V motores) conviviendo en el mismo chasis —
+justo la clase de mezcla que aparece en la tabla de riesgos de arriba. Usar
+el mismo color de cable para dos cosas distintas es la forma más fácil de
+meter una pata en la oscuridad debajo del chasis.
+
+Ajustada al carrete real del equipo (**negro, rojo, amarillo, verde, azul,
+blanco** — 6 colores, no 9), la prioridad es que **cada línea de
+alimentación tenga su propio color sin compartir con ninguna otra**, porque
+esas son las que revientan hardware. Las señales lógicas (I2C, control
+digital, PWM) se agrupan en los dos colores que sobran: si esas se cruzan,
+en el peor caso el robot se porta mal, pero no se quema nada — se
+diagnostica y se corrige.
 
 | Color | Uso | Nunca lo uses para |
 |-------|-----|---------------------|
 | **Negro** | GND — todas las masas, sin excepción | nada que no sea masa |
-| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N | la alimentación de servos ni la lógica de 3.3 V |
-| **Naranja** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 | alimentar el ESP32 o cualquier sensor |
+| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N | absolutamente nada más, ni siquiera el LED rojo de equipo |
 | **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725 | nada a 5 V (revisar la tabla de riesgos: quema el sensor) |
-| **Blanco** | Señales digitales de control — IN1–IN4 de los L298N, CTRL de los QTR | líneas I2C (usa verde/violeta) |
-| **Azul** | PWM / salidas analógicas — ENA/ENB de los L298N, OUT de los QTR | señales digitales on/off |
-| **Verde** | I2C — SDA, en ambos buses | SCL |
-| **Violeta** | I2C — SCL, en ambos buses | SDA |
-| **Gris** | Cable USB-A→USB-C hacia la Raspberry Pi (ya viene armado, no se recablea) | — |
+| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 | alimentar el ESP32 o cualquier sensor |
+| **Azul** | PWM / salidas analógicas — ENA/ENB de los L298N, OUT de los QTR | líneas de alimentación |
+| **Blanco** | Todo lo demás digital: IN1–IN4 de los L298N, CTRL de los QTR, el bus I2C completo (SDA y SCL) y el control de los 2 LED de equipo | líneas de alimentación |
+
+Como Blanco agrupa varias señales distintas (I2C SDA, I2C SCL, controles
+digitales, LEDs), **marca la punta de cada cable blanco** con cinta o
+marcador al conectarlo — un bus I2C con SDA y SCL cambiados simplemente no
+responde, pero cuesta menos tiempo si la punta ya dice cuál es cuál.
 
 Dos reglas simples que evitan la mayoría de los sustos:
 
-- **El rojo es solo para la batería de motores.** Es la línea que más
-  corriente mueve, así que un cruce ahí es el que más daño hace. Si se te
-  acaba el rojo, usa otro color antes que reutilizarlo para algo de 3.3 V o
-  5 V.
+- **El rojo es solo para la batería de motores, sin excepción.** Es la línea
+  que más corriente mueve, así que un cruce ahí es el que más daño hace.
+  Aunque el LED de equipo sea rojo, su cable de control va en **blanco**
+  (es una señal digital de bajo amperaje, no una línea de potencia) — así se
+  evita la tentación de "total, ya tengo rojo a mano".
 - **Corta el negro y el color de señal de cada conector al mismo largo.** Así
   se identifican por tacto (o a simple vista) cuál masa va con cuál señal sin
   tener que seguir el cable completo.
-
-Si tu carrete de cable no tiene los nueve colores, prioriza tener **negro,
-rojo y amarillo** bien diferenciados — son los tres que, si se cruzan, queman
-algo — y usa marquillas o cinta de color en las puntas para el resto.
 
 ---
 
@@ -197,10 +203,10 @@ así te ahorras el multiplexor TCA9548A.
 | Rojo | **40** | Con resistencia en serie de 220–330 Ω |
 | Azul | **41** | Con resistencia en serie de 220–330 Ω |
 
-> Única excepción al [código de colores](#código-de-colores-de-cableado): la
-> señal de control de cada LED va en un cable del mismo color que el LED
-> (rojo con rojo, azul con azul) — es más claro seguir el color del LED que
-> el de la convención de "blanco = señal digital" para solo estos dos cables.
+> Aunque el LED sea rojo o azul, su cable de control va en **blanco**, como
+> el resto de las señales digitales — ver el [código de colores](#código-de-colores-de-cableado).
+> No uses rojo para el LED rojo: ese color está reservado sin excepción para
+> la batería de motores.
 
 ---
 
