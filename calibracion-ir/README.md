@@ -16,7 +16,7 @@ mano sobre distintas superficies sin desarmar el robot.
 
 | Señal | GPIO | Nota |
 |---|:---:|---|
-| `QTR_A_SENSOR` | **35** | QTRX-HD-01A, modo analógico |
+| `QTR_A_SENSOR` | **5** | QTRX-HD-01A, modo analógico — recableado desde GPIO35, ver abajo |
 | `QTR_A_CTRL` | **25** | Comparte pin físico con `QTR_B_CTRL` — ver abajo |
 | `QTR_B_SENSOR` | **4** | QTRX-HD-01A, modo analógico — mismo modelo que A |
 | `QTR_B_CTRL` | **25** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (una por sensor) comparten un solo cable de control, así que se encienden y apagan juntas |
@@ -27,12 +27,15 @@ no hay ningún sensor en modo RC conectado ahora mismo. Los nombres del
 código usan "A"/"B" en vez de "analog"/"rc" a propósito, para no dar a
 entender un modo que no se está usando.
 
-Estos son los pines del cableado físico ya armado por el equipo, sin
-cambios. `GPIO33–37` (PSRAM octal) está en el rango que
-[`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md)
-marca como prohibido en el ESP32-S3 — este sketch usa `GPIO35`, dentro de
-ese rango, pero el equipo confirmó que en su módulo específico funciona sin
-problema en la práctica, así que se dejó tal cual en vez de recablear.
+**`QTR_A_SENSOR` se recableó de GPIO35 a GPIO5.** No era un caso de
+"prohibido pero funciona en la práctica" como GPIO26 o GPIO3 — GPIO35 no
+tiene hardware de ADC **en absoluto** en el ESP32-S3 (a diferencia del
+ESP32 clásico, donde sí es un pin de ADC1 válido y muy común — de ahí
+probablemente venía ese número originalmente). `analogRead()` ahí siempre
+tira `Pin 35 is not ADC pin!` por consola y devuelve 0, sin excepción — es
+justo lo que se veía en los primeros CSV capturados con el sensor A
+sospechosamente plano en 0. GPIO5 es ADC1_CH4, un pin de ADC real en el S3.
+El resto de los pines del cableado del equipo se dejan tal cual.
 
 ## Tres partes
 

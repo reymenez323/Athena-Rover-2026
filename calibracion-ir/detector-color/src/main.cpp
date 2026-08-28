@@ -8,12 +8,16 @@
 //  ../calibrar_ir.py (ver ../data_logs/). Imprime el resultado por consola
 //  cada 200 ms y enciende el LED RGB: rojo para negro, verde para gris.
 //
-//  Por qué solo el sensor B decide: en las dos capturas más recientes
-//  (IR_NEGRO_2026-08-28_07-14-49.csv, IR_GRIS_2026-08-28_07-17-36.csv,
-//  740 muestras en total) el sensor A quedó en 0 todo el tiempo — sin
-//  excepción, no es ruido, está sin señal. Se sigue leyendo e imprimiendo
-//  aquí como diagnóstico (para notar cuándo empiece a responder), pero no
-//  participa en la clasificación.
+//  Por qué solo el sensor B decide (por ahora): en las dos capturas que dan
+//  el umbral de abajo (IR_NEGRO_2026-08-28_07-14-49.csv,
+//  IR_GRIS_2026-08-28_07-17-36.csv, 740 muestras en total) el sensor A
+//  quedó en 0 todo el tiempo. La causa: estaba en GPIO35, que en el
+//  ESP32-S3 no tiene hardware de ADC en absoluto — analogRead() ahí tira
+//  "Pin 35 is not ADC pin!" y devuelve 0 siempre, no es un problema de
+//  cableado ni de calibración. Ya se recableó a GPIO5 (sí es ADC1 en el
+//  S3), pero como el umbral de NEGRO/GRIS se calculó SIN el sensor A, este
+//  sketch lo sigue leyendo e imprimiendo solo como diagnóstico — no
+//  participa en la clasificación todavía.
 //
 //  Pines: idénticos a ../firmware/src/main.cpp (el sketch de captura), más
 //  el LED RGB en los mismos GPIO que usa el diseño final
@@ -37,7 +41,7 @@
 // PINES — idénticos a ../firmware/src/main.cpp, más el LED RGB
 // =====================================================
 
-const uint8_t QTR_A_SENSOR = 35;  // sin señal ahora mismo, ver nota arriba
+const uint8_t QTR_A_SENSOR = 5;   // recableado desde GPIO35 (no es pin de ADC en el S3), ver nota arriba
 const uint8_t QTR_A_CTRL   = 25;
 const uint8_t QTR_B_SENSOR = 4;   // el que sí decide
 const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL

@@ -35,13 +35,17 @@ vivo de `pruebas-platformio/01-mantente-en-cuadro/` y `02-cuadro-color-rgb/`
 (recalibran en cada arranque); esto es solo una herramienta de banco para
 ver el clasificador funcionando rápido.
 
-## Por qué solo decide el sensor B
+## Por qué solo decide el sensor B (por ahora)
 
 En las dos capturas de arriba, el sensor A dio **0 en las 740 muestras**,
-sin excepción — no es ruido, está sin señal ahora mismo. Este sketch lo
-sigue leyendo e imprimiendo (para notar cuándo empiece a responder), pero
-no participa en la clasificación. Vale la pena revisar esa conexión en
-algún momento.
+sin excepción. La causa no era ruido ni un cable suelto: estaba en GPIO35,
+que en el ESP32-S3 **no tiene hardware de ADC**. `analogRead()` ahí siempre
+falla con `Pin 35 is not ADC pin!` y devuelve 0. Ya se recableó a GPIO5 (sí
+es ADC1 en el S3), pero como el umbral de arriba se calculó sin el sensor
+A, este sketch lo sigue leyendo e imprimiendo solo como diagnóstico — no
+participa en la clasificación todavía. Si quieres sumarlo, hay que volver a
+capturar NEGRO/GRIS con `../calibrar_ir.py` (ahora sí con A dando datos
+reales) y recalcular el umbral.
 
 ## Pines
 
@@ -49,7 +53,7 @@ Idénticos a `../firmware/src/main.cpp`, más el LED RGB:
 
 | Señal | GPIO |
 |---|:---:|
-| `QTR_A_SENSOR` | 35 |
+| `QTR_A_SENSOR` | 5 (recableado desde GPIO35 — no es pin de ADC en el S3) |
 | `QTR_A_CTRL` / `QTR_B_CTRL` | 25 (compartido) |
 | `QTR_B_SENSOR` | 4 |
 | `GENERIC_IR` | 14 |

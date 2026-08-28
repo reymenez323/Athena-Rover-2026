@@ -10,11 +10,14 @@
 //  RGB), para caracterizarlos antes de fijar umbrales — ver ../README.md
 //  para el procedimiento completo.
 //
-//  Pines: idénticos al cableado físico ya armado por el equipo — no se
-//  tocan aquí. GPIO35 cae en el rango que hardware/conexiones-esp32-s3.md
-//  marca como prohibido en el S3 (PSRAM octal); el equipo confirmó que en
-//  su módulo específico funciona sin problema en la práctica, así que se
-//  deja tal cual en vez de recablear.
+//  Pines: idénticos al cableado físico ya armado por el equipo, con una
+//  excepción — QTR_A_SENSOR se recableó de GPIO35 a GPIO5. GPIO35 no es un
+//  error de "mejor evitarlo": en el ESP32-S3 no tiene hardware de ADC en
+//  absoluto (a diferencia del ESP32 clásico, donde sí es un pin de ADC1
+//  válido y muy usado — de ahí probablemente venía ese número). No hay
+//  código que lo arregle; analogRead() ahí siempre tira
+//  "Pin 35 is not ADC pin!" y devuelve 0. GPIO5 es ADC1_CH4, un pin de ADC
+//  real en el S3.
 //
 //  AMBOS sensores son QTRX-HD-01A analógicos (no hay ningún sensor en modo
 //  RC conectado ahora mismo). Los nombres "B"/"segundo sensor" en vez de
@@ -44,7 +47,7 @@
 // cable de control físico, así que se encienden y apagan juntas.
 
 // QTRX-HD-01A — sensor A
-const uint8_t QTR_A_SENSOR = 35;
+const uint8_t QTR_A_SENSOR = 5;   // recableado desde GPIO35 (no es pin de ADC en el S3), ver nota arriba
 const uint8_t QTR_A_CTRL   = 25;
 
 // QTRX-HD-01A — sensor B (mismo modelo que A, pin de control compartido)
