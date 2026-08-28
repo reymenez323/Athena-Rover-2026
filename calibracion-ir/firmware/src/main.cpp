@@ -10,13 +10,11 @@
 //  para caracterizar un QTRX-HD-01A/RC de banco antes de fijar umbrales —
 //  ver ../README.md para el procedimiento completo.
 //
-//  Pines: se reutilizan los 3 ya establecidos para el QTR en
-//  hardware/conexiones-esp32-s3.md (GPIO1, GPIO2, GPIO42) para las señales
-//  analógica/control principales. Las 2 señales que este sketch necesita y
-//  el diseño de vuelo no tiene (control del sensor RC, IR genérico) usan
-//  GPIO38/39 — los mismos que en el diseño final ocupa el LED RGB. Como este
-//  sketch corre SOLO, sin el resto de periféricos cableados, no hay
-//  conflicto real: nunca conviven físicamente las dos configuraciones.
+//  Pines: idénticos al cableado físico ya armado por el equipo — no se
+//  tocan aquí. GPIO35 cae en el rango que hardware/conexiones-esp32-s3.md
+//  marca como prohibido en el S3 (PSRAM octal); el equipo confirmó que en
+//  su módulo específico funciona sin problema en la práctica, así que se
+//  deja tal cual en vez de recablear.
 //
 //  Protocolo: este sketch no hace nada por su cuenta. Se queda esperando un
 //  comando por serial y responde una lectura cada vez que lo recibe. La
@@ -37,24 +35,21 @@
 // PIN ASSIGNMENT - ESP32-S3 (mismo chip que firmware-esp32/)
 // =====================================================
 //
-// GPIO 26-32 (flash SPI) y 33-37 (PSRAM octal) están PROHIBIDOS en el
-// ESP32-S3 — ver hardware/conexiones-esp32-s3.md. Los pines de abajo los
-// evitan.
+// Cableado real del banco de pruebas. QTR_A_CTRL y QTR_RC_CTRL son EL MISMO
+// pin a propósito: las dos luces IR (la del sensor analógico y la del RC)
+// comparten un solo cable de control físico, así que se encienden y apagan
+// juntas — no son dos señales independientes.
 
-// QTRX-HD-01A - ANALOG — mismos pines que QTR_LEFT_OUT/QTR_EMITTER_CTRL en
-// hardware/conexiones-esp32-s3.md (ADC1_CH0 + control de emisores).
-const uint8_t QTR_A_SENSOR = 1;
-const uint8_t QTR_A_CTRL   = 42;
+// QTRX-HD-01A - ANALOG
+const uint8_t QTR_A_SENSOR = 35;
+const uint8_t QTR_A_CTRL   = 25;
 
-// QTRX-HD-01RC - RC — sin equivalente en el diseño de vuelo (no se usa modo
-// RC ahí). QTR_RC_SENSOR reutiliza el pin de QTR_RIGHT_OUT (aquí como
-// entrada digital, no ADC); QTR_RC_CTRL usa uno de los GPIO que en el
-// diseño final ocupa el LED RGB — libre aquí porque este sketch corre solo.
-const uint8_t QTR_RC_SENSOR = 2;
-const uint8_t QTR_RC_CTRL   = 39;
+// QTRX-HD-01RC - RC
+const uint8_t QTR_RC_SENSOR = 4;
+const uint8_t QTR_RC_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL, ver nota arriba
 
-// Generic IR — mismo criterio: GPIO libre en este contexto de banco.
-const uint8_t GENERIC_IR = 38;
+// Generic IR
+const uint8_t GENERIC_IR = 14;
 
 // =====================================================
 // QTR OBJECTS

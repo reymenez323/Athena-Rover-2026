@@ -14,18 +14,20 @@ distinto es el contexto: se sube solo, con el sensor bajo prueba conectado y
 **nada más** (sin motores, sin PCA9685, sin TCS34725, sin LED RGB), así que
 se puede mover a mano sobre distintas superficies sin desarmar el robot.
 
-| Señal | GPIO | De dónde sale |
+| Señal | GPIO | Nota |
 |---|:---:|---|
-| `QTR_A_SENSOR` (analógico) | **1** | Mismo pin que `QTR_LEFT_OUT` en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md) |
-| `QTR_A_CTRL` | **42** | Mismo pin que `QTR_EMITTER_CTRL` |
-| `QTR_RC_SENSOR` (modo RC) | **2** | Reutiliza el pin de `QTR_RIGHT_OUT` (aquí como digital, no ADC) — el diseño de vuelo no tiene modo RC |
-| `QTR_RC_CTRL` | **39** | GPIO libre en este contexto (en el diseño final lo usa el LED RGB) |
-| `GENERIC_IR` | **38** | GPIO libre en este contexto (ídem) |
+| `QTR_A_SENSOR` (analógico) | **35** | |
+| `QTR_A_CTRL` | **25** | Comparte pin físico con `QTR_RC_CTRL` — ver abajo |
+| `QTR_RC_SENSOR` (modo RC) | **4** | |
+| `QTR_RC_CTRL` | **25** | Mismo pin que `QTR_A_CTRL`: las 2 luces IR (del sensor analógico y del RC) comparten un solo cable de control, así que se encienden y apagan juntas |
+| `GENERIC_IR` | **14** | |
 
-Los últimos dos no tienen equivalente en el diseño de vuelo (no hay sensor
-RC ni IR genérico ahí), así que se les asignaron los GPIO que, en el
-firmware final, ocupa el LED RGB — sin conflicto porque este sketch nunca
-corre con esos otros periféricos conectados a la vez.
+Estos son los pines del cableado físico ya armado por el equipo, sin
+cambios. `GPIO33–37` (PSRAM octal) está en el rango que
+[`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md)
+marca como prohibido en el ESP32-S3 — este sketch usa `GPIO35`, dentro de
+ese rango, pero el equipo confirmó que en su módulo específico funciona sin
+problema en la práctica, así que se dejó tal cual en vez de recablear.
 
 ## Dos partes
 
