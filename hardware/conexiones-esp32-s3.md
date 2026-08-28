@@ -3,6 +3,11 @@
 Generado a partir de los pines reales declarados en `firmware-esp32/src/main.cpp`
 (namespace `Pins`). **Si cambias un pin en el código, actualiza esta tabla.**
 
+> **Excepción:** el LED RGB (sección 9) todavía **no está en `firmware-esp32/`**
+> — solo en `pruebas-platformio/02-cuadro-color-rgb/src/main.cpp`, que fue lo
+> primero que lo usó. Cuando se integre al firmware principal, confirmar que
+> use los mismos GPIO.
+
 Placa asumida: **ESP32-S3-DevKitC-1**.
 
 ## Índice
@@ -15,10 +20,11 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 6. [Sensores de color — 2× TCS34725](#sensores-de-color--2-tcs34725)
 7. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
 8. [LED de equipo](#led-de-equipo-lo-exige-el-reglamento)
-9. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
-10. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-11. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
-12. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
+9. [LED RGB indicador de color](#led-rgb-indicador-de-color)
+10. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
+11. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
+12. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
+13. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
 
@@ -256,6 +262,33 @@ LED por error sí puede dañar el sensor.
 
 ---
 
+## LED RGB indicador de color
+
+Un solo LED RGB en el chasis, controlado por PWM (LEDC) por canal. Usa los
+únicos 3 GPIO que quedaban libres para ampliaciones en este documento — ver
+el [resumen de pines](#resumen-mapa-completo-de-pines-usados) — así que con
+esto **ya no queda ningún GPIO libre** en el mapa.
+
+| Canal | GPIO ESP32-S3 | Nota |
+|-------|:-------------:|------|
+| R | **39** | |
+| G | **38** | |
+| B | **3** | Strapping de JTAG: solo importa su nivel en el instante de encender/resetear. Como salida PWM normal después de bootear no da problema. |
+
+> ⚠️ **Polaridad sin confirmar.** El código (`pruebas-platformio/02-cuadro-color-rgb/`)
+> asume **cátodo común** (duty PWM alto = canal más brillante). Si al
+> probarlo los colores salen invertidos, es ánodo común — hay una constante
+> (`kRgbCommonAnode`) para cambiarlo sin tocar el resto del sketch. Actualizar
+> esta nota una vez confirmado con el LED físico.
+
+Cable de control: igual que el resto de señales digitales/PWM de bajo
+amperaje de este robot (LED de equipo, ENA/ENB, OUT de los QTR), usa
+**Azul** o **Blanco** según el [código de colores](#código-de-colores-de-cableado)
+— no comparte zona de cableado con el I2C, así que no hay riesgo de
+confundirlo con SDA/SCL.
+
+---
+
 ## Enlace con la Raspberry Pi 4B
 
 Cable **USB-A (Pi) → USB-C del puerto "USB" del DevKit** — el puerto del USB
@@ -280,21 +313,24 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 
 | GPIO | Destino | GPIO | Destino |
 |:----:|---------|:----:|---------|
-| 1 | QTR izquierdo (ADC) | 14 | L298N‑D IN4 |
-| 2 | QTR derecho (ADC) | 15 | L298N‑I IN4 |
-| 4 | L298N‑I IN1 | 16 | L298N‑I ENB |
-| 5 | L298N‑I IN2 | 17 | L298N‑D ENB |
-| 6 | L298N‑I ENA | 18 | LED TCS34725 delantero |
-| 7 | L298N‑I IN3 | 21 | LED TCS34725 trasero |
+| 1 | QTR izquierdo (ADC) | 15 | L298N‑I IN4 |
+| 2 | QTR derecho (ADC) | 16 | L298N‑I ENB |
+| 3 | LED RGB — canal B | 17 | L298N‑D ENB |
+| 4 | L298N‑I IN1 | 18 | LED TCS34725 delantero |
+| 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
+| 6 | L298N‑I ENA | 38 | LED RGB — canal G |
+| 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
 | 8 | I2C0 SDA | 40 | LED rojo |
 | 9 | I2C0 SCL | 41 | LED azul |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA |
 | 12 | L298N‑D ENA | 48 | I2C1 SCL |
 | 13 | L298N‑D IN3 | | |
+| 14 | L298N‑D IN4 | | |
 
-**23 pines usados.** Quedan libres para ampliaciones: GPIO **38, 39**
-(y 3, con cuidado por el strapping de JTAG).
+**26 pines usados.** No queda ningún GPIO libre para ampliaciones (quedaban
+38, 39 y 3 — el LED RGB los usó los tres). Solo el estrictamente prohibido
+(ver arriba) sigue fuera de uso.
 
 ---
 
