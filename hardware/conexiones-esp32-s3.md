@@ -78,7 +78,7 @@ blanco** — 6 colores, no 9), la prioridad es, en este orden:
 | **Negro** | GND — todas las masas, sin excepción |
 | **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N. Nada más lleva rojo, ni siquiera el LED rojo de equipo. |
 | **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725. Nunca a 5 V (revisar la tabla de riesgos: quema el sensor). |
-| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685 |
+| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685. ⚠️ **Única excepción del código**: también lleva la señal LED de cada TCS34725 — ver la nota abajo. |
 | **Azul** | **I2C — SDA, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT) — no se mezclan con el I2C porque están en zonas distintas del chasis. |
 | **Blanco** | **I2C — SCL, en ambos buses.** También: señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR) y el control de los 2 LED de equipo — mismo razonamiento. |
 
@@ -86,6 +86,17 @@ En el tramo del PCA9685/TCS34725, donde SDA y SCL corren juntos, no hace
 falta marquilla: el color ya dice cuál es cuál. Si en algún otro punto
 tuvieras dos cables Azul o dos Blanco muy cerca uno del otro (por ejemplo,
 un ENA junto a un OUT de QTR), ahí sí marca la punta.
+
+> ⚠️ **Excepción documentada — Verde ya no es exclusivo de servos.** El
+> equipo cableó la señal LED del TCS34725 (ver más abajo) en verde, el mismo
+> color que el V+ de 5–6 V del PCA9685. A diferencia del resto de las
+> reutilizaciones de esta tabla (que son señales de bajo riesgo en zonas
+> separadas), **este caso sí conviven cerca**: el TCS34725 delantero está en
+> el mismo bus I2C que el PCA9685, así que es fácil tener un verde de cada
+> uno en el mismo tramo de cableado. **Marca la punta de todo cable verde**
+> (cinta o marquilla: "V+" para el de servos, "LED" para el del sensor) —
+> aquí sí importa, porque confundirlos significa meterle 5–6 V a un pin
+> lógico de 3.3 V del TCS34725, que es del tipo de error que sí quema algo.
 
 Dos reglas simples que evitan la mayoría de los sustos:
 
@@ -202,9 +213,12 @@ en la placa.
 | LED sensor delantero | **18** |
 | LED sensor trasero | **21** |
 
-Van en cable **blanco** (señal digital de control, como el resto — ver el
-[código de colores](#código-de-colores-de-cableado)), no en el color de
-ninguna línea de alimentación.
+Van en cable **verde** — la única excepción del [código de colores](#código-de-colores-de-cableado):
+verde también es el color del V+ de 5–6 V de los servos, así que **marca la
+punta de cada cable verde** ("V+" o "LED") al conectarlo. Aquí sí importa
+más que en las demás reutilizaciones de la tabla: el TCS34725 delantero
+comparte bus I2C (y zona de cableado) con el PCA9685, y meterle 5–6 V al pin
+LED por error sí puede dañar el sensor.
 
 ---
 
