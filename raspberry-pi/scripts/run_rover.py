@@ -35,7 +35,13 @@ from athena.config import Config  # noqa: E402
 from athena.decision import DecisionMaker, Phase, RobotState  # noqa: E402
 from athena.detector import Detector  # noqa: E402
 from athena.link import EspLink  # noqa: E402
-from athena.protocol import ColorTelemetry, HealthTelemetry, ReflectTelemetry, TeamColor  # noqa: E402
+from athena.protocol import (  # noqa: E402
+    ColorTelemetry,
+    HealthTelemetry,
+    ReflectTelemetry,
+    TeamColor,
+    ToFTelemetry,
+)
 
 log = logging.getLogger("rover")
 _parar = False
@@ -87,6 +93,7 @@ def main() -> int:
 
     ultimo_color: ColorTelemetry | None = None
     ultimo_reflect: ReflectTelemetry | None = None
+    ultimo_tof: ToFTelemetry | None = None
     ultima_fase = None
     frames = 0
     t_inicio = time.monotonic()
@@ -103,6 +110,8 @@ def main() -> int:
                         ultimo_color = paquete
                     elif isinstance(paquete, ReflectTelemetry):
                         ultimo_reflect = paquete
+                    elif isinstance(paquete, ToFTelemetry):
+                        ultimo_tof = paquete
                     elif isinstance(paquete, HealthTelemetry) and paquete.faulted_bitmask:
                         # No se aborta la ronda por esto: se registra y se sigue
                         # compitiendo con lo que quede funcionando.
@@ -119,7 +128,7 @@ def main() -> int:
                 percepcion = detector.process(frame_id, frame)
 
                 # --- 3. Decisión -------------------------------------------
-                comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect)
+                comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect, ultimo_tof)
 
                 if decisor.state.phase is not ultima_fase:
                     log.info("Fase -> %s (%s)", decisor.state.phase.name, comandos.motivo)
@@ -153,6 +162,10 @@ def main() -> int:
                                     0.4, color, 1)
                     cv2.putText(vista, f"{decisor.state.phase.name} | {percepcion.latency_ms:.1f}ms",
                                 (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    if ultimo_tof is not None:
+                        tof_txt = f"{ultimo_tof.distance_mm}mm" if ultimo_tof.valid else "ToF invalido"
+                        cv2.putText(vista, f"ToF: {tof_txt}", (8, 32),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     cv2.imshow("Athena Rover", vista)
                     if (cv2.waitKey(1) & 0xFF) == ord("q"):
                         break

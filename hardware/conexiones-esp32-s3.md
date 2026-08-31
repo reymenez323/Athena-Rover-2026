@@ -21,12 +21,13 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 4. [Motores — 2× L298N](#motores--2-l298n)
 5. [Servos — PCA9685](#servos--pca9685-i2c-dirección-0x40)
 6. [Sensores de color — 2× TCS34725](#sensores-de-color--2-tcs34725)
-7. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
-8. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
-9. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
-10. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-11. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
-12. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
+7. [ToF — VL53L1X (distancia frente al gripper)](#tof--vl53l1x-distancia-frente-al-gripper)
+8. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
+9. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
+10. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
+11. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
+12. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
+13. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
 
@@ -245,6 +246,66 @@ LED por error sí puede dañar el sensor.
 
 ---
 
+## ToF — VL53L1X (distancia frente al gripper)
+
+Mide la distancia a lo que tenga delante del gripper (la bandera) para que la
+Raspberry Pi sepa cuándo cerrar la pinza — la lógica de "cuándo" vive en
+`raspberry-pi/src/athena/decision.py`, el ESP32 solo mide y reporta.
+
+**Dirección I2C fija de fábrica: 0x29 — igual que AMBOS TCS34725.** No hay
+forma de elegir otra dirección desde el pin ni por strapping. Por eso NO va en
+un bus propio: comparte el bus I2C nº1 con el TCS34725 trasero, y su pin
+**XSHUT** es imprescindible (no opcional) para poder arrancar sin que las dos
+direcciones choquen.
+
+| Pin VL53L1X | GPIO ESP32-S3 / Conexión | Nota |
+|-------------|:------------------------:|------|
+| SDA | **47** | Bus I2C nº 1 — compartido con el TCS34725 trasero |
+| SCL | **48** | Bus I2C nº 1 — compartido con el TCS34725 trasero |
+| XSHUT | **40** | Reset por software. Ver la secuencia de arranque abajo |
+| VIN | 3.3 V | |
+| GND | GND común | |
+
+### ⚠️ Por qué hace falta XSHUT, y el riesgo que queda sin resolver
+
+El VL53L1X arranca siempre en 0x29. El TCS34725 trasero, en el mismo bus, está
+fijo en esa misma dirección **y no tiene ningún pin de apagado**: en cuanto
+tiene alimentación, responde en 0x29 sin que el firmware pueda callarlo. La
+secuencia de arranque (implementada en `TofSensorTask`, `firmware-esp32/src/main.cpp`)
+es:
+
+1. **GPIO 40 en LOW desde `setup()`**, antes de crear ninguna tarea — el
+   VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
+   ANTES de arrancar cualquier tarea: algunas placas del sensor traen un
+   pull-up en XSHUT que lo deja activo apenas se energiza, así que si el
+   firmware tardara en ponerlo en LOW, habría una ventana de arranque con los
+   dos chips respondiendo en 0x29 a la vez.
+2. GPIO 40 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
+3. Se le reasigna la dirección **0x30** con una única escritura corta a su
+   registro de dirección. Este es el único instante en que el VL53L1X sigue
+   en 0x29 mientras el TCS34725 trasero también está vivo ahí — no se puede
+   evitar con el hardware actual sin agregarle un pin de apagado al TCS34725
+   (por ejemplo, cortando su alimentación con un transistor). El equipo
+   decidió aceptar este riesgo acotado (una sola transacción de 3 bytes, no
+   la inicialización completa del sensor) en vez de sumar ese hardware extra.
+4. Recién ahora corre la inicialización completa del VL53L1X, ya en 0x30 y
+   sin nadie más escuchando ahí.
+
+**Si el TCS34725 trasero empieza a dar lecturas raras justo después de un
+reset del ESP32 (y no antes), este es el primer sospechoso.** Revisar con un
+analizador lógico si se repite: se vería como una transacción I2C corta a
+0x29 justo después del arranque, seguida de dos direcciones I2C distintas
+conviviendo en el mismo bus.
+
+> El VL53L1X se inicializa con la librería de PlatformIO `pololu/VL53L1X`
+> (ver `firmware-esp32/platformio.ini`) — es la única dependencia externa de
+> todo el firmware. A diferencia del PCA9685 o el TCS34725 (unos pocos
+> registros, documentados a mano en el propio `main.cpp`), el VL53L1X necesita
+> un algoritmo de medición completo con decenas de valores de calibración:
+> reescribirlo no aportaba nada frente a una librería madura y bien probada.
+
+---
+
 ## Reflectancia — 2× QTRX-HD-01A
 
 | Señal | GPIO ESP32-S3 | Nota |
@@ -332,17 +393,17 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA | 40 | *(libre)* |
+| 8 | I2C0 SDA | 40 | XSHUT del VL53L1X (ToF) |
 | 9 | I2C0 SCL | 41 | *(libre)* |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
-| 11 | L298N‑D IN2 | 47 | I2C1 SDA |
-| 12 | L298N‑D ENA | 48 | I2C1 SCL |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero + VL53L1X) |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero + VL53L1X) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**24 pines usados.** Quedan libres para ampliaciones: GPIO **40, 41** — antes
-eran los 2 LED discretos de equipo, liberados al pasar todo a un solo LED
-RGB (que sí usó los últimos 3 GPIO que quedaban libres: 38, 39 y 3).
+**25 pines usados.** Queda libre para ampliaciones: GPIO **41** — el otro
+GPIO que quedaba libre (40) ahora lo usa el XSHUT del VL53L1X (ver la sección
+de [ToF](#tof--vl53l1x-distancia-frente-al-gripper)).
 
 ---
 
@@ -378,7 +439,10 @@ depuración.
    enciende en rojo y en azul, y de paso confirmar la polaridad (cátodo vs.
    ánodo común — ver la nota en la sección del LED RGB).
 3. **Añadir el I2C**, un chip a la vez. El firmware avisa por la consola si el
-   PCA9685 o algún TCS34725 no responde.
+   PCA9685 o algún TCS34725 no responde. **Dejar el VL53L1X para el final de
+   este paso**, después de confirmar que el TCS34725 trasero ya funciona
+   bien por su cuenta: así, si algo se rompe al conectar el ToF, es fácil
+   saber que fue por eso.
 4. **Añadir los servos** con el gripper DESACOPLADO del mecanismo, para no
    forzarlo contra un tope mientras se calibran los ángulos.
 5. **Añadir los QTR.** Verificar en la telemetría que el valor sube al poner

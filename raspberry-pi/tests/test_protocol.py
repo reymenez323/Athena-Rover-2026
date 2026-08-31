@@ -58,6 +58,7 @@ def test_constantes_coinciden_con_el_firmware():
     assert fw["TLM_COLOR"] == p.PacketType.TLM_COLOR
     assert fw["TLM_REFLECT"] == p.PacketType.TLM_REFLECT
     assert fw["TLM_HEALTH"] == p.PacketType.TLM_HEALTH
+    assert fw["TLM_TOF"] == p.PacketType.TLM_TOF
 
     assert fw["LEN_CMD_MOTOR"] == p.LEN_CMD_MOTOR
     assert fw["LEN_CMD_GRIPPER"] == p.LEN_CMD_GRIPPER
@@ -65,6 +66,7 @@ def test_constantes_coinciden_con_el_firmware():
     assert fw["LEN_TLM_COLOR"] == p.LEN_TLM_COLOR
     assert fw["LEN_TLM_REFLECT"] == p.LEN_TLM_REFLECT
     assert fw["LEN_TLM_HEALTH"] == p.LEN_TLM_HEALTH
+    assert fw["LEN_TLM_TOF"] == p.LEN_TLM_TOF
 
 
 @pytest.mark.skipif(not FIRMWARE.exists(), reason="no se encontró el firmware")
@@ -142,6 +144,33 @@ def test_el_bitmask_de_salud_se_traduce_a_nombres():
 
     assert isinstance(tlm, p.HealthTelemetry)
     assert tlm.faulted_tasks == ("motor_control", "color_sensor")
+
+
+def test_el_bitmask_de_salud_reconoce_el_tof():
+    import struct
+    payload = struct.pack("<IB", 6000, 0b01000000)   # bit 6 = tof_sensor
+    tlm = list(p.PacketDecoder().feed(_trama(0x12, payload)))[0]
+
+    assert tlm.faulted_tasks == ("tof_sensor",)
+
+
+def test_decodifica_telemetria_de_tof():
+    import struct
+    payload = struct.pack("<IHB", 321, 87, 0x01)
+    tlm = list(p.PacketDecoder().feed(_trama(0x13, payload)))[0]
+
+    assert isinstance(tlm, p.ToFTelemetry)
+    assert tlm.timestamp_ms == 321
+    assert tlm.distance_mm == 87
+    assert tlm.valid is True
+
+
+def test_tof_invalido_se_distingue_de_sin_lectura():
+    import struct
+    payload = struct.pack("<IHB", 5, 0, 0x00)
+    tlm = list(p.PacketDecoder().feed(_trama(0x13, payload)))[0]
+
+    assert tlm.valid is False
 
 
 def test_una_trama_partida_en_pedazos_se_reconstruye():
@@ -228,10 +257,11 @@ def test_ida_y_vuelta_de_todos_los_tipos_de_telemetria():
         (0x10, struct.pack("<IBBB", 1, 3, 4, 0x03), p.ColorTelemetry),
         (0x11, struct.pack("<IHHB", 2, 100, 200, 0x02), p.ReflectTelemetry),
         (0x12, struct.pack("<IB", 3, 0xFF), p.HealthTelemetry),
+        (0x13, struct.pack("<IHB", 4, 250, 0x01), p.ToFTelemetry),
     ]
     flujo = b"".join(_trama(t, pl) for t, pl, _ in casos)
     recibidos = list(p.PacketDecoder().feed(flujo))
 
-    assert len(recibidos) == 3
+    assert len(recibidos) == 4
     for recibido, (_, _, tipo) in zip(recibidos, casos):
         assert isinstance(recibido, tipo)

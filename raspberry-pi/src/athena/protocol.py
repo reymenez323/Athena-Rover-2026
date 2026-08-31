@@ -37,6 +37,7 @@ class PacketType(IntEnum):
     TLM_COLOR = 0x10
     TLM_REFLECT = 0x11
     TLM_HEALTH = 0x12
+    TLM_TOF = 0x13
 
 
 LEN_CMD_MOTOR = 3
@@ -45,6 +46,7 @@ LEN_CMD_LED = 1
 LEN_TLM_COLOR = 7
 LEN_TLM_REFLECT = 9
 LEN_TLM_HEALTH = 5
+LEN_TLM_TOF = 7
 
 
 class MotorMode(IntEnum):
@@ -83,10 +85,12 @@ class ColorLabel(IntEnum):
 # permite al parser resincronizar cuando llega basura por el cable (ver
 # PacketDecoder._step).
 RECEIVABLE_TYPES = frozenset(
-    {PacketType.TLM_COLOR, PacketType.TLM_REFLECT, PacketType.TLM_HEALTH}
+    {PacketType.TLM_COLOR, PacketType.TLM_REFLECT, PacketType.TLM_HEALTH, PacketType.TLM_TOF}
 )
 
 
+# Mismo orden que el enum TaskId en main.cpp. TOF_SENSOR se agregó al final
+# allá a propósito (no mueve el bit de nadie más), así que va al final aquí.
 TASK_NAMES = (
     "serial_comm",
     "motor_control",
@@ -94,6 +98,7 @@ TASK_NAMES = (
     "color_sensor",
     "reflectance",
     "led_status",
+    "tof_sensor",
 )
 
 
@@ -121,6 +126,21 @@ class ReflectTelemetry:
 
 
 @dataclass(frozen=True)
+class ToFTelemetry:
+    """Distancia del VL53L1X montado delante del gripper.
+
+    ``valid`` es False cuando el sensor no responde o cuando la última
+    medición no fue confiable (fuera de rango, señal débil, etc. — lo que el
+    firmware traduce de ``VL53L1X::RangeStatus``). No confundir con "no hay
+    nada delante": eso da una distancia válida, solo que grande.
+    """
+
+    timestamp_ms: int
+    distance_mm: int
+    valid: bool
+
+
+@dataclass(frozen=True)
 class HealthTelemetry:
     timestamp_ms: int
     faulted_bitmask: int
@@ -135,7 +155,7 @@ class HealthTelemetry:
         )
 
 
-Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry
+Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry | ToFTelemetry
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +295,14 @@ def _decode_payload(packet_type: int, payload: bytes) -> Telemetry | None:
     if packet_type == PacketType.TLM_HEALTH and len(payload) == LEN_TLM_HEALTH:
         timestamp, bitmask = struct.unpack("<IB", payload)
         return HealthTelemetry(timestamp_ms=timestamp, faulted_bitmask=bitmask)
+
+    if packet_type == PacketType.TLM_TOF and len(payload) == LEN_TLM_TOF:
+        timestamp, distance, flags = struct.unpack("<IHB", payload)
+        return ToFTelemetry(
+            timestamp_ms=timestamp,
+            distance_mm=distance,
+            valid=bool(flags & 0x01),
+        )
 
     return None   # tipo desconocido o largo raro: se ignora sin romper nada
 

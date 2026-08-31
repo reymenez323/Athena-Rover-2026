@@ -26,7 +26,14 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 
 from .config import ControlConfig
-from .protocol import ColorLabel, ColorTelemetry, GripperAction, ReflectTelemetry, TeamColor
+from .protocol import (
+    ColorLabel,
+    ColorTelemetry,
+    GripperAction,
+    ReflectTelemetry,
+    TeamColor,
+    ToFTelemetry,
+)
 from .types import Detection, ObjectClass, Perception
 
 
@@ -93,6 +100,7 @@ class DecisionMaker:
         perception: Perception,
         color: ColorTelemetry | None,
         reflect: ReflectTelemetry | None,
+        tof: ToFTelemetry | None = None,
     ) -> Commands:
         """Decide los comandos de este ciclo y avanza la máquina de estados."""
 
@@ -119,7 +127,7 @@ class DecisionMaker:
             return self._buscar_bandera(perception)
 
         if phase is Phase.APROXIMAR_BANDERA:
-            return self._aproximar_bandera(perception)
+            return self._aproximar_bandera(perception, tof)
 
         if phase is Phase.AGARRAR_BANDERA:
             return self._agarrar_bandera()
@@ -214,7 +222,9 @@ class DecisionMaker:
         self.state = replace(self.state, frames_sin_objetivo=frames, sentido_busqueda=sentido)
         return Commands(v * sentido, -v * sentido, motivo="buscando la bandera")
 
-    def _aproximar_bandera(self, perception: Perception) -> Commands:
+    def _aproximar_bandera(
+        self, perception: Perception, tof: ToFTelemetry | None
+    ) -> Commands:
         objetivo = perception.best(self.state.bandera_objetivo)
 
         if objetivo is None:
@@ -231,8 +241,20 @@ class DecisionMaker:
 
         self.state = replace(self.state, frames_sin_objetivo=0)
 
-        distancia = objetivo.distance_mm
         centrado = abs(objetivo.angle_deg) < self._cfg.angulo_muerto_deg
+
+        # El VL53L1X mide en línea recta frente al gripper, así que su
+        # lectura solo describe a LA BANDERA cuando además está centrada; si
+        # no, el sensor está midiendo cualquier otra cosa que tenga delante
+        # (el piso, el aire) y hay que confiar en la estimación de la cámara.
+        # Cuando aplica, es la fuente de verdad: es una medición física
+        # directa, mucho más confiable a corta distancia que estimar el
+        # tamaño aparente de la bandera en el frame.
+        if tof is not None and tof.valid and centrado:
+            distancia: float | None = float(tof.distance_mm)
+        else:
+            distancia = objetivo.distance_mm
+
         if distancia is not None and distancia <= self._cfg.distancia_agarre_mm and centrado:
             self.state = replace(self.state, phase=Phase.AGARRAR_BANDERA)
             return Commands(motivo="bandera al alcance")

@@ -25,6 +25,7 @@ from athena.protocol import (  # noqa: E402
     GripperAction,
     ReflectTelemetry,
     TeamColor,
+    ToFTelemetry,
 )
 from athena.types import BBox, Detection, ObjectClass, Perception  # noqa: E402
 
@@ -54,6 +55,10 @@ def color(front: ColorLabel) -> ColorTelemetry:
 def reflect(izq: bool = False, der: bool = False) -> ReflectTelemetry:
     return ReflectTelemetry(timestamp_ms=0, left_raw=0, right_raw=0,
                             left_on_line=izq, right_on_line=der)
+
+
+def tof(distancia_mm: int, *, valido: bool = True) -> ToFTelemetry:
+    return ToFTelemetry(timestamp_ms=0, distance_mm=distancia_mm, valid=valido)
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +192,46 @@ def test_se_agarra_solo_cuando_esta_cerca_Y_centrada():
     # Cerca y centrada: ahora sí.
     d = DecisionMaker(CFG, base)
     d.step(percepcion(deteccion(ObjectClass.BANDERA_AZUL, distancia=100.0, angulo=0.5)), None, None)
+    assert d.state.phase is Phase.AGARRAR_BANDERA
+
+
+def test_el_tof_manda_sobre_la_vision_cuando_esta_centrada():
+    """El ToF es una medición física directa: si dice que ya se llegó, se cierra."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.APROXIMAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    # La cámara todavía la ve lejos, pero el ToF (centrada) dice que ya se llegó.
+    d.step(
+        percepcion(deteccion(ObjectClass.BANDERA_AZUL, distancia=800.0, angulo=0.5)),
+        None,
+        None,
+        tof(50),
+    )
+    assert d.state.phase is Phase.AGARRAR_BANDERA
+
+
+def test_el_tof_se_ignora_si_no_esta_centrada():
+    """Un ToF de un solo punto, sin centrar, puede estar midiendo cualquier cosa."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.APROXIMAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    d.step(
+        percepcion(deteccion(ObjectClass.BANDERA_AZUL, distancia=800.0, angulo=25.0)),
+        None,
+        None,
+        tof(50),
+    )
+    assert d.state.phase is Phase.APROXIMAR_BANDERA
+
+
+def test_el_tof_invalido_no_bloquea_el_agarre_por_vision():
+    """Sensor caído o sin lectura confiable: se sigue con la estimación visual."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.APROXIMAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    d.step(
+        percepcion(deteccion(ObjectClass.BANDERA_AZUL, distancia=100.0, angulo=0.5)),
+        None,
+        None,
+        tof(50, valido=False),
+    )
     assert d.state.phase is Phase.AGARRAR_BANDERA
 
 

@@ -17,6 +17,7 @@
 //    · 2x L298N            -> 4 motores (cada driver mueve 2)
 //    · 1x PCA9685 (I2C)    -> 2 servos del gripper (pinza + elevación)
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
+//    · 1x VL53L1X (I2C)    -> telémetro delante del gripper, distancia a la bandera
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
 //    · LED RGB (1x)        -> identificación de equipo (lo exige el reglamento);
 //                             antes eran 2 LED discretos rojo/azul, ya no existen
@@ -37,6 +38,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <VL53L1X.h>
 
 // ===========================================================================
 //  [1] CONFIGURACIÓN
@@ -90,6 +92,14 @@ namespace Pins {
     constexpr uint8_t TCS_LED_FRONT = 18;
     constexpr uint8_t TCS_LED_BACK  = 21;
 
+    // -------- VL53L1X (ToF), delante del gripper ---------------------------
+    // Va en el bus I2C nº1 (mismo que el TCS34725 trasero). Los dos chips
+    // arrancan en la MISMA dirección fija 0x29, así que el VL53L1X necesita
+    // este pin XSHUT para quedarse en reset (sin responder en el bus) hasta
+    // que se le reasigna una dirección nueva — ver TofSensorTask y la nota
+    // en I2CAddr::VL53L1X_BOOT_ADDR más abajo para el riesgo que esto implica.
+    constexpr uint8_t TOF_XSHUT = 40;
+
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
     // ¡ALIMENTARLOS A 3.3 V! La salida del QTRX es proporcional a su VIN: a
     // 5 V entregaría hasta 5 V y eso quema la entrada ADC del ESP32-S3.
@@ -114,6 +124,24 @@ namespace Pins {
 namespace I2CAddr {
     constexpr uint8_t PCA9685  = 0x40;   // dirección por defecto (A0..A5 sin puentear)
     constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar
+
+    // El VL53L1X arranca SIEMPRE en 0x29 — la misma dirección fija del
+    // TCS34725, y comparten el bus I2C nº1 (ver Pins::TOF_XSHUT). Por eso se
+    // le reasigna esta dirección nueva en cuanto sale de reset, antes de
+    // hacer cualquier otra cosa con él.
+    //
+    // ⚠️ ESA REASIGNACIÓN ES UNA ÚNICA ESCRITURA CORTA hecha mientras el
+    // VL53L1X TODAVÍA responde en 0x29 — el mismo instante en que el
+    // TCS34725 trasero, que no tiene forma de silenciarse, también sigue
+    // vivo en esa dirección en el mismo bus. No hay manera de evitarlo con
+    // el hardware actual (el TCS34725 no tiene pin de reset/shutdown). El
+    // riesgo se mantiene acotado a propósito: es SOLO esa escritura de 3
+    // bytes, no la inicialización completa del sensor (que si ocurriera con
+    // los dos chips en la misma dirección sí sería un problema serio). Si el
+    // TCS34725 trasero empieza a comportarse raro después de un reset, este
+    // es el primer sospechoso — revisar con el analizador lógico.
+    constexpr uint8_t VL53L1X_BOOT_ADDR = 0x29;
+    constexpr uint8_t VL53L1X = 0x30;
 }
 
 // Canales del PCA9685 usados por el gripper
@@ -149,6 +177,7 @@ namespace TaskPriority {
     constexpr UBaseType_t GRIPPER_CONTROL = 3;
     constexpr UBaseType_t REFLECTANCE     = 3;  // realimentación rápida de línea
     constexpr UBaseType_t COLOR_SENSOR    = 2;
+    constexpr UBaseType_t TOF_SENSOR      = 2;  // mismo nivel que los demás sensores
     constexpr UBaseType_t LED_STATUS      = 1;
 }
 
@@ -163,6 +192,9 @@ namespace TaskStack {
     constexpr uint32_t GRIPPER_CONTROL = 3072;
     constexpr uint32_t REFLECTANCE     = 2560;
     constexpr uint32_t COLOR_SENSOR    = 3584;
+    // La librería de Pololu es más pesada que nuestros drivers a mano
+    // (PCA9685/TCS34725): le damos más margen que a COLOR_SENSOR.
+    constexpr uint32_t TOF_SENSOR      = 4096;
     constexpr uint32_t LED_STATUS      = 2048;
 }
 
@@ -173,6 +205,7 @@ namespace TaskPeriodMs {
     constexpr uint32_t GRIPPER       = 50;
     constexpr uint32_t REFLECTANCE   = 20;   // 50 Hz, seguimiento de línea
     constexpr uint32_t COLOR_SENSOR  = 100;  // 10 Hz, de sobra para las zonas
+    constexpr uint32_t TOF_SENSOR    = 50;   // 20 Hz, igual al periodo de rango configurado
     constexpr uint32_t LED_STATUS    = 250;
 }
 
@@ -194,6 +227,7 @@ enum class TaskId : uint8_t {
     COLOR_SENSOR,
     REFLECTANCE,
     LED_STATUS,
+    TOF_SENSOR,   // agregado al final a propósito: no mueve el bit de nadie más
     COUNT   // siempre el último
 };
 
@@ -258,6 +292,12 @@ struct ReflectanceReading {
     bool     right_on_line = false;
 };
 
+struct TofReading {
+    uint32_t timestamp_ms = 0;
+    uint16_t distance_mm  = 0;
+    bool     valid        = false;
+};
+
 struct HealthReport {
     uint32_t timestamp_ms          = 0;
     uint8_t  faulted_tasks_bitmask = 0;  // bit i = TaskId i encontrada colgada
@@ -299,6 +339,9 @@ struct HealthReport {
 //                             [8]=flags: bit0=left_on_line, bit1=right_on_line
 //   0x12 TLM_HEALTH   len=5   [0..3]=timestamp_ms u32 LE
 //                             [4]=faulted_tasks_bitmask
+//   0x13 TLM_TOF      len=7   [0..3]=timestamp_ms u32 LE
+//                             [4..5]=distance_mm u16 LE
+//                             [6]=flags: bit0=valid
 //
 //  El lado Python vive en raspberry-pi/src/athena/protocol.py y DEBE
 //  mantenerse sincronizado con este bloque. El test
@@ -316,6 +359,7 @@ namespace Proto {
         TLM_COLOR   = 0x10,
         TLM_REFLECT = 0x11,
         TLM_HEALTH  = 0x12,
+        TLM_TOF     = 0x13,
     };
 
     constexpr uint8_t LEN_CMD_MOTOR   = 3;
@@ -324,6 +368,7 @@ namespace Proto {
     constexpr uint8_t LEN_TLM_COLOR   = 7;
     constexpr uint8_t LEN_TLM_REFLECT = 9;
     constexpr uint8_t LEN_TLM_HEALTH  = 5;
+    constexpr uint8_t LEN_TLM_TOF     = 7;
 
     // Tipos que el ESP32 puede RECIBIR. Solo comandos: la telemetria va en la
     // otra direccion. Validar el byte de tipo contra esta lista es lo que le
@@ -362,6 +407,7 @@ namespace Proto {
 //
 //   ColorSensorTask --> colorQueue   (len 4, FIFO)      --> SerialTask --USB--> RPi
 //   ReflectanceTask --> reflectQueue (len 4, FIFO)      --> SerialTask --USB--> RPi
+//   TofSensorTask   --> tofQueue     (len 4, FIFO)      --> SerialTask --USB--> RPi
 //   SupervisorTask  --> healthQueue  (len 1, overwrite) --> SerialTask --USB--> RPi
 //
 //  Las colas "overwrite" (largo 1) son para datos donde solo importa el valor
@@ -378,6 +424,7 @@ static QueueHandle_t g_gripperCmdQueue = nullptr;
 static QueueHandle_t g_ledCmdQueue     = nullptr;
 static QueueHandle_t g_colorQueue      = nullptr;
 static QueueHandle_t g_reflectQueue    = nullptr;
+static QueueHandle_t g_tofQueue        = nullptr;
 static QueueHandle_t g_healthQueue     = nullptr;
 
 // ===========================================================================
@@ -804,10 +851,6 @@ void GripperTask(void *) {
     }
 }
 
-// ---------------------------------------------------------------------------
-//  8.3  ColorSensorTask — TCS34725 delantero (Wire) y trasero (Wire1)
-// ---------------------------------------------------------------------------
-
 // Empuja un elemento a una cola FIFO descartando el más viejo si está llena.
 // Preferimos telemetría fresca a telemetría completa: un dato de sensor de
 // hace medio segundo no le sirve de nada a la Raspberry Pi.
@@ -819,6 +862,120 @@ void PushDropOldest(QueueHandle_t queue, const T &item) {
         xQueueSend(queue, &item, 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+//  8.3  TofSensorTask — VL53L1X, telémetro delante del gripper
+// ---------------------------------------------------------------------------
+//
+//  Mide la distancia a lo que tenga delante (la bandera, con suerte) para que
+//  la Raspberry Pi sepa CUÁNDO cerrar la pinza — igual que ColorSensorTask y
+//  ReflectanceTask, esta tarea solo mide y publica: la decisión de cuándo
+//  agarrar vive en la Pi (raspberry-pi/src/athena/decision.py).
+//
+//  SECUENCIA DE ARRANQUE, y por qué es así:
+//  el VL53L1X comparte el bus I2C nº1 con el TCS34725 trasero, y los dos
+//  chips arrancan en la MISMA dirección fija 0x29 (ver Pins::TOF_XSHUT e
+//  I2CAddr::VL53L1X_BOOT_ADDR). La secuencia:
+//    1. Mantener XSHUT en LOW un instante: el VL53L1X queda en reset y NO
+//       responde en el bus, así que el TCS34725 trasero no tiene con quién
+//       chocar mientras tanto.
+//    2. Soltar XSHUT (HIGH) y esperar el arranque del sensor.
+//    3. Reasignarle una dirección nueva (I2CAddr::VL53L1X) con UNA sola
+//       escritura corta — el único instante en que comparte 0x29 con el
+//       TCS34725 trasero. Es un riesgo aceptado y documentado (ver la nota
+//       larga junto a I2CAddr::VL53L1X_BOOT_ADDR), no un descuido.
+//    4. Recién ahora, init() completo: ya en su propia dirección, sin nadie
+//       más escuchando en ella.
+//
+//  Igual que GripperTask con el PCA9685: si el sensor no responde al
+//  arranque, se reintenta en segundo plano cada segundo sin bloquear nada.
+
+namespace Tof {
+    // El VL53L1X necesita un rato para arrancar tras soltar XSHUT — el
+    // datasheet pide ~1.2 ms, se redondea hacia arriba con margen.
+    constexpr uint32_t BOOT_DELAY_MS = 2;
+
+    // "Long" alcanza los ~4 m que promete el sensor (a costa de un ciclo de
+    // medición más largo); de sobra para esta distancia, que es corta por
+    // diseño: el sensor solo tiene que ver la bandera cuando ya está frente
+    // al gripper.
+    constexpr uint16_t TIMING_BUDGET_US = 50000;   // 50 ms
+    constexpr uint32_t RANGING_PERIOD_MS = 50;     // igual a TaskPeriodMs::TOF_SENSOR
+}
+
+VL53L1X g_tof;   // única instancia: hay un solo sensor ToF en el robot
+
+bool TofBringUp() {
+    g_tof.setBus(&Wire1);
+    g_tof.setTimeout(500);
+
+    // Ver la nota larga en I2CAddr::VL53L1X_BOOT_ADDR: esta línea es la única
+    // transacción que ocurre mientras el VL53L1X sigue en 0x29.
+    g_tof.setAddress(I2CAddr::VL53L1X);
+
+    if (!g_tof.init()) return false;
+
+    g_tof.setDistanceMode(VL53L1X::Long);
+    g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
+    g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
+    return true;
+}
+
+void TofSensorTask(void *) {
+    // El pin ya está en OUTPUT/LOW desde setup() (antes de crear ninguna
+    // tarea) — a propósito: algunas placas del VL53L1X traen un pull-up en
+    // XSHUT que lo deja activo por defecto, así que si se esperara a este
+    // punto para ponerlo en LOW, ColorSensorTask (que corre en paralelo)
+    // podría alcanzar a inicializar el TCS34725 trasero mientras el
+    // VL53L1X, recién encendido, todavía responde en 0x29 sin que nadie se
+    // lo haya pedido. Aquí solo hace falta soltarlo.
+    digitalWrite(Pins::TOF_XSHUT, HIGH);    // arranca
+    delay(Tof::BOOT_DELAY_MS);
+
+    bool tof_ok = TofBringUp();
+    if (!tof_ok) {
+        DEBUG_LINK.println("[ToF] VL53L1X no responde. Reintentando en segundo plano.");
+    }
+
+    const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::TOF_SENSOR);
+    TickType_t last_wake = xTaskGetTickCount();
+    uint32_t last_retry_ms = millis();
+
+    for (;;) {
+        // Reintento perezoso, igual que GripperTask/ColorSensorTask: un
+        // sensor caído no bloquea nada más. No se repite el cambio de
+        // dirección aquí — el VL53L1X la conserva mientras tenga
+        // alimentación, así que solo hace falta al arrancar.
+        if (!tof_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
+            last_retry_ms = millis();
+            tof_ok = g_tof.init();
+            if (tof_ok) {
+                g_tof.setDistanceMode(VL53L1X::Long);
+                g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
+                g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
+            }
+        }
+
+        TofReading reading;
+        reading.timestamp_ms = millis();
+
+        if (tof_ok && g_tof.dataReady()) {
+            reading.distance_mm = g_tof.read(false);   // no bloqueante: ya sabemos que hay dato
+            reading.valid = !g_tof.timeoutOccurred() &&
+                            g_tof.ranging_data.range_status == VL53L1X::RangeValid;
+            if (g_tof.timeoutOccurred()) tof_ok = false;   // dejó de responder
+        }
+
+        PushDropOldest(g_tofQueue, reading);
+
+        Heartbeat(TaskId::TOF_SENSOR);
+        vTaskDelayUntil(&last_wake, period);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  8.4  ColorSensorTask — TCS34725 delantero (Wire) y trasero (Wire1)
+// ---------------------------------------------------------------------------
 
 void ColorSensorTask(void *) {
     // LED de iluminación de cada sensor, encendidos de forma permanente. Es
@@ -874,7 +1031,7 @@ void ColorSensorTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.4  ReflectanceTask — 2x QTRX-HD-01A
+//  8.5  ReflectanceTask — 2x QTRX-HD-01A
 // ---------------------------------------------------------------------------
 //
 //  CÓMO SE LEE ESTE SENSOR (importante, porque es contraintuitivo):
@@ -925,7 +1082,7 @@ void ReflectanceTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.5  LedTask — LED RGB indicador de equipo (lo exige el reglamento)
+//  8.6  LedTask — LED RGB indicador de equipo (lo exige el reglamento)
 // ---------------------------------------------------------------------------
 //  Hasta hace poco esto eran 2 LED discretos (rojo/azul) con digitalWrite.
 //  El equipo los reemplazó por un único LED RGB (validado primero en
@@ -989,7 +1146,7 @@ void LedTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.6  SerialTask — único punto de contacto con la Raspberry Pi
+//  8.7  SerialTask — único punto de contacto con la Raspberry Pi
 // ---------------------------------------------------------------------------
 //  Es la ÚNICA tarea que toca el enlace con la RPi. Ninguna otra escribe en
 //  él, así que no hace falta un mutex para el puerto.
@@ -1126,6 +1283,14 @@ void SerialTask(void *) {
             SerialSendPacket(Proto::TLM_REFLECT, payload, Proto::LEN_TLM_REFLECT);
         }
 
+        TofReading tof;
+        while (xQueueReceive(g_tofQueue, &tof, 0) == pdTRUE) {
+            Proto::WriteU32LE(&payload[0], tof.timestamp_ms);
+            Proto::WriteU16LE(&payload[4], tof.distance_mm);
+            payload[6] = (uint8_t)(tof.valid ? 0x01 : 0);
+            SerialSendPacket(Proto::TLM_TOF, payload, Proto::LEN_TLM_TOF);
+        }
+
         HealthReport health;
         while (xQueueReceive(g_healthQueue, &health, 0) == pdTRUE) {
             Proto::WriteU32LE(&payload[0], health.timestamp_ms);
@@ -1139,7 +1304,7 @@ void SerialTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.7  SupervisorTask — vigila que las demás tareas sigan vivas
+//  8.8  SupervisorTask — vigila que las demás tareas sigan vivas
 // ---------------------------------------------------------------------------
 //
 //  ESTRATEGIA DE TOLERANCIA A FALLOS
@@ -1204,10 +1369,11 @@ static bool CreateQueues() {
     g_ledCmdQueue     = xQueueCreate(1, sizeof(LedCommand));
     g_colorQueue      = xQueueCreate(4, sizeof(ColorReading));
     g_reflectQueue    = xQueueCreate(4, sizeof(ReflectanceReading));
+    g_tofQueue        = xQueueCreate(4, sizeof(TofReading));
     g_healthQueue     = xQueueCreate(1, sizeof(HealthReport));
 
     return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue &&
-           g_colorQueue && g_reflectQueue && g_healthQueue;
+           g_colorQueue && g_reflectQueue && g_tofQueue && g_healthQueue;
 }
 
 void setup() {
@@ -1225,6 +1391,17 @@ void setup() {
     // transacción falla rápido en vez de congelar la tarea que la pidió.
     Wire.setTimeOut(25);
     Wire1.setTimeOut(25);
+
+    // VL53L1X en reset DESDE YA, antes de crear ninguna tarea. Ver la nota
+    // larga en TofSensorTask: si se dejara este pin sin tocar hasta que esa
+    // tarea arranque, ColorSensorTask (que corre en paralelo, en el mismo
+    // bus I2C1) podría alcanzar a inicializar el TCS34725 trasero mientras
+    // el VL53L1X sigue respondiendo en 0x29 por su cuenta (algunas placas
+    // traen un pull-up en XSHUT que lo deja activo apenas se energiza).
+    // Haciéndolo aquí, en setup(), antes de xTaskCreatePinnedToCore, queda
+    // garantizado que pasa antes que cualquier tarea toque el bus.
+    pinMode(Pins::TOF_XSHUT, OUTPUT);
+    digitalWrite(Pins::TOF_XSHUT, LOW);
 
     if (!CreateQueues()) {
         // Sin colas no hay comunicación entre tareas: arrancar a medias sería
@@ -1248,6 +1425,8 @@ void setup() {
                             nullptr, TaskPriority::GRIPPER_CONTROL, nullptr, 1);
     xTaskCreatePinnedToCore(ColorSensorTask, "ColorSensors", TaskStack::COLOR_SENSOR,
                             nullptr, TaskPriority::COLOR_SENSOR, nullptr, 0);
+    xTaskCreatePinnedToCore(TofSensorTask, "TofSensor", TaskStack::TOF_SENSOR,
+                            nullptr, TaskPriority::TOF_SENSOR, nullptr, 0);
     xTaskCreatePinnedToCore(ReflectanceTask, "Reflectance", TaskStack::REFLECTANCE,
                             nullptr, TaskPriority::REFLECTANCE, nullptr, 0);
     xTaskCreatePinnedToCore(LedTask, "TeamLed", TaskStack::LED_STATUS,
