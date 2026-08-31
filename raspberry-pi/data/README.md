@@ -55,4 +55,10 @@ python3 scripts/train_classifier.py
 ```
 
 Genera los recortes en `crops/`, entrena y exporta `models/athena_cls.tflite`
-ya cuantizado a INT8 para la Raspberry Pi.
+ya cuantizado a INT8 para la Raspberry Pi. Paso a paso completo (con cómo
+copiar el modelo a la Pi y verificar que se está usando) en el
+["Cómo entrenar el clasificador" del README principal](../README.md#cómo-entrenar-el-clasificador-paso-a-paso).
+
+> `scripts/auto_label_ei.py` NO es parte de este flujo: es para pre-etiquetar
+> fotos de otro equipo y subirlas a Edge Impulse Studio, un proyecto externo
+> aparte. No genera nada que use `train_classifier.py`.

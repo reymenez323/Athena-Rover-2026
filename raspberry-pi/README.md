@@ -23,7 +23,8 @@ raspberry-pi/
 │   ├── capture_dataset.py   tomar fotos para entrenar
 │   ├── train_classifier.py  entrenar y exportar el .tflite (en tu laptop)
 │   ├── benchmark.py         medir el rendimiento real en TU Pi
-│   └── run_rover.py         el bucle principal del robot
+│   ├── run_rover.py         el bucle principal del robot
+│   └── auto_label_ei.py     APARTE, no forma parte de este flujo — ver nota abajo
 ├── data/                 dataset de entrenamiento (ver data/README.md)
 ├── models/               el .tflite entrenado
 └── tests/                tests que corren sin robot
@@ -52,6 +53,71 @@ python3 scripts/run_rover.py --equipo rojo
 # Medir el rendimiento real
 python3 scripts/benchmark.py
 ```
+
+---
+
+## Cómo entrenar el clasificador (paso a paso)
+
+Esto es lo que hace falta para que el robot reconozca bandera_roja,
+bandera_azul, llave y fondo. Sin este modelo, el robot **igual se mueve**: cae
+a reglas de color/forma ("modo degradado", ver más abajo), menos preciso pero
+funcional — así que no es un bloqueante para probar mecánica y control.
+
+**1. Tomar fotos** (en la laptop o en la Pi, donde tengas la cámara conectada):
+
+```bash
+python3 scripts/capture_dataset.py --clase bandera_roja
+python3 scripts/capture_dataset.py --clase bandera_azul
+python3 scripts/capture_dataset.py --clase llave
+python3 scripts/capture_dataset.py --clase fondo
+```
+
+`ESPACIO` guarda foto, `a` activa captura automática, `q` sale. Apunta a
+150–300 fotos por clase, variando distancia/ángulo/luz/fondo — detalle
+completo en [data/README.md](data/README.md). **`fondo` es la clase más
+importante**: mete ahí cinta roja/azul del piso, reflejos, el LED del otro
+robot — todo lo que se pueda confundir con una bandera. Las fotos quedan en
+`data/raw/<clase>/` y sí se versionan en git (son irremplazables).
+
+**2. Entrenar** — esto va en tu **laptop, NO en la Raspberry Pi** (tardaría
+horas ahí):
+
+```bash
+pip install "tensorflow>=2.15" pillow
+python3 scripts/train_classifier.py
+```
+
+Recorta los objetos de las fotos con el mismo detector que usa el robot en
+producción, entrena una CNN chica, y exporta `models/athena_cls.tflite`
+cuantizado a INT8.
+
+**3. Llevar el modelo a la Raspberry Pi**: copia el archivo
+`models/athena_cls.tflite` de tu laptop a la misma ruta relativa en la Pi
+(scp, USB, lo que tengas a mano). No se versiona en git — hay que copiarlo a
+mano cada vez que se reentrena.
+
+**4. Verificar que la Pi lo está usando**:
+
+```bash
+python3 scripts/run_rover.py --equipo rojo --simular --ver
+```
+
+`--simular` no mueve motores; `--ver` abre una ventana con lo que detecta y
+las cajas dibujadas. En consola, al arrancar debe aparecer algo como
+`Clasificador listo: athena_cls.tflite (...)`. Si en cambio dice `Sin modelo
+CNN: corriendo en modo degradado`, el `.tflite` no está donde `config.py` lo
+busca (`models/athena_cls.tflite`, relativo a esta carpeta `raspberry-pi/`).
+
+> ### ⚠️ `scripts/auto_label_ei.py` es un flujo APARTE, no este
+>
+> Ese script pre-etiqueta fotos que llegaron de **otro equipo** para subirlas
+> a **Edge Impulse Studio** (un servicio externo), reusando las etiquetas
+> `CILINDRO_ROJO`/`CILINDRO_AZUL` de un proyecto de Edge Impulse que ya
+> existía por fuera de este repo. Su salida (`bounding_boxes.labels`) no se
+> conecta con `train_classifier.py` ni con `models/`: sirve para entrenar en
+> Edge Impulse, no para generar el `.tflite` que usa `run_rover.py`. Si lo que
+> quieres es que la Pi reconozca objetos, el flujo de los 4 pasos de arriba es
+> el que necesitas — no este script.
 
 ---
 
