@@ -262,7 +262,7 @@ un bus propio: comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero
 |-------------|:------------------------:|------|
 | SDA | **8** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
 | SCL | **9** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
-| XSHUT | **40** | Reset por software. Ver la secuencia de arranque abajo |
+| XSHUT | **41** | Reset por software. Ver la secuencia de arranque abajo |
 | VIN | 3.3 V | |
 | GND | GND común | |
 
@@ -274,13 +274,13 @@ cuanto tiene alimentación, responde en 0x29 sin que el firmware pueda
 callarlo. La secuencia de arranque (implementada en `TofSensorTask`,
 `firmware-esp32/src/main.cpp`) es:
 
-1. **GPIO 40 en LOW desde `setup()`**, antes de crear ninguna tarea — el
+1. **GPIO 41 en LOW desde `setup()`**, antes de crear ninguna tarea — el
    VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
    ANTES de arrancar cualquier tarea: algunas placas del sensor traen un
    pull-up en XSHUT que lo deja activo apenas se energiza, así que si el
    firmware tardara en ponerlo en LOW, habría una ventana de arranque con los
    dos chips respondiendo en 0x29 a la vez.
-2. GPIO 40 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
+2. GPIO 41 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
 3. Se le reasigna la dirección **0x30** con una única escritura corta a su
    registro de dirección. Este es el único instante en que el VL53L1X sigue
    en 0x29 mientras el TCS34725 delantero también está vivo ahí — no se puede
@@ -393,16 +393,16 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | XSHUT del VL53L1X (ToF) |
-| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | *(libre)* |
+| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | *(libre)* |
+| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | XSHUT del VL53L1X (ToF) |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |
 | 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**25 pines usados.** Queda libre para ampliaciones: GPIO **41** — el otro
-GPIO que quedaba libre (40) ahora lo usa el XSHUT del VL53L1X (ver la sección
+**25 pines usados.** Queda libre para ampliaciones: GPIO **40** — el otro
+GPIO que quedaba libre (41) ahora lo usa el XSHUT del VL53L1X (ver la sección
 de [ToF](#tof--vl53l1x-distancia-frente-al-gripper)).
 
 ---

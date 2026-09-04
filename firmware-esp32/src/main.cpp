@@ -100,7 +100,7 @@ namespace Pins {
     // (sin responder en el bus) hasta que se le reasigna una dirección nueva
     // — ver TofSensorTask y la nota en I2CAddr::VL53L1X_BOOT_ADDR más abajo
     // para el riesgo que esto implica.
-    constexpr uint8_t TOF_XSHUT = 40;
+    constexpr uint8_t TOF_XSHUT = 41;
 
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
     // ¡ALIMENTARLOS A 3.3 V! La salida del QTRX es proporcional a su VIN: a
