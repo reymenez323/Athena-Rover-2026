@@ -13,6 +13,26 @@ versión con Raspberry Pi. Mismo hardware, mismos drivers I2C escritos a mano
 más de FreeRTOS (`MissionTask`), en vez de vivir en Python al otro lado de un
 cable USB.
 
+## Bus I2C nº0 compartido: por qué hay un mutex
+
+`GripperTask` (PCA9685), `ColorSensorTask` (TCS34725 delantero) y
+`TofSensorTask` (VL53L1X) viven los tres en el mismo bus I2C nº0 (`Wire`),
+pero corren en tareas de FreeRTOS distintas — Gripper en el núcleo 1,
+Color y ToF en el núcleo 0. `TwoWire` no es segura para usarse desde varias
+tareas a la vez, y con dos núcleos de por medio dos de esas tareas pueden
+estar ejecutando una transacción I2C **al mismo tiempo**, no solo
+intercaladas por el planificador. Eso corrompe el bus de forma
+intermitente: exactamente los "problemas de I2C" que se ven al mezclar el
+ToF con el sensor de color.
+
+La solución es `g_i2c0Mutex`: cada tarea toma este mutex antes de tocar el
+bus 0 y lo suelta apenas termina, así nunca hay dos transacciones activas
+al mismo tiempo. El bus 1 (`Wire1`, el TCS34725 trasero) no lo necesita
+porque nadie más lo usa. Con timeout corto (50 ms, no `portMAX_DELAY`): si
+no se consigue el bus a tiempo, esa operación se da por fallida esta vuelta
+y se reintenta en la siguiente, mismo criterio que ya usan los drivers de
+este archivo.
+
 ## Modo actual: SIN MOVIMIENTO (batería baja)
 
 `Mission::kMotionEnabled` está en `false` en `src/main.cpp`. Con eso,

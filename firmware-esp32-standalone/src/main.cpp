@@ -73,6 +73,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <VL53L1X.h>
+#include <freertos/semphr.h>   // SemaphoreHandle_t / mutex del bus I2C nº0 (ver g_i2c0Mutex)
 
 // ===========================================================================
 //  [1] CONFIGURACIÓN
@@ -310,6 +311,39 @@ static QueueHandle_t g_colorQueue      = nullptr;
 static QueueHandle_t g_reflectQueue    = nullptr;
 static QueueHandle_t g_tofQueue        = nullptr;
 static QueueHandle_t g_healthQueue     = nullptr;
+
+// ---------------------------------------------------------------------------
+//  Mutex del bus I2C nº0 (Wire) — PCA9685 + TCS34725 delantero + VL53L1X.
+// ---------------------------------------------------------------------------
+//  LAS TRES TAREAS QUE TOCAN ESTE BUS CORREN POR SU CUENTA: GripperTask (el
+//  PCA9685) va en el núcleo 1; ColorSensorTask (el TCS34725 delantero) y
+//  TofSensorTask (el VL53L1X) van en el núcleo 0. `Wire`/`TwoWire` NO es
+//  segura para usarse desde varias tareas a la vez, y con dos núcleos de
+//  por medio no hace falta ni que el planificador las intercale mal: pueden
+//  estar literalmente ejecutando una transacción I2C cada una AL MISMO
+//  TIEMPO. Eso corrompe el bus de forma intermitente — exactamente los
+//  "problemas de I2C" que se ven en banco entre el ToF y el sensor de
+//  color — sin que ninguno de los dos esté roto por separado.
+//
+//  Este mutex serializa toda transacción sobre el bus 0: cada tarea lo toma
+//  antes de tocar `Wire` y lo suelta apenas termina. El bus 1 (`Wire1`, el
+//  TCS34725 trasero) no lo necesita: nadie más lo usa.
+//
+//  Con timeout corto (no portMAX_DELAY, por la misma regla que las colas):
+//  si no se consigue el bus en I2C0_LOCK_TIMEOUT_MS, la operación se da por
+//  fallida esta vuelta y se reintenta en la siguiente — mismo espíritu que
+//  ya tienen los drivers de este archivo (nunca bloquear indefinidamente a
+//  cambio de un periférico que tarda).
+static SemaphoreHandle_t g_i2c0Mutex = nullptr;
+constexpr uint32_t I2C0_LOCK_TIMEOUT_MS = 50;
+
+static inline bool I2c0Lock() {
+    return xSemaphoreTake(g_i2c0Mutex, pdMS_TO_TICKS(I2C0_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+static inline void I2c0Unlock() {
+    xSemaphoreGive(g_i2c0Mutex);
+}
 
 // ===========================================================================
 //  [4] WATCHDOG COOPERATIVO
@@ -610,10 +644,19 @@ constexpr int kClawClosedBanderaDeg = 65;
 // constexpr int kLiftDownDeg          = 20;
 
 void GripperTask(void *) {
-    bool pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
-    if (pca_ok) {
-        Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
-    } else {
+    // Todo acceso al PCA9685 comparte el bus I2C nº0 con el TCS34725
+    // delantero y el VL53L1X (ver la nota larga junto a g_i2c0Mutex, más
+    // arriba): cada bloque que toca el bus toma el mutex y lo suelta apenas
+    // termina, nunca a mitad de una secuencia de varias llamadas.
+    bool pca_ok = false;
+    if (I2c0Lock()) {
+        pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
+        if (pca_ok) {
+            Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+        }
+        I2c0Unlock();
+    }
+    if (!pca_ok) {
         DEBUG_LINK.println("[Gripper] PCA9685 no responde. Reintentando en segundo plano.");
     }
 
@@ -624,31 +667,38 @@ void GripperTask(void *) {
     for (;;) {
         if (!pca_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
-            pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
-            // Si el PCA9685 no respondió al arrancar (setup() de arriba se
-            // saltó el SetChannel inicial) y recién ahora reaparece, hay que
-            // mandar la pinza a 0° aquí también — si no, se queda esperando
-            // un GripperCommand que puede no llegar nunca (por ejemplo, con
-            // Mission::kMotionEnabled en false, que no manda ninguno).
-            if (pca_ok) {
-                pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+            if (I2c0Lock()) {
+                pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
+                // Si el PCA9685 no respondió al arrancar (arriba se saltó el
+                // SetChannel inicial) y recién ahora reaparece, hay que
+                // mandar la pinza a 0° aquí también — si no, se queda
+                // esperando un GripperCommand que puede no llegar nunca (por
+                // ejemplo, con Mission::kMotionEnabled en false, que no
+                // manda ninguno).
+                if (pca_ok) {
+                    pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+                }
+                I2c0Unlock();
             }
         }
 
         GripperCommand cmd;
         if (xQueueReceive(g_gripperCmdQueue, &cmd, 0) == pdTRUE && pca_ok) {
-            switch (cmd.action) {
-                case GripperAction::OPEN:
-                    pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
-                    break;
-                case GripperAction::CLOSE_LLAVE:
-                    pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedLlaveDeg));
-                    break;
-                case GripperAction::CLOSE_BANDERA:
-                    pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedBanderaDeg));
-                    break;
-                default:
-                    break;   // RAISE/LOWER: sin servo de elevación montado
+            if (I2c0Lock()) {
+                switch (cmd.action) {
+                    case GripperAction::OPEN:
+                        pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+                        break;
+                    case GripperAction::CLOSE_LLAVE:
+                        pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedLlaveDeg));
+                        break;
+                    case GripperAction::CLOSE_BANDERA:
+                        pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedBanderaDeg));
+                        break;
+                    default:
+                        break;   // RAISE/LOWER: sin servo de elevación montado
+                }
+                I2c0Unlock();
             }
         }
 
@@ -699,7 +749,19 @@ void TofSensorTask(void *) {
     digitalWrite(Pins::TOF_XSHUT, HIGH);
     delay(Tof::BOOT_DELAY_MS);
 
-    bool tof_ok = TofBringUp();
+    // TofBringUp() incluye la reasignación de dirección del VL53L1X (ver la
+    // nota larga en I2CAddr::VL53L1X_BOOT_ADDR): esa escritura ocurre
+    // mientras el chip todavía responde en 0x29, la MISMA dirección del
+    // TCS34725 delantero. Antes esto era "un riesgo acotado y aceptado";
+    // con el mutex del bus (ver g_i2c0Mutex) deja de ser un riesgo: mientras
+    // se sostiene el lock, ColorSensorTask no puede tocar el bus, así que
+    // las dos direcciones nunca coinciden con dos transacciones activas a
+    // la vez.
+    bool tof_ok = false;
+    if (I2c0Lock()) {
+        tof_ok = TofBringUp();
+        I2c0Unlock();
+    }
     if (!tof_ok) {
         DEBUG_LINK.println("[ToF] VL53L1X no responde. Reintentando en segundo plano.");
     }
@@ -711,22 +773,28 @@ void TofSensorTask(void *) {
     for (;;) {
         if (!tof_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
-            tof_ok = g_tof.init();
-            if (tof_ok) {
-                g_tof.setDistanceMode(VL53L1X::Long);
-                g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
-                g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
+            if (I2c0Lock()) {
+                tof_ok = g_tof.init();
+                if (tof_ok) {
+                    g_tof.setDistanceMode(VL53L1X::Long);
+                    g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
+                    g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
+                }
+                I2c0Unlock();
             }
         }
 
         TofReading reading;
         reading.timestamp_ms = millis();
 
-        if (tof_ok && g_tof.dataReady()) {
-            reading.distance_mm = g_tof.read(false);
-            reading.valid = !g_tof.timeoutOccurred() &&
-                            g_tof.ranging_data.range_status == VL53L1X::RangeValid;
-            if (g_tof.timeoutOccurred()) tof_ok = false;
+        if (tof_ok && I2c0Lock()) {
+            if (g_tof.dataReady()) {
+                reading.distance_mm = g_tof.read(false);
+                reading.valid = !g_tof.timeoutOccurred() &&
+                                g_tof.ranging_data.range_status == VL53L1X::RangeValid;
+                if (g_tof.timeoutOccurred()) tof_ok = false;
+            }
+            I2c0Unlock();
         }
 
         PushDropOldest(g_tofQueue, reading);
@@ -746,8 +814,16 @@ void ColorSensorTask(void *) {
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
     digitalWrite(Pins::TCS_LED_BACK, HIGH);
 
-    bool front_ok = Tcs34725::Init(Wire);
-    bool back_ok  = Tcs34725::Init(Wire1);
+    // El sensor DELANTERO vive en Wire (bus I2C nº0), el mismo que el
+    // PCA9685 y el VL53L1X: sus llamadas van protegidas por g_i2c0Mutex
+    // (ver la nota larga junto a su declaración). El TRASERO vive solo en
+    // Wire1 (bus nº1): nadie más lo toca, así que no necesita el mutex.
+    bool front_ok = false;
+    if (I2c0Lock()) {
+        front_ok = Tcs34725::Init(Wire);
+        I2c0Unlock();
+    }
+    bool back_ok = Tcs34725::Init(Wire1);
 
     if (!front_ok) DEBUG_LINK.println("[Color] sensor DELANTERO no responde (bus I2C 0).");
     if (!back_ok)  DEBUG_LINK.println("[Color] sensor TRASERO no responde (bus I2C 1).");
@@ -759,19 +835,29 @@ void ColorSensorTask(void *) {
     for (;;) {
         if ((!front_ok || !back_ok) && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
-            if (!front_ok) front_ok = Tcs34725::Init(Wire);
-            if (!back_ok)  back_ok  = Tcs34725::Init(Wire1);
+            if (!front_ok && I2c0Lock()) {
+                front_ok = Tcs34725::Init(Wire);
+                I2c0Unlock();
+            }
+            if (!back_ok) back_ok = Tcs34725::Init(Wire1);
         }
 
         ColorReading reading;
         reading.timestamp_ms = millis();
 
         Tcs34725::Rgbc sample;
-        if (front_ok && Tcs34725::Read(Wire, sample)) {
-            reading.front = ClassifyColor(sample);
-            reading.front_valid = true;
-        } else {
-            front_ok = false;
+        if (front_ok) {
+            bool read_ok = false;
+            if (I2c0Lock()) {
+                read_ok = Tcs34725::Read(Wire, sample);
+                I2c0Unlock();
+            }
+            if (read_ok) {
+                reading.front = ClassifyColor(sample);
+                reading.front_valid = true;
+            } else {
+                front_ok = false;
+            }
         }
 
         if (back_ok && Tcs34725::Read(Wire1, sample)) {
@@ -1286,6 +1372,15 @@ void setup() {
 
     if (!CreateQueues()) {
         DEBUG_LINK.println("[FATAL] no se pudieron crear las colas. Arranque detenido.");
+        for (;;) delay(1000);
+    }
+
+    // Mutex del bus I2C nº0, creado ANTES de lanzar ninguna tarea: Gripper,
+    // ColorSensors y TofSensor lo usan desde el primer momento que corren
+    // (ver la nota larga junto a g_i2c0Mutex).
+    g_i2c0Mutex = xSemaphoreCreateMutex();
+    if (g_i2c0Mutex == nullptr) {
+        DEBUG_LINK.println("[FATAL] no se pudo crear el mutex del bus I2C. Arranque detenido.");
         for (;;) delay(1000);
     }
 
