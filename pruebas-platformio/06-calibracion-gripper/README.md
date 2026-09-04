@@ -50,7 +50,10 @@ mecanismo ya acoplado: solo así se siente cuándo la pinza agarra de verdad.
 
 | Comando | Efecto |
 |---|---|
-| `c <grados>` | Servo al ángulo absoluto indicado (0-180), en el canal seleccionado |
+| `abrir` | Pinza al ángulo de "abierta" ya calibrado (`Calibrado::ABIERTO`, 0°) |
+| `cerrar llave` | Pinza al ángulo de "cerrada" ya calibrado para la llave (`Calibrado::CERRADO_LLAVE`, 120°) |
+| `cerrar bandera` | Pinza al ángulo de "cerrada" ya calibrado para la bandera (`Calibrado::CERRADO_BANDERA`, 65°) |
+| `c <grados>` | Servo al ángulo absoluto indicado (0-180), en el canal seleccionado — para seguir afinando a mano |
 | `c+` / `c-` | Nudge de +paso / -paso grados |
 | `canal <n>` | Cambia el canal del PCA9685 controlado (0-15, arranca en 0) |
 | `scan` | Prueba los 16 canales en orden, moviendo cada uno para ver a simple vista cuál mueve tu servo |
@@ -58,6 +61,12 @@ mecanismo ya acoplado: solo así se siente cuándo la pinza agarra de verdad.
 | `0` | El servo de vuelta a 0° (reset de seguridad) |
 | `?` | Reimprime el menú de ayuda |
 | *(línea vacía)* | Reimprime el estado actual |
+
+`abrir`/`cerrar` sirven para verificar rápido que los ángulos ya calibrados
+siguen agarrando bien (por ejemplo, después de reajustar el mecanismo). Si
+en algún momento no agarran como esperas, actualiza las constantes en
+`Calibrado` (arriba en el código) y en `firmware-esp32/src/main.cpp` con los
+números nuevos que midas con `c`/`c+`/`c-`.
 
 ## Si no sabes en qué canal está el servo
 

@@ -31,15 +31,18 @@
 //  realmente agarra el objeto y no solo se acerca.
 //
 //  CÓMO SE USA — por el monitor serial (115200 baudios, línea + Enter):
-//    c <grados>   servo al ángulo absoluto indicado (0-180), en el canal
-//                 actualmente seleccionado
-//    c+ / c-      nudge de +paso / -paso grados
-//    canal <n>    cambia el canal del PCA9685 que controlan c/c+/c-/0 (0-15)
-//    scan         prueba los 16 canales en orden, moviendo cada uno para que
-//                 puedas ver a simple vista cuál es el que mueve tu servo
-//    paso <n>     cambia el tamaño del nudge (arranca en 5°)
-//    0            el servo de vuelta a 0° (reset de seguridad)
-//    ?            reimprime el menú de ayuda
+//    abrir           pinza al ángulo de "abierta" ya calibrado
+//    cerrar llave    pinza al ángulo de "cerrada" ya calibrado para la llave
+//    cerrar bandera  pinza al ángulo de "cerrada" ya calibrado para la bandera
+//    c <grados>      servo al ángulo absoluto indicado (0-180), en el canal
+//                    actualmente seleccionado — para seguir afinando a mano
+//    c+ / c-         nudge de +paso / -paso grados
+//    canal <n>       cambia el canal del PCA9685 que controlan c/c+/c-/0 (0-15)
+//    scan            prueba los 16 canales en orden, moviendo cada uno para
+//                    que puedas ver a simple vista cuál es el que mueve tu servo
+//    paso <n>        cambia el tamaño del nudge (arranca en 5°)
+//    0               el servo de vuelta a 0° (reset de seguridad)
+//    ?               reimprime el menú de ayuda
 //
 //  Cada comando imprime el estado completo después de aplicarse, así que el
 //  número que hay que anotar siempre es el último que se ve en pantalla.
@@ -78,6 +81,16 @@ namespace ServoChannel {
 }
 
 constexpr uint8_t PCA9685_CHANNEL_COUNT = 16;
+
+// Ángulos ya calibrados con este mismo sketch e integrados en
+// firmware-esp32/src/main.cpp (GripperTask: kClawOpenDeg,
+// kClawClosedLlaveDeg, kClawClosedBanderaDeg). Si vuelves a calibrar,
+// actualiza los dos lados.
+namespace Calibrado {
+    constexpr int ABIERTO         = 0;
+    constexpr int CERRADO_LLAVE   = 120;
+    constexpr int CERRADO_BANDERA = 65;
+}
 
 #define DEBUG_LINK Serial0   // consola + comandos por el puerto UART del DevKit
 
@@ -186,7 +199,7 @@ void PrintStatus() {
 }
 
 void PrintHelp() {
-    DEBUG_LINK.println("Comandos: c <g> | c+ | c- | canal <n> | scan | paso <n> | 0 | ?");
+    DEBUG_LINK.println("Comandos: abrir | cerrar llave | cerrar bandera | c <g> | c+ | c- | canal <n> | scan | paso <n> | 0 | ?");
 }
 
 // Prueba los 16 canales uno por uno: mueve cada uno 0 -> 180 -> 0 e imprime
@@ -225,6 +238,15 @@ void HandleCommand(String line) {
         PrintHelp();
     } else if (line == "0") {
         ApplyClaw(0);
+    } else if (line == "abrir") {
+        ApplyClaw(Calibrado::ABIERTO);
+    } else if (line == "cerrar llave") {
+        ApplyClaw(Calibrado::CERRADO_LLAVE);
+    } else if (line == "cerrar bandera") {
+        ApplyClaw(Calibrado::CERRADO_BANDERA);
+    } else if (line == "cerrar") {
+        DEBUG_LINK.println("[Error] especifica el objeto: \"cerrar llave\" o \"cerrar bandera\"");
+        return;
     } else if (line == "c+") {
         ApplyClaw(Cal::claw_deg + Cal::step_deg);
     } else if (line == "c-") {
