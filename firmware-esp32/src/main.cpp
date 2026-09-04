@@ -100,7 +100,19 @@ namespace Pins {
     // (sin responder en el bus) hasta que se le reasigna una dirección nueva
     // — ver TofSensorTask y la nota en I2CAddr::VL53L1X_BOOT_ADDR más abajo
     // para el riesgo que esto implica.
-    constexpr uint8_t TOF_XSHUT = 41;
+    //
+    // GPIO 3 a propósito: es el único pin libre físicamente junto al bus I2C0
+    // (queda justo debajo de GPIO8 en el header J1 del DevKitC-1), así que el
+    // cable de XSHUT queda corto, junto a SDA/SCL. Es strapping de JTAG —
+    // "se puede usar, pero mejor no" (ver la tabla de pines prohibidos) — pero
+    // solo importa su nivel durante el arranque/reset, ANTES de que setup()
+    // corra una sola línea; nuestro digitalWrite() llega después y no cambia
+    // esa decisión. Lo único a vigilar es que algunas placas del VL53L1X
+    // traen su propio pull-up en XSHUT (ver TofSensorTask): si ese pull-up
+    // tira el pin a un nivel que habilita/deshabilita JTAG de forma distinta
+    // a la que quieres, no rompe el arranque (JTAG no es boot mode), pero
+    // puede sorprender si esperabas depurar por JTAG y no responde.
+    constexpr uint8_t TOF_XSHUT = 3;
 
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
     // ¡ALIMENTARLOS A 3.3 V! La salida del QTRX es proporcional a su VIN: a
@@ -114,13 +126,12 @@ namespace Pins {
     // -------- LED RGB indicador de equipo -----------------------------------
     // Reemplaza a los 2 LED discretos rojo/azul que documentaba antes esta
     // sección (GPIO 40/41): el equipo ya no los tiene montados, solo queda
-    // este único LED RGB. Usa los 3 GPIO que quedaban libres para
-    // ampliaciones (ver hardware/conexiones-esp32-s3.md). GPIO 3 es
-    // strapping de JTAG, pero solo importa su nivel al bootear/resetear: como
-    // salida PWM en operación normal no da problema.
+    // este único LED RGB. El canal B vivía en GPIO 3 (strapping de JTAG);
+    // se corrió a GPIO 41 para cederle el 3 al XSHUT del VL53L1X (ver
+    // Pins::TOF_XSHUT), que sí se beneficia de estar junto al I2C0.
     constexpr uint8_t LED_RGB_R = 39;
     constexpr uint8_t LED_RGB_G = 38;
-    constexpr uint8_t LED_RGB_B = 3;
+    constexpr uint8_t LED_RGB_B = 41;
 }
 
 namespace I2CAddr {

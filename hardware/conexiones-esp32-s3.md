@@ -262,9 +262,24 @@ un bus propio: comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero
 |-------------|:------------------------:|------|
 | SDA | **8** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
 | SCL | **9** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
-| XSHUT | **41** | Reset por software. Ver la secuencia de arranque abajo |
+| XSHUT | **3** | Reset por software. Ver la secuencia de arranque abajo, y la nota de JTAG más abajo |
 | VIN | 3.3 V | |
 | GND | GND común | |
+
+> **Por qué GPIO 3 y no otro:** es el único pin que queda físicamente libre
+> junto al bus I2C0 en el header J1 del DevKitC-1 (justo debajo de GPIO8), así
+> que el cable de XSHUT queda corto, al lado de SDA/SCL, en vez de cruzar la
+> placa hasta el otro header. A cambio, GPIO 3 es **strapping de JTAG** — ver
+> la tabla de [pines prohibidos](#pines-prohibidos-del-esp32-s3): "se puede
+> usar, pero mejor no". Su nivel solo importa en el instante de
+> arranque/reset, antes de que corra una sola línea de `setup()`, así que
+> manejarlo como salida normal después no rompe el arranque. Lo único a
+> vigilar: si la placa del VL53L1X trae su propio pull-up en XSHUT (ver el
+> punto 1 de la secuencia abajo), ese pull-up puede dejar JTAG en un estado
+> distinto al esperado — no impide arrancar (JTAG no es un modo de boot como
+> GPIO 0/45/46), pero puede sorprender si esperabas depurar por JTAG y no
+> responde. El canal B del LED RGB, que antes vivía en este pin, se movió a
+> GPIO 41 (ver la sección del [LED RGB](#led-rgb-indicador-de-equipo)).
 
 ### ⚠️ Por qué hace falta XSHUT, y el riesgo que queda sin resolver
 
@@ -274,13 +289,13 @@ cuanto tiene alimentación, responde en 0x29 sin que el firmware pueda
 callarlo. La secuencia de arranque (implementada en `TofSensorTask`,
 `firmware-esp32/src/main.cpp`) es:
 
-1. **GPIO 41 en LOW desde `setup()`**, antes de crear ninguna tarea — el
+1. **GPIO 3 en LOW desde `setup()`**, antes de crear ninguna tarea — el
    VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
    ANTES de arrancar cualquier tarea: algunas placas del sensor traen un
    pull-up en XSHUT que lo deja activo apenas se energiza, así que si el
    firmware tardara en ponerlo en LOW, habría una ventana de arranque con los
    dos chips respondiendo en 0x29 a la vez.
-2. GPIO 41 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
+2. GPIO 3 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
 3. Se le reasigna la dirección **0x30** con una única escritura corta a su
    registro de dirección. Este es el único instante en que el VL53L1X sigue
    en 0x29 mientras el TCS34725 delantero también está vivo ahí — no se puede
@@ -336,16 +351,18 @@ señal visual que haga falta más adelante (además de indicar equipo, la
 prueba `pruebas-platformio/02-cuadro-color-rgb/` ya lo usa para mostrar en
 vivo el color que detecta el TCS34725 delantero).
 
-Usa los únicos 3 GPIO que quedaban libres para ampliaciones en este
-documento — ver el [resumen de pines](#resumen-mapa-completo-de-pines-usados) —
-así que con esto **ya no queda ningún GPIO libre** en el mapa. Los GPIO 40 y
-41, que documentaban los 2 LED discretos anteriores, están libres de nuevo.
+R y G usan dos de los GPIO que quedaban libres para ampliaciones en este
+documento (38 y 39). El canal B vivía en el tercero (GPIO 3), pero se movió a
+GPIO 41 para cederle el 3 al **XSHUT del VL53L1X** (ver la sección de
+[ToF](#tof--vl53l1x-distancia-frente-al-gripper)), que sí se beneficia de
+estar físicamente junto al bus I2C0. Sigue libre para futuras ampliaciones:
+GPIO **40**.
 
 | Canal | GPIO ESP32-S3 | Nota |
 |-------|:-------------:|------|
 | R | **39** | |
 | G | **38** | |
-| B | **3** | Strapping de JTAG: solo importa su nivel en el instante de encender/resetear. Como salida PWM normal después de bootear no da problema. |
+| B | **41** | |
 
 > ⚠️ **Polaridad sin confirmar con el LED físico.** Tanto `firmware-esp32/`
 > como `pruebas-platformio/02-cuadro-color-rgb/` asumen **cátodo común**
@@ -388,22 +405,23 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 |:----:|---------|:----:|---------|
 | 1 | QTR izquierdo (ADC) | 15 | L298N‑I IN4 |
 | 2 | QTR derecho (ADC) | 16 | L298N‑I ENB |
-| 3 | LED RGB — canal B | 17 | L298N‑D ENB |
+| 3 | XSHUT del VL53L1X (ToF) | 17 | L298N‑D ENB |
 | 4 | L298N‑I IN1 | 18 | LED TCS34725 delantero |
 | 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
 | 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | *(libre)* |
-| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | XSHUT del VL53L1X (ToF) |
+| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |
 | 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**25 pines usados.** Queda libre para ampliaciones: GPIO **40** — el otro
-GPIO que quedaba libre (41) ahora lo usa el XSHUT del VL53L1X (ver la sección
-de [ToF](#tof--vl53l1x-distancia-frente-al-gripper)).
+**25 pines usados.** Queda libre para ampliaciones: GPIO **40**. El XSHUT del
+VL53L1X (ver [ToF](#tof--vl53l1x-distancia-frente-al-gripper)) se movió al
+GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED RGB
+(ver [LED RGB](#led-rgb-indicador-de-equipo)), que ahora vive en el GPIO 41.
 
 ---
 
