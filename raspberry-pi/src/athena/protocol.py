@@ -56,9 +56,14 @@ class MotorMode(IntEnum):
 
 class GripperAction(IntEnum):
     OPEN = 0
-    CLOSE = 1
-    RAISE = 2
-    LOWER = 3
+    # La llave (cubo) y el asta cilíndrica de la bandera necesitan ángulos de
+    # cierre distintos (calibrados en pruebas-platformio/06-calibracion-gripper/),
+    # de ahí que no haya un CLOSE genérico — ver GripperAction en firmware-esp32/
+    # src/main.cpp, sección [8.2] GripperTask.
+    CLOSE_LLAVE = 1
+    CLOSE_BANDERA = 2
+    RAISE = 3
+    LOWER = 4
 
 
 class TeamColor(IntEnum):

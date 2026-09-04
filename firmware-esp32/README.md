@@ -115,7 +115,13 @@ desincronizar en silencio.
 
 Todo lo marcado con `TODO` en el código:
 
-- Ángulos del gripper (`kClawOpenDeg` y compañía) — hacerlo con el servo
-  **desacoplado** del mecanismo, para no forzarlo contra un tope.
+- `kLiftUpDeg`/`kLiftDownDeg` del segundo servo (elevación) — **no aplica
+  todavía**: ese servo no está montado en el robot, así que todo lo que lo
+  toca (constantes, envío inicial, casos `RAISE`/`LOWER` de `GripperTask`)
+  quedó comentado en `main.cpp` hasta que se agregue el hardware. Cuando
+  esté, hacerlo con el servo **desacoplado** del mecanismo, para no forzarlo
+  contra un tope. Los ángulos de la pinza (`kClawOpenDeg`,
+  `kClawClosedLlaveDeg`, `kClawClosedBanderaDeg`) ya están calibrados con
+  `pruebas-platformio/06-calibracion-gripper/`.
 - Umbrales de `ClassifyColor()` para el TCS34725, sobre la pista real.
 - `kDarkThreshold` de los QTR, con la luz del salón de competencia.

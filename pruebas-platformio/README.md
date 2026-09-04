@@ -18,11 +18,11 @@ se abre y se compila por separado, no como sub-proyecto de otro.
 | [`03-motores-adelante/`](03-motores-adelante/) | Solo los 2 L298N: los 4 motores adelante a velocidad máxima constante, sin sensores ni lógica. Prueba mínima de cableado y de subida. |
 | [`04-servos-a-cero/`](04-servos-a-cero/) | Solo el PCA9685: manda los 2 servos del gripper (pinza y elevación) a 0°, referencia mecánica fija para montar los cuernos del servo. |
 | [`05-evitador-linea/`](05-evitador-linea/) | Los 2 QTR (con prioridad) + los 2 TCS34725 (de respaldo, solo para NEGRO, umbrales calibrados con datos reales — ver `calibracion-color/detector-tcs/`) + los 2 L298N: evitador reactivo que gira sobre su eje sin temporizadores fijos, siempre dentro del cuadrado. |
+| [`06-calibracion-gripper/`](06-calibracion-gripper/) | Solo el PCA9685: mueve el servo de la pinza (canal 0, o cualquier canal con `scan`) por comandos del monitor serial para encontrar a mano los ángulos que agarran el cilindro (asta de la bandera) y la llave (cubo). Ángulos ya integrados en `firmware-esp32/src/main.cpp` (`GripperTask`: `kClawOpenDeg`, `kClawClosedLlaveDeg`, `kClawClosedBanderaDeg`). |
 
 ## Ideas para próximas pruebas
 
 Sin empezar todavía — usar el mismo patrón (una carpeta, un `platformio.ini`,
 un `README.md` con qué se está validando y por qué):
 
-- Los demás servos/mecanismos del gripper que hagan falta más allá de la
-  posición 0° de `04-servos-a-cero/`.
+- Nada pendiente por ahora.

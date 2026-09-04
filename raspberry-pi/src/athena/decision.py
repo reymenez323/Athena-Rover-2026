@@ -115,7 +115,7 @@ class DecisionMaker:
         if phase is Phase.INICIO:
             # Se arranca con la llave ya sujeta y levantada, listo para moverse.
             self.state = replace(self.state, phase=Phase.BUSCAR_ZONA_NEUTRA)
-            return Commands(gripper=GripperAction.CLOSE, motivo="asegurar la llave")
+            return Commands(gripper=GripperAction.CLOSE_LLAVE, motivo="asegurar la llave")
 
         if phase is Phase.BUSCAR_ZONA_NEUTRA:
             return self._buscar_zona_neutra(color)
@@ -265,7 +265,7 @@ class DecisionMaker:
         self.state = replace(
             self.state, phase=Phase.RETORNAR_A_ZONA, bandera_capturada=True
         )
-        return Commands(gripper=GripperAction.CLOSE, motivo="cerrando la pinza sobre la bandera")
+        return Commands(gripper=GripperAction.CLOSE_BANDERA, motivo="cerrando la pinza sobre la bandera")
 
     def _retornar(self, color: ColorTelemetry | None) -> Commands:
         """Vuelve a la zona propia. La línea de color del piso avisa al llegar."""
