@@ -4,6 +4,10 @@ data/crops/
 models/*.tflite
 models/*.h5
 models/*.keras
+# Modelo de banderas exportado de Edge Impulse (target Linux AARCH64): pesa
+# ~13 MB y se regenera reentrenando en Edge Impulse Studio y exportando de
+# nuevo, no hace falta versionarlo.
+models/*.eim
 __pycache__/
 *.py[cod]
 .venv/
