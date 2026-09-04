@@ -1,0 +1,28 @@
+[Unit]
+Description=Athena Rover - bucle principal (percibir, decidir, enviar al ESP32)
+After=multi-user.target
+# Sin límite de reintentos: si la cámara o el ESP32 tardan en enumerarse por
+# USB al encender, el servicio se reinicia solo hasta que estén listos, en
+# vez de darse por vencido después de unos pocos intentos.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+
+# OBLIGATORIO: reemplaza esto con tu usuario real de Linux en la Pi (correlo
+# tú misma con `whoami` para saber cuál es) y la ruta real del repo.
+User=TU_USUARIO_AQUI
+WorkingDirectory=/home/TU_USUARIO_AQUI/Athena-Rover-2026/raspberry-pi
+EnvironmentFile=/home/TU_USUARIO_AQUI/Athena-Rover-2026/raspberry-pi/deploy/equipo.env
+
+# Le da unos segundos a la cámara USB y al ESP32 para enumerarse antes del
+# primer intento. Si de todas formas no están listos, run_rover.py falla y
+# Restart=on-failure lo vuelve a intentar solo.
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/bin/python3 scripts/run_rover.py --equipo ${EQUIPO} --config config/rover.json
+
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

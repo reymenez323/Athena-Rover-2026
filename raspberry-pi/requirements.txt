@@ -17,5 +17,13 @@ pyserial>=3.5
 # Si no está instalado, el sistema corre igual en modo degradado.
 tflite-runtime>=2.14 ; platform_machine == "aarch64"
 
+# Para scripts/run_flag_tracker_ei.py (detector de banderas entrenado en Edge
+# Impulse). En la Pi hace falta instalar antes estas dependencias de sistema:
+#
+#   sudo apt install libatlas-base-dev libportaudio0 libportaudio2 \
+#       libportaudiocpp0 portaudio19-dev
+#   pip install --break-system-packages edge_impulse_linux
+edge_impulse_linux ; platform_machine == "aarch64"
+
 # Solo para ENTRENAR, y solo en la computadora, nunca en la Pi:
 #   pip install "tensorflow>=2.15"

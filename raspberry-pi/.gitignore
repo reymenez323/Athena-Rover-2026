@@ -8,6 +8,10 @@ models/*.keras
 # ~13 MB y se regenera reentrenando en Edge Impulse Studio y exportando de
 # nuevo, no hace falta versionarlo.
 models/*.eim
+# Estado del despliegue (qué equipo corre en ESTA Pi ahora, y en qué puerto
+# serial está conectado ESTE ESP32), no del código.
+deploy/equipo.env
+config/rover.json
 __pycache__/
 *.py[cod]
 .venv/
