@@ -294,6 +294,17 @@ struct LedCommand {
     TeamColor team = TeamColor::NONE;
 };
 
+// La cámara de la Raspberry Pi es quien ve la bandera del equipo contrario
+// (raspberry-pi/src/athena/ei_flag_detector.py); el ESP32 no tiene forma de
+// verla por su cuenta. Este comando es solo la señal de "la estoy viendo
+// AHORA MISMO", para que el LED de equipo la anuncie mientras el robot sigue
+// recorriendo la pista — es la parte de la demo que exige "señalizar su
+// detección", separada de LedCommand porque el color de equipo no cambia
+// mientras que esta señal sí, cuadro a cuadro.
+struct FlagSignalCommand {
+    bool detected = false;
+};
+
 struct ColorReading {
     uint32_t   timestamp_ms = 0;
     ColorLabel front        = ColorLabel::UNKNOWN;
@@ -345,6 +356,7 @@ struct HealthReport {
 //   0x01 CMD_MOTOR    len=3   [0]=mode(0=STOP,1=DRIVE) [1]=left i8 [2]=right i8
 //   0x02 CMD_GRIPPER  len=1   [0]=action(0=OPEN,1=CLOSE_LLAVE,2=CLOSE_BANDERA,3=RAISE,4=LOWER)
 //   0x03 CMD_LED      len=1   [0]=team(0=NONE,1=RED,2=BLUE)
+//   0x04 CMD_FLAG_SIGNAL len=1  [0]=detected(0=no, 1=sí, la cámara ve la bandera contraria)
 //
 //  ---------------------------------------------------------------------
 //   ESP32 -> RPi
@@ -371,18 +383,20 @@ namespace Proto {
     constexpr uint8_t MAX_PAYLOAD = 32;
 
     enum PacketType : uint8_t {
-        CMD_MOTOR   = 0x01,
-        CMD_GRIPPER = 0x02,
-        CMD_LED     = 0x03,
+        CMD_MOTOR       = 0x01,
+        CMD_GRIPPER     = 0x02,
+        CMD_LED         = 0x03,
+        CMD_FLAG_SIGNAL = 0x04,
         TLM_COLOR   = 0x10,
         TLM_REFLECT = 0x11,
         TLM_HEALTH  = 0x12,
         TLM_TOF     = 0x13,
     };
 
-    constexpr uint8_t LEN_CMD_MOTOR   = 3;
-    constexpr uint8_t LEN_CMD_GRIPPER = 1;
-    constexpr uint8_t LEN_CMD_LED     = 1;
+    constexpr uint8_t LEN_CMD_MOTOR       = 3;
+    constexpr uint8_t LEN_CMD_GRIPPER     = 1;
+    constexpr uint8_t LEN_CMD_LED         = 1;
+    constexpr uint8_t LEN_CMD_FLAG_SIGNAL = 1;
     constexpr uint8_t LEN_TLM_COLOR   = 7;
     constexpr uint8_t LEN_TLM_REFLECT = 9;
     constexpr uint8_t LEN_TLM_HEALTH  = 5;
@@ -393,7 +407,8 @@ namespace Proto {
     // permite al parser resincronizar cuando llega basura por el cable: sin
     // esto, un 0xAA suelto justo antes de una trama valida se traga esa trama.
     inline bool IsReceivableType(uint8_t type) {
-        return type == CMD_MOTOR || type == CMD_GRIPPER || type == CMD_LED;
+        return type == CMD_MOTOR || type == CMD_GRIPPER || type == CMD_LED ||
+               type == CMD_FLAG_SIGNAL;
     }
 
     inline uint8_t Checksum(uint8_t type, uint8_t len, const uint8_t *payload) {
@@ -419,9 +434,10 @@ namespace Proto {
 //  [4] COLAS
 // ===========================================================================
 //
-//   RPi --USB--> SerialTask --> motorCmdQueue   (len 1, overwrite) --> MotorTask
-//                           --> gripperCmdQueue (len 4, FIFO)      --> GripperTask
-//                           --> ledCmdQueue     (len 1, overwrite) --> LedTask
+//   RPi --USB--> SerialTask --> motorCmdQueue      (len 1, overwrite) --> MotorTask
+//                           --> gripperCmdQueue    (len 4, FIFO)      --> GripperTask
+//                           --> ledCmdQueue        (len 1, overwrite) --> LedTask
+//                           --> flagSignalCmdQueue (len 1, overwrite) --> LedTask
 //
 //   ColorSensorTask --> colorQueue   (len 4, FIFO)      --> SerialTask --USB--> RPi
 //   ReflectanceTask --> reflectQueue (len 4, FIFO)      --> SerialTask --USB--> RPi
@@ -437,13 +453,14 @@ namespace Proto {
 //  dentro de su bucle principal. Todas las operaciones de cola llevan timeout
 //  0, de forma que un productor lento jamás cuelgue al consumidor.
 
-static QueueHandle_t g_motorCmdQueue   = nullptr;
-static QueueHandle_t g_gripperCmdQueue = nullptr;
-static QueueHandle_t g_ledCmdQueue     = nullptr;
-static QueueHandle_t g_colorQueue      = nullptr;
-static QueueHandle_t g_reflectQueue    = nullptr;
-static QueueHandle_t g_tofQueue        = nullptr;
-static QueueHandle_t g_healthQueue     = nullptr;
+static QueueHandle_t g_motorCmdQueue      = nullptr;
+static QueueHandle_t g_gripperCmdQueue    = nullptr;
+static QueueHandle_t g_ledCmdQueue        = nullptr;
+static QueueHandle_t g_flagSignalCmdQueue = nullptr;
+static QueueHandle_t g_colorQueue         = nullptr;
+static QueueHandle_t g_reflectQueue       = nullptr;
+static QueueHandle_t g_tofQueue           = nullptr;
+static QueueHandle_t g_healthQueue        = nullptr;
 
 // ===========================================================================
 //  [5] WATCHDOG COOPERATIVO
@@ -1162,11 +1179,19 @@ namespace RgbLed {
     }
 }
 
+// Cuántas vueltas de LedTask dura cada mitad del destello (encendido/apagado)
+// cuando se está señalizando la bandera contraria. A TaskPeriodMs::LED_STATUS
+// (250 ms) esto da un destello de ~2 Hz: rápido de notar a simple vista desde
+// la mesa de jueces, sin parpadear tan rápido que parezca un LED fundido.
+constexpr uint32_t kFlagBlinkHalfPeriodTicks = 1;
+
 void LedTask(void *) {
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
 
     TeamColor team = TeamColor::NONE;
+    bool flag_detected = false;
+    uint32_t blink_tick = 0;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::LED_STATUS);
     TickType_t last_wake = xTaskGetTickCount();
@@ -1175,7 +1200,29 @@ void LedTask(void *) {
         LedCommand cmd;
         if (xQueueReceive(g_ledCmdQueue, &cmd, 0) == pdTRUE) team = cmd.team;
 
-        RgbLed::ApplyTeam(team);
+        // Cola "overwrite": solo importa si la cámara ve la bandera AHORA, no
+        // un fotograma viejo. Si la Raspberry Pi deja de mandar esta señal
+        // (se cae el enlace, por ejemplo), el LED simplemente vuelve a quedar
+        // en el color de equipo fijo — no hay estado "pegado" en destello.
+        FlagSignalCommand flag_cmd;
+        if (xQueueReceive(g_flagSignalCmdQueue, &flag_cmd, 0) == pdTRUE) {
+            flag_detected = flag_cmd.detected;
+        }
+
+        if (flag_detected) {
+            // Alterna entre BLANCO (destello) y el color de equipo: sigue
+            // identificando al equipo ante los jueces mientras además avisa
+            // que ve la bandera contraria — ninguna señal tapa a la otra.
+            blink_tick = (blink_tick + 1) % (2 * kFlagBlinkHalfPeriodTicks);
+            if (blink_tick < kFlagBlinkHalfPeriodTicks) {
+                RgbLed::SetRaw(255, 255, 255);
+            } else {
+                RgbLed::ApplyTeam(team);
+            }
+        } else {
+            blink_tick = 0;
+            RgbLed::ApplyTeam(team);
+        }
 
         Heartbeat(TaskId::LED_STATUS);
         vTaskDelayUntil(&last_wake, period);
@@ -1235,6 +1282,13 @@ void SerialDispatch(uint8_t type, const uint8_t *payload, uint8_t len) {
             LedCommand cmd;
             cmd.team = (TeamColor)payload[0];
             xQueueOverwrite(g_ledCmdQueue, &cmd);
+            break;
+        }
+        case Proto::CMD_FLAG_SIGNAL: {
+            if (len != Proto::LEN_CMD_FLAG_SIGNAL) return;
+            FlagSignalCommand cmd;
+            cmd.detected = (payload[0] != 0);
+            xQueueOverwrite(g_flagSignalCmdQueue, &cmd);
             break;
         }
         default:
@@ -1401,15 +1455,16 @@ void SupervisorTask(void *) {
 // ===========================================================================
 
 static bool CreateQueues() {
-    g_motorCmdQueue   = xQueueCreate(1, sizeof(MotorCommand));
-    g_gripperCmdQueue = xQueueCreate(4, sizeof(GripperCommand));
-    g_ledCmdQueue     = xQueueCreate(1, sizeof(LedCommand));
-    g_colorQueue      = xQueueCreate(4, sizeof(ColorReading));
-    g_reflectQueue    = xQueueCreate(4, sizeof(ReflectanceReading));
-    g_tofQueue        = xQueueCreate(4, sizeof(TofReading));
-    g_healthQueue     = xQueueCreate(1, sizeof(HealthReport));
+    g_motorCmdQueue      = xQueueCreate(1, sizeof(MotorCommand));
+    g_gripperCmdQueue    = xQueueCreate(4, sizeof(GripperCommand));
+    g_ledCmdQueue        = xQueueCreate(1, sizeof(LedCommand));
+    g_flagSignalCmdQueue = xQueueCreate(1, sizeof(FlagSignalCommand));
+    g_colorQueue         = xQueueCreate(4, sizeof(ColorReading));
+    g_reflectQueue       = xQueueCreate(4, sizeof(ReflectanceReading));
+    g_tofQueue           = xQueueCreate(4, sizeof(TofReading));
+    g_healthQueue        = xQueueCreate(1, sizeof(HealthReport));
 
-    return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue &&
+    return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue && g_flagSignalCmdQueue &&
            g_colorQueue && g_reflectQueue && g_tofQueue && g_healthQueue;
 }
 
