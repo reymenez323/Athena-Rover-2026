@@ -37,17 +37,18 @@ objeto lejano. Con eso alcanza para:
   Edge Impulse de `raspberry-pi/src/athena/ei_flag_detector.py`, que es lo
   que usa `firmware-esp32/` junto con `run_rover.py`.
 
-## Señalización con el LED RGB
+## LED RGB: indicador puro de línea/zona
 
-- **Color de zona** (amarillo/rojo/azul) cuando el sensor delantero
-  reconoce que el robot está parado sobre esa zona — así un juez ve de un
-  vistazo en qué parte de la pista anda el robot.
-- **Color de equipo** (rojo/azul) cuando el piso de abajo es neutro (gris)
-  o la lectura no es válida — sigue cumpliendo la identificación de equipo
-  que exige el reglamento aun fuera de una zona marcada.
-- **Destello blanco superpuesto** (parpadeo de ~5 Hz, sin tapar el color de
-  fondo) mientras el ToF cree tener "la bandera" candidata a la vista, y
-  fijo mientras la lleva agarrada de vuelta a casa.
+El LED **solo** dice sobre qué está parado el robot ahora mismo — ya no
+indica equipo ni "veo la bandera":
+
+| Piso bajo el sensor delantero | LED |
+|--------------------------------|-----|
+| Gris (zona neutra) / sin lectura válida | Apagado |
+| Amarillo | Amarillo fijo |
+| Rojo | Rojo fijo |
+| Azul | Azul fijo |
+| Negro (borde) | Destello alternando rojo/azul (~1.7 Hz) |
 
 ## Selector de equipo (TEAM_SELECT)
 
@@ -66,10 +67,10 @@ que de todas formas ya se hace entre rondas.
 
 ## Secuencia de arranque
 
-1. Al energizar, el LED destella (mismo patrón que "veo la bandera") durante
-   `Mission::kStartupDelayMs` (3 s por defecto) — tiempo para que el
-   operador **coloque la llave a mano en la pinza abierta** y ubique el
-   robot en la pista.
+1. Al energizar, el robot espera quieto `Mission::kStartupDelayMs` (3 s por
+   defecto) — tiempo para que el operador **coloque la llave a mano en la
+   pinza abierta** y ubique el robot en la pista. El LED ya muestra la zona
+   de piso bajo el sensor delantero desde este momento.
 2. `ASEGURAR_LLAVE`: cierra la pinza sobre la llave.
 3. `BUSCAR_ZONA_NEUTRA`: avanza recto hasta pisar la zona amarilla.
 4. `DEPOSITAR_LLAVE`: abre la pinza.
@@ -98,7 +99,7 @@ el puente TEAM_SELECT. Las conexiones completas están en
 | TCS34725 | 2 | Color del piso, delantero y trasero |
 | VL53L1X | 1 | Telémetro delante del gripper — aquí también hace de "ojos" para la bandera |
 | QTRX-HD-01A | 2 | Reflectancia delantera, izquierda y derecha |
-| LED RGB | 1 | Equipo + zona + "veo la bandera" |
+| LED RGB | 1 | Indicador puro de línea/zona de piso |
 | Puente TEAM_SELECT | 1 | GND = ROJO, abierto = AZUL |
 
 ## Compilar y subir
@@ -113,9 +114,8 @@ pio device monitor   # ver los logs de misión (fases, sensores, watchdog)
 
 - `kDarkThreshold` de los QTR — con la luz del salón.
 - Los umbrales de `ClassifyColor()` — igual que en `firmware-esp32/`.
-- `Mission::kDistanciaSenalMm` / `kDistanciaAgarreMm` — según qué tan cerca
-  hace falta estar para que el VL53L1X vea confiablemente el poste de la
-  bandera y no otra cosa.
+- `Mission::kDistanciaAgarreMm` — según qué tan cerca hace falta estar para
+  que el VL53L1X vea confiablemente el poste de la bandera y no otra cosa.
 - `Mission::kReturnTurnMs` — el giro de ~180° es a tiempo fijo (no hay
   odometría ni encoders): depende del peso real del robot y de la fricción
   de la pista. Es el mismo hueco que ya anota `decision.py::_retornar`.

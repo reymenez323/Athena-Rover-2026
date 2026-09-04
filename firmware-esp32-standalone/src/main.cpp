@@ -34,17 +34,14 @@
 //      oponente" de verdad hace falta la cámara + Edge Impulse de
 //      raspberry-pi/src/athena/ei_flag_detector.py (ver firmware-esp32/).
 //
-//  SEÑALIZACIÓN CON EL LED RGB (lo pidió el reglamento Y esta demo)
+//  LED RGB: INDICADOR PURO DE LA LÍNEA/ZONA DE PISO, nada más
 //  ----------------------------------------------------------------------
-//    · Color de equipo (rojo/azul) cuando el piso de abajo no es una zona
-//      reconocible (piso neutro/gris, o sin lectura válida).
-//    · Color DE LA ZONA (amarillo/rojo/azul) cuando el sensor delantero
-//      reconoce que el robot está parado sobre esa zona — así un juez ve
-//      de un vistazo en qué parte de la pista está el robot.
-//    · Destello blanco superpuesto (parpadeo, sin tapar el color de fondo)
-//      mientras el telémetro cree tener "la bandera" candidata a la vista,
-//      y fijo mientras la lleva agarrada — la aproximación más honesta que
-//      se puede dar a "señalizar su detección" sin cámara.
+//    · Piso gris (zona neutra) o sin lectura válida -> APAGADO.
+//    · Amarillo / rojo / azul -> ese mismo color, fijo, mientras el sensor
+//      delantero esté sobre esa zona.
+//    · Negro (borde) -> destello alternando rojo/azul, como alerta.
+//  El LED YA NO indica equipo ni "veo la bandera": esta variante lo dedica
+//  por completo a decir en qué línea está parado el robot.
 //
 //  TEAM_SELECT: sin Raspberry Pi que le diga "--equipo rojo/azul" por
 //  línea de comandos, el equipo se elige con un puente físico a GND en el
@@ -56,7 +53,7 @@
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
 //    · 1x VL53L1X (I2C)    -> telémetro delante del gripper
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
-//    · LED RGB (1x)        -> identificación de equipo + zona + bandera
+//    · LED RGB (1x)        -> indicador puro de la línea/zona de piso
 //    · Puente TEAM_SELECT  -> GND = ROJO, sin conectar (pull-up) = AZUL
 //
 //  ÍNDICE
@@ -253,14 +250,13 @@ struct GripperCommand {
     GripperAction action = GripperAction::OPEN;
 };
 
-// A diferencia de firmware-esp32/, aquí LedCommand también carga la zona de
-// piso detectada: MissionTask ya tiene esa lectura a mano (la necesita para
-// decidir), así que se la pasa a LedTask en vez de que LedTask vuelva a
-// suscribirse a colorQueue por su cuenta — una sola tarea consume cada cola.
+// El LED aquí tiene un solo trabajo: decir sobre qué línea/zona está el
+// robot AHORA MISMO. MissionTask ya tiene la lectura de color a mano (la
+// necesita para decidir), así que se la pasa a LedTask en vez de que
+// LedTask vuelva a suscribirse a colorQueue por su cuenta — una sola tarea
+// consume cada cola.
 struct LedCommand {
-    TeamColor  team    = TeamColor::NONE;
-    ColorLabel zone     = ColorLabel::UNKNOWN;
-    bool       signal  = false;   // "creo ver la bandera" / "la llevo agarrada"
+    ColorLabel zone = ColorLabel::UNKNOWN;
 };
 
 struct ColorReading {
@@ -819,8 +815,14 @@ void ReflectanceTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.6  LedTask — LED RGB: equipo, zona de piso y "veo la bandera"
+//  8.6  LedTask — LED RGB: indicador puro de la línea/zona de piso
 // ---------------------------------------------------------------------------
+//  Único trabajo del LED en esta variante: decir sobre qué está parado el
+//  robot AHORA MISMO, nada más — ni equipo, ni "veo la bandera".
+//    · Piso gris (FLOOR) o sin lectura válida -> apagado.
+//    · Amarillo / rojo / azul                 -> ese mismo color, fijo.
+//    · Negro (borde)                          -> destello alternando
+//                                                 rojo/azul, como alerta.
 
 namespace RgbLed {
     constexpr uint8_t CH_R = 4;
@@ -844,47 +846,34 @@ namespace RgbLed {
         PwmWrite(Pins::LED_RGB_B, CH_B, b);
     }
 
-    void ApplyTeam(TeamColor team) {
-        switch (team) {
-            case TeamColor::RED:  SetRaw(255, 0, 0); break;
-            case TeamColor::BLUE: SetRaw(0, 0, 255); break;
-            case TeamColor::NONE:
-            default:              SetRaw(0, 0, 0);   break;
-        }
-    }
-
-    // Color de fondo del LED: la ZONA de piso manda si es una reconocible
-    // (amarilla/roja/azul); si el piso es neutro (FLOOR), desconocido o el
-    // borde negro, se cae de vuelta al color de EQUIPO — así el LED nunca
-    // se apaga sin razón y sigue cumpliendo la identificación que exige el
-    // reglamento aun fuera de una zona marcada.
-    void ApplyZoneOrTeam(TeamColor team, ColorLabel zone) {
+    // Color fijo de las zonas que NO parpadean. BLACK no aparece aquí a
+    // propósito: LedTask lo maneja aparte, alternando rojo/azul.
+    void ApplyZone(ColorLabel zone) {
         switch (zone) {
-            case ColorLabel::YELLOW: SetRaw(255, 170, 0);  break;
-            case ColorLabel::RED:    SetRaw(255, 0, 0);    break;
-            case ColorLabel::BLUE:   SetRaw(0, 0, 255);    break;
+            case ColorLabel::YELLOW: SetRaw(255, 170, 0); break;
+            case ColorLabel::RED:    SetRaw(255, 0, 0);   break;
+            case ColorLabel::BLUE:   SetRaw(0, 0, 255);   break;
             case ColorLabel::BLACK:
             case ColorLabel::FLOOR:
             case ColorLabel::UNKNOWN:
             default:
-                ApplyTeam(team);
+                SetRaw(0, 0, 0);   // apagado: piso neutro o sin lectura
                 break;
         }
     }
 }
 
-// Cuántas vueltas de LedTask dura cada mitad del destello (encendido/
-// apagado) mientras se señaliza la bandera. A TaskPeriodMs::LED_STATUS
-// (100 ms) esto da un destello de 5 Hz: notorio sin parecer un LED fundido.
-constexpr uint32_t kFlagBlinkHalfPeriodTicks = 1;
+// Cuántas vueltas de LedTask dura cada mitad del destello rojo/azul sobre
+// el borde negro. A TaskPeriodMs::LED_STATUS (100 ms) y 3 vueltas por
+// mitad, el ciclo completo dura 600 ms (~1.7 Hz): lo bastante lento para
+// distinguir los dos colores a simple vista, no un borrón.
+constexpr uint32_t kBorderBlinkHalfPeriodTicks = 3;
 
 void LedTask(void *) {
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
 
-    TeamColor  team = TeamColor::NONE;
     ColorLabel zone = ColorLabel::UNKNOWN;
-    bool       signal = false;
     uint32_t   blink_tick = 0;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::LED_STATUS);
@@ -893,21 +882,19 @@ void LedTask(void *) {
     for (;;) {
         LedCommand cmd;
         if (xQueueReceive(g_ledCmdQueue, &cmd, 0) == pdTRUE) {
-            team = cmd.team;
             zone = cmd.zone;
-            signal = cmd.signal;
         }
 
-        if (signal) {
-            blink_tick = (blink_tick + 1) % (2 * kFlagBlinkHalfPeriodTicks);
-            if (blink_tick < kFlagBlinkHalfPeriodTicks) {
-                RgbLed::SetRaw(255, 255, 255);   // destello blanco, superpuesto
+        if (zone == ColorLabel::BLACK) {
+            blink_tick = (blink_tick + 1) % (2 * kBorderBlinkHalfPeriodTicks);
+            if (blink_tick < kBorderBlinkHalfPeriodTicks) {
+                RgbLed::SetRaw(255, 0, 0);
             } else {
-                RgbLed::ApplyZoneOrTeam(team, zone);
+                RgbLed::SetRaw(0, 0, 255);
             }
         } else {
             blink_tick = 0;
-            RgbLed::ApplyZoneOrTeam(team, zone);
+            RgbLed::ApplyZone(zone);
         }
 
         Heartbeat(TaskId::LED_STATUS);
@@ -939,7 +926,6 @@ constexpr int kVelocidadCrucero     = 45;   // % de PWM al avanzar recto
 constexpr int kVelocidadBusqueda    = 35;   // % al girar buscando
 constexpr int kVelocidadAproximacion = 30;  // % al acercarse / evadir
 
-constexpr uint16_t kDistanciaSenalMm  = 400;  // debajo de esto: "creo verla" (LED)
 constexpr uint16_t kDistanciaAgarreMm = 150;  // debajo de esto: cerrar la pinza
 constexpr uint8_t  kTofDebounceHits   = 3;    // lecturas seguidas antes de agarrar
 
@@ -1016,7 +1002,6 @@ void MissionTask(void *pvTeam) {
         MotorCommand motor;               // por defecto: STOP
         GripperCommand gripper;
         bool send_gripper = false;
-        bool senal_bandera = false;       // para el LED de esta vuelta
 
         // --- 1. PRIORIDAD MÁXIMA: no salirse de la pista -------------------
         // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase.
@@ -1044,7 +1029,6 @@ void MissionTask(void *pvTeam) {
 
                 // -- 2. Cuenta regresiva para cargar la llave a mano --------
                 case Mission::Phase::ARRANQUE: {
-                    senal_bandera = true;   // LED destella: "todavía armando"
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kStartupDelayMs) {
                         phase = Mission::Phase::ASEGURAR_LLAVE;
                         phase_started_ms = millis();
@@ -1094,10 +1078,6 @@ void MissionTask(void *pvTeam) {
                 // bandera del equipo contrario y no cualquier otro objeto
                 // u obstáculo. Es la mejor aproximación posible sin cámara.
                 case Mission::Phase::BUSCAR_BANDERA: {
-                    if (last_tof.valid && last_tof.distance_mm <= Mission::kDistanciaSenalMm) {
-                        senal_bandera = true;
-                    }
-
                     if (last_tof.valid && last_tof.distance_mm <= Mission::kDistanciaAgarreMm) {
                         if (tof_hits < 255) tof_hits++;
                     } else {
@@ -1135,7 +1115,6 @@ void MissionTask(void *pvTeam) {
 
                 // -- 7. Cerrar la pinza sobre lo que haya delante -----------
                 case Mission::Phase::AGARRAR_BANDERA: {
-                    senal_bandera = true;
                     gripper.action = GripperAction::CLOSE_BANDERA;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
@@ -1151,7 +1130,6 @@ void MissionTask(void *pvTeam) {
                 // CALIBRAR EN BANCO según el peso real del robot y la
                 // fricción de la pista.
                 case Mission::Phase::RETORNAR_GIRANDO: {
-                    senal_bandera = true;   // la lleva agarrada: sigue avisando
                     SetDrive(motor, Mission::kVelocidadBusqueda, -Mission::kVelocidadBusqueda);
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kReturnTurnMs) {
                         phase = Mission::Phase::RETORNAR_AVANZANDO;
@@ -1162,7 +1140,6 @@ void MissionTask(void *pvTeam) {
 
                 // -- 8b. Avanzar hasta pisar la zona del propio equipo ------
                 case Mission::Phase::RETORNAR_AVANZANDO: {
-                    senal_bandera = true;
                     if (last_color.front_valid && last_color.front == Mission::ZonaPropia(team)) {
                         phase = Mission::Phase::ENTREGAR;
                         phase_started_ms = millis();
@@ -1194,9 +1171,7 @@ void MissionTask(void *pvTeam) {
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);
 
         LedCommand led;
-        led.team = team;
         led.zone = last_color.front_valid ? last_color.front : ColorLabel::UNKNOWN;
-        led.signal = senal_bandera;
         xQueueOverwrite(g_ledCmdQueue, &led);
 
         Heartbeat(TaskId::MISSION);
