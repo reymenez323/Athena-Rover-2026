@@ -15,19 +15,27 @@ tan separadas como éste es despreciable.
 
 ## Si no hay modelo
 
-El sistema **funciona igual**, en modo degradado: `detector.py` cae a las
-reglas geométricas y de color puras. Detecta menos fino y se traga más falsos
-positivos, pero el robot se mueve. Eso permite probar mecánica y control desde
-el primer día, sin esperar a tener el dataset listo.
+`detector.py`/`classifier.py` (el camino que usa este `.tflite`) ya **no
+corren dentro de `run_rover.py`** -- ver `athena_ei_banderas.eim` abajo, que
+lo reemplazó para encontrar la bandera. Este clasificador local queda en el
+repo sin usarse por ahora (no se borró por si se retoma más adelante). Si en
+algún momento vuelve a conectarse a algo, su modo degradado sigue intacto: sin
+modelo, `detector.py` cae a las reglas geométricas y de color puras.
 
 ## `athena_ei_banderas.eim`
 
 Modelo de detección de banderas (FOMO, 2 clases: `CILINDRO_ROJO`/
 `CILINDRO_AZUL`) entrenado en Edge Impulse con fotos tomadas con la Argom
-CAM20 real del robot. **Tampoco se versiona en git** (pesa ~13 MB). Se usa con
-`scripts/run_flag_tracker_ei.py`, un camino de percepción aparte del
-clasificador local -- no reemplaza `athena_cls.tflite`, que sigue haciendo
-falta para la llave y el fondo.
+CAM20 real del robot. **Tampoco se versiona en git** (pesa ~13 MB). **Es
+obligatorio para `scripts/run_rover.py`** -- sin él, el robot no arranca (falla
+rápido y claro al no encontrarlo, a propósito, en vez de arrancar a medias sin
+poder ver banderas). También lo usa `scripts/run_flag_tracker_ei.py`, que
+ahora es solo una herramienta aparte para calibrar a mano la zona muerta y la
+ganancia de giro con `--ver`, sin la secuencia completa de la misión.
+
+La llave nunca dependió de la cámara -- `decision.py` la maneja enteramente
+con el sensor de color del ESP32 (`ColorTelemetry`), así que no hace falta un
+modelo aparte para eso.
 
 Para regenerarlo: reentrenar en Edge Impulse Studio (proyecto
 `athena-rover-banderas`) y exportar con **Deployment target: "Linux

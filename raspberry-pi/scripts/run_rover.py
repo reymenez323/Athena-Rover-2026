@@ -17,23 +17,39 @@ TOLERANCIA A FALLOS: si se cae la cámara, el enlace serial o lo que sea, el
 bucle NO se muere. Manda parada y sigue intentando. Un robot detenido conserva
 la posición de su bandera y puede ganar por proximidad al terminar el tiempo;
 un proceso caído pierde seguro.
+
+PERCEPCIÓN DE LA BANDERA: usa el modelo FOMO entrenado en Edge Impulse (fotos
+de la Argom CAM20 real), no el clasificador local (ese nunca llegó a
+entrenarse -- ver ``models/README.md``). La llave y el retorno a zona NO
+dependen de la cámara en absoluto: los maneja el sensor de color del ESP32
+(``ColorTelemetry``), así que cambiar el detector de bandera no les afecta.
+``decision.py`` sigue siendo quien manda en la secuencia obligatoria del
+reglamento (llave antes que bandera, etc.) -- eso no se tocó.
+
+CENTRADO: la fase de perseguir la bandera usa ``athena.centering`` (línea
+central + zona muerta + giro proporcional al error normalizado) en vez del
+control angular en grados que trae ``decision._perseguir``. Ver el bloque
+"CORRECCIÓN DE GIRO" más abajo para el porqué de mantener ambos.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import math
 import signal
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
+from athena.centering import calcular_giro, error_horizontal  # noqa: E402
 from athena.config import Config  # noqa: E402
 from athena.decision import DecisionMaker, Phase, RobotState  # noqa: E402
-from athena.detector import Detector  # noqa: E402
+from athena.ei_flag_detector import EiDetection, EiFlagDetector  # noqa: E402
 from athena.link import EspLink  # noqa: E402
 from athena.protocol import (  # noqa: E402
     ColorTelemetry,
@@ -42,9 +58,13 @@ from athena.protocol import (  # noqa: E402
     TeamColor,
     ToFTelemetry,
 )
+from athena.types import Detection, ObjectClass, Perception  # noqa: E402
 
 log = logging.getLogger("rover")
 _parar = False
+
+ETIQUETA_ROJO = "CILINDRO_ROJO"
+ETIQUETA_AZUL = "CILINDRO_AZUL"
 
 
 def _signal_handler(signum, frame) -> None:
@@ -53,10 +73,64 @@ def _signal_handler(signum, frame) -> None:
     log.info("Señal recibida, deteniendo...")
 
 
+def _percepcion_desde_ei(
+    objetivo: EiDetection | None,
+    cls_objetivo: ObjectClass,
+    frame_width_ei: int,
+    frame_height_ei: int,
+    cfg: Config,
+    frame_id: int,
+    timestamp: float,
+    latency_ms: float,
+) -> Perception:
+    """Traduce la mejor detección de Edge Impulse a un ``Perception``.
+
+    ``decision.py`` no sabe ni necesita saber que el detector cambió: sigue
+    recibiendo el mismo tipo de objeto de siempre. El ángulo y la distancia se
+    calculan con el mismo modelo pinhole de ``geometry.py``, pero con la focal
+    reescalada al tamaño de frame que usa Edge Impulse (120x120 en este
+    proyecto) en vez de los 320x240 del pipeline local -- ``focal_px`` está
+    calibrada a ESE ancho de referencia (ver el docstring de GeometryConfig).
+    """
+    if objetivo is None or frame_width_ei <= 0:
+        return Perception(
+            frame_id=frame_id, timestamp=timestamp, detections=(),
+            latency_ms=latency_ms, model_active=True,
+        )
+
+    escala = frame_width_ei / cfg.camera.process_width
+    focal_px = cfg.geometry.focal_px * escala
+
+    box = objetivo.box
+    angle_deg = math.degrees(math.atan2(box.cx - frame_width_ei / 2.0, focal_px))
+
+    distance_mm: float | None = None
+    # Igual que Geometry.distance_mm: si la bandera está cortada por el borde
+    # del frame, su altura aparente es menor que la real y saldría inflada.
+    if box.h > 0 and box.y > 1 and (box.y + box.h) < frame_height_ei - 1:
+        distance_mm = focal_px * cfg.geometry.bandera_altura_mm / box.h
+
+    deteccion = Detection(
+        cls=cls_objetivo, box=box, confidence=objetivo.confidence,
+        distance_mm=distance_mm, angle_deg=angle_deg, track_id=1,
+    )
+    return Perception(
+        frame_id=frame_id, timestamp=timestamp, detections=(deteccion,),
+        latency_ms=latency_ms, model_active=True,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--equipo", required=True, choices=["rojo", "azul"])
+    parser.add_argument("--modelo", default="models/athena_ei_banderas.eim",
+                        help="ruta al .eim exportado de Edge Impulse (target Linux AARCH64)")
     parser.add_argument("--config", default=None)
+    parser.add_argument("--zona-muerta", type=float, default=0.15,
+                        help="mitad de ancho de la franja central considerada 'centrado', en [0,1]")
+    parser.add_argument("--kp", type=float, default=60.0, help="ganancia proporcional del giro al perseguir")
+    parser.add_argument("--correccion-max", type=int, default=40)
+    parser.add_argument("--min-confianza", type=float, default=0.6)
     parser.add_argument("--ver", action="store_true", help="ventana con lo que ve el robot")
     parser.add_argument("--simular", action="store_true", help="no enviar comandos de motor")
     parser.add_argument("--verbose", action="store_true")
@@ -72,6 +146,11 @@ def main() -> int:
 
     cfg = Config.load(args.config)
     equipo = TeamColor.RED if args.equipo == "rojo" else TeamColor.BLUE
+    etiqueta_objetivo = ETIQUETA_AZUL if equipo is TeamColor.RED else ETIQUETA_ROJO
+
+    modelo_path = Path(args.modelo)
+    if not modelo_path.is_absolute():
+        modelo_path = REPO / modelo_path
 
     # Import tardío: solo hace falta si se pidió la ventana de depuración, y
     # así el robot puede correr sin entorno gráfico (que es lo normal, por SSH).
@@ -82,12 +161,10 @@ def main() -> int:
 
     from athena.camera import Camera
 
-    detector = Detector(cfg, base_dir=REPO)
     decisor = DecisionMaker(cfg.control, RobotState(team=equipo))
 
-    log.info("Equipo: %s | objetivo: %s", equipo.name, decisor.state.bandera_objetivo.value)
-    if not detector.model_active:
-        log.warning("Sin modelo CNN: corriendo en modo degradado (reglas de color y forma).")
+    log.info("Equipo: %s | objetivo: %s (%s)",
+              equipo.name, decisor.state.bandera_objetivo.value, etiqueta_objetivo)
     if args.simular:
         log.warning("MODO SIMULACIÓN: no se enviarán comandos de motor.")
 
@@ -99,7 +176,10 @@ def main() -> int:
     t_inicio = time.monotonic()
 
     try:
-        with Camera(cfg.camera) as cam, EspLink(cfg.serial_port, cfg.serial_baud) as link:
+        with Camera(cfg.camera) as cam, \
+             EiFlagDetector(modelo_path, min_confidence=args.min_confianza) as ei_detector, \
+             EspLink(cfg.serial_port, cfg.serial_baud) as link:
+
             link.send_led(equipo)          # el reglamento exige identificarse
             ultimo_led = time.monotonic()
 
@@ -118,21 +198,58 @@ def main() -> int:
                         log.warning("El ESP32 reporta tareas colgadas: %s",
                                     ", ".join(paquete.faulted_tasks))
 
-                # --- 2. Percepción -----------------------------------------
-                lectura = cam.read()
-                if lectura is None:
-                    link.send_stop()
+                # --- 2. Percepción (cámara USB -> Edge Impulse) ------------
+                # read_full() (resolución de captura completa), no read(): el
+                # SDK de Edge Impulse ya reescala/recorta al tamaño del
+                # Impulse (120x120) por su cuenta, reducir dos veces solo
+                # perdería detalle de más antes de esa etapa.
+                frame = cam.read_full()
+                if frame is None:
+                    if not args.simular:
+                        link.send_stop()
                     time.sleep(0.01)
                     continue
-                frame_id, frame = lectura
-                percepcion = detector.process(frame_id, frame)
 
-                # --- 3. Decisión -------------------------------------------
+                detecciones = ei_detector.detect(frame)
+                objetivo_ei = EiFlagDetector.best(detecciones, etiqueta_objetivo)
+                percepcion = _percepcion_desde_ei(
+                    objetivo_ei, decisor.state.bandera_objetivo,
+                    ei_detector.frame_width, ei_detector.frame_height,
+                    cfg, frame_id=frames, timestamp=time.time(),
+                    latency_ms=ei_detector.last_timing_ms,
+                )
+
+                # --- 3. Decisión --------------------------------------------
                 comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect, ultimo_tof)
 
                 if decisor.state.phase is not ultima_fase:
                     log.info("Fase -> %s (%s)", decisor.state.phase.name, comandos.motivo)
                     ultima_fase = decisor.state.phase
+
+                # --- 3b. CORRECCIÓN DE GIRO: línea central + zona muerta ---
+                # decision.py ya decidió QUÉ hacer (perseguir, agarrar,
+                # etc.) usando un ángulo en grados de compatibilidad interna.
+                # Para el movimiento en sí, mientras se está persiguiendo la
+                # bandera, se recalcula el giro con el error normalizado de
+                # Edge Impulse directamente (0.15 de zona muerta, proporcional
+                # al error) en vez del control angular -- es la lógica de
+                # centrado que se pidió, aplicada sobre la caja real que
+                # acaba de devolver el modelo, no sobre el ángulo derivado.
+                if objetivo_ei is not None and decisor.state.phase is Phase.APROXIMAR_BANDERA:
+                    error = error_horizontal(objetivo_ei.box, ei_detector.frame_width)
+                    objetivo_det = percepcion.best(decisor.state.bandera_objetivo)
+                    cerca = (
+                        objetivo_det is not None
+                        and objetivo_det.distance_mm is not None
+                        and objetivo_det.distance_mm < 400.0
+                    )
+                    base = cfg.control.velocidad_aproximacion if cerca else cfg.control.velocidad_crucero
+                    giro = calcular_giro(
+                        error, zona_muerta=args.zona_muerta, velocidad_base=base,
+                        kp=args.kp, correccion_max=args.correccion_max,
+                    )
+                    if not comandos.parado:   # no pisar una orden de agarre/gripper
+                        comandos = replace(comandos, left=giro.left, right=giro.right)
 
                 # --- 4. Envío ----------------------------------------------
                 if not args.simular:
@@ -152,15 +269,18 @@ def main() -> int:
                 # --- 5. Depuración visual opcional -------------------------
                 if cv2 is not None:
                     vista = frame.copy()
-                    for d in percepcion.detections:
+                    fh, fw = vista.shape[:2]
+                    escala_x = fw / max(1, ei_detector.frame_width)
+                    escala_y = fh / max(1, ei_detector.frame_height)
+                    for d in detecciones:
                         b = d.box
-                        color = (0, 0, 255) if "roja" in d.cls.value else (255, 128, 0)
-                        cv2.rectangle(vista, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
-                        dist = f"{d.distance_mm:.0f}mm" if d.distance_mm else "?"
-                        cv2.putText(vista, f"{d.cls.value} {d.confidence:.2f} {dist}",
-                                    (b.x, max(12, b.y - 5)), cv2.FONT_HERSHEY_SIMPLEX,
-                                    0.4, color, 1)
-                    cv2.putText(vista, f"{decisor.state.phase.name} | {percepcion.latency_ms:.1f}ms",
+                        x, y = int(b.x * escala_x), int(b.y * escala_y)
+                        w, h = int(b.w * escala_x), int(b.h * escala_y)
+                        color = (0, 0, 255) if d.label == ETIQUETA_ROJO else (255, 128, 0)
+                        cv2.rectangle(vista, (x, y), (x + w, y + h), color, 2)
+                        cv2.putText(vista, f"{d.label} {d.confidence:.2f}", (x, max(12, y - 5)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    cv2.putText(vista, f"{decisor.state.phase.name} | {ei_detector.last_timing_ms:.0f}ms",
                                 (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     if ultimo_tof is not None:
                         tof_txt = f"{ultimo_tof.distance_mm}mm" if ultimo_tof.valid else "ToF invalido"

@@ -4,10 +4,12 @@ Esto instala `run_rover.py` (la misión **completa**: llave → zona neutra →
 bandera → retorno) como servicio de `systemd`, para que arranque solo al
 encender la Pi, sin necesidad de conectarse por SSH cada vez.
 
-**No uses esto con `run_flag_tracker_ei.py`** — ese script solo persigue la
-bandera y se saltaría el depósito obligatorio de la llave, lo que pierde la
-ronda de inmediato según el reglamento. Ese script es para probar/calibrar el
-subsistema de cámara + Edge Impulse por separado, a mano.
+`run_rover.py` YA usa el modelo de Edge Impulse para encontrar la bandera
+(integrado directamente, no hace falta correr nada aparte para eso).
+`run_flag_tracker_ei.py` queda solo como herramienta de calibración aislada
+para ajustar a ojo la zona muerta/ganancia con `--ver` — **no lo uses como
+servicio de arranque**: se saltaría el depósito obligatorio de la llave, lo
+que pierde la ronda de inmediato según el reglamento.
 
 ## 1. Instalar
 
@@ -27,7 +29,18 @@ nano deploy/equipo.env          # confirma o cambia EQUIPO=rojo / EQUIPO=azul
 
 cp config/rover.example.json config/rover.json
 nano config/rover.json          # pon el puerto que confirmaste arriba con ls
+```
 
+**Obligatorio ahora:** `run_rover.py` no arranca sin el modelo de Edge
+Impulse (falla rápido y claro si falta, a propósito). Copiá el `.eim` a la Pi
+antes de instalar el servicio:
+
+```bash
+scp ruta/al/athena_ei_banderas.eim usuario@IP_PI:~/Athena-Rover-2026/raspberry-pi/models/
+chmod +x models/athena_ei_banderas.eim
+```
+
+```bash
 sudo cp deploy/athena-rover.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable athena-rover.service

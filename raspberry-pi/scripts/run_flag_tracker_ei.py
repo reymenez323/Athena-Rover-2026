@@ -7,11 +7,13 @@ color+CNN, usa el detector de objetos entrenado en Edge Impulse (ver
 rival, y un control proporcional simple (``src/athena/centering.py``) para
 centrarla y avanzar.
 
-NO reemplaza la misión completa (llave, zona neutra, gripper, retorno): eso
-sigue en ``decision.py``/``run_rover.py``. Este script resuelve, de forma
-aislada, la pieza de "encontrar y perseguir la bandera enemiga" con el modelo
-nuevo -- para poder probarla y calibrarla sola antes de decidir si se integra
-al bucle principal.
+``run_rover.py`` YA integra este mismo modelo y esta misma lógica de centrado
+dentro de la misión completa (llave, zona neutra, gripper, retorno) -- este
+script queda como herramienta APARTE para calibrar a mano, con la ventana
+``--ver``, la zona muerta y la ganancia de giro sin tener que correr la
+misión entera cada vez. No lo uses como el programa que corre en competencia:
+no deposita la llave, así que arrancarlo solo pierde la ronda de inmediato
+según el reglamento.
 
 REQUISITOS en la Raspberry Pi (una sola vez)::
 
