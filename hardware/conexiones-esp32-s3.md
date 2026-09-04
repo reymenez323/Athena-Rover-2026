@@ -194,7 +194,7 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 Por eso van en **buses I2C separados**: el ESP32-S3 tiene dos controladores I2C,
 así te ahorras el multiplexor TCA9548A.
 
-### Sensor DELANTERO — bus I2C nº 0 (compartido con el PCA9685)
+### Sensor DELANTERO — bus I2C nº 0 (compartido con el PCA9685 y el VL53L1X)
 
 | Pin | GPIO ESP32-S3 |
 |-----|:-------------:|
@@ -254,25 +254,25 @@ Raspberry Pi sepa cuándo cerrar la pinza — la lógica de "cuándo" vive en
 
 **Dirección I2C fija de fábrica: 0x29 — igual que AMBOS TCS34725.** No hay
 forma de elegir otra dirección desde el pin ni por strapping. Por eso NO va en
-un bus propio: comparte el bus I2C nº1 con el TCS34725 trasero, y su pin
-**XSHUT** es imprescindible (no opcional) para poder arrancar sin que las dos
-direcciones choquen.
+un bus propio: comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero
+(el PCA9685 no da problema, es 0x40), y su pin **XSHUT** es imprescindible
+(no opcional) para poder arrancar sin que las dos direcciones 0x29 choquen.
 
 | Pin VL53L1X | GPIO ESP32-S3 / Conexión | Nota |
 |-------------|:------------------------:|------|
-| SDA | **47** | Bus I2C nº 1 — compartido con el TCS34725 trasero |
-| SCL | **48** | Bus I2C nº 1 — compartido con el TCS34725 trasero |
+| SDA | **8** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
+| SCL | **9** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
 | XSHUT | **40** | Reset por software. Ver la secuencia de arranque abajo |
 | VIN | 3.3 V | |
 | GND | GND común | |
 
 ### ⚠️ Por qué hace falta XSHUT, y el riesgo que queda sin resolver
 
-El VL53L1X arranca siempre en 0x29. El TCS34725 trasero, en el mismo bus, está
-fijo en esa misma dirección **y no tiene ningún pin de apagado**: en cuanto
-tiene alimentación, responde en 0x29 sin que el firmware pueda callarlo. La
-secuencia de arranque (implementada en `TofSensorTask`, `firmware-esp32/src/main.cpp`)
-es:
+El VL53L1X arranca siempre en 0x29. El TCS34725 delantero, en el mismo bus,
+está fijo en esa misma dirección **y no tiene ningún pin de apagado**: en
+cuanto tiene alimentación, responde en 0x29 sin que el firmware pueda
+callarlo. La secuencia de arranque (implementada en `TofSensorTask`,
+`firmware-esp32/src/main.cpp`) es:
 
 1. **GPIO 40 en LOW desde `setup()`**, antes de crear ninguna tarea — el
    VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
@@ -283,7 +283,7 @@ es:
 2. GPIO 40 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
 3. Se le reasigna la dirección **0x30** con una única escritura corta a su
    registro de dirección. Este es el único instante en que el VL53L1X sigue
-   en 0x29 mientras el TCS34725 trasero también está vivo ahí — no se puede
+   en 0x29 mientras el TCS34725 delantero también está vivo ahí — no se puede
    evitar con el hardware actual sin agregarle un pin de apagado al TCS34725
    (por ejemplo, cortando su alimentación con un transistor). El equipo
    decidió aceptar este riesgo acotado (una sola transacción de 3 bytes, no
@@ -291,7 +291,7 @@ es:
 4. Recién ahora corre la inicialización completa del VL53L1X, ya en 0x30 y
    sin nadie más escuchando ahí.
 
-**Si el TCS34725 trasero empieza a dar lecturas raras justo después de un
+**Si el TCS34725 delantero empieza a dar lecturas raras justo después de un
 reset del ESP32 (y no antes), este es el primer sospechoso.** Revisar con un
 analizador lógico si se repite: se vería como una transacción I2C corta a
 0x29 justo después del arranque, seguida de dos direcciones I2C distintas
@@ -393,11 +393,11 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA | 40 | XSHUT del VL53L1X (ToF) |
-| 9 | I2C0 SCL | 41 | *(libre)* |
+| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | XSHUT del VL53L1X (ToF) |
+| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | *(libre)* |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
-| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero + VL53L1X) |
-| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero + VL53L1X) |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
@@ -440,7 +440,7 @@ depuración.
    ánodo común — ver la nota en la sección del LED RGB).
 3. **Añadir el I2C**, un chip a la vez. El firmware avisa por la consola si el
    PCA9685 o algún TCS34725 no responde. **Dejar el VL53L1X para el final de
-   este paso**, después de confirmar que el TCS34725 trasero ya funciona
+   este paso**, después de confirmar que el TCS34725 delantero ya funciona
    bien por su cuenta: así, si algo se rompe al conectar el ToF, es fácil
    saber que fue por eso.
 4. **Añadir los servos** con el gripper DESACOPLADO del mecanismo, para no

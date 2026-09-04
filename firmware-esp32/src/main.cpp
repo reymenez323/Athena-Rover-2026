@@ -93,11 +93,13 @@ namespace Pins {
     constexpr uint8_t TCS_LED_BACK  = 21;
 
     // -------- VL53L1X (ToF), delante del gripper ---------------------------
-    // Va en el bus I2C nº1 (mismo que el TCS34725 trasero). Los dos chips
-    // arrancan en la MISMA dirección fija 0x29, así que el VL53L1X necesita
-    // este pin XSHUT para quedarse en reset (sin responder en el bus) hasta
-    // que se le reasigna una dirección nueva — ver TofSensorTask y la nota
-    // en I2CAddr::VL53L1X_BOOT_ADDR más abajo para el riesgo que esto implica.
+    // Va en el bus I2C nº0 (mismo que el PCA9685 y el TCS34725 delantero). El
+    // PCA9685 no da problema (dirección fija 0x40, distinta), pero el
+    // TCS34725 delantero SÍ: arranca en la MISMA dirección fija 0x29 que el
+    // VL53L1X, así que este pin XSHUT es necesario para quedarse en reset
+    // (sin responder en el bus) hasta que se le reasigna una dirección nueva
+    // — ver TofSensorTask y la nota en I2CAddr::VL53L1X_BOOT_ADDR más abajo
+    // para el riesgo que esto implica.
     constexpr uint8_t TOF_XSHUT = 40;
 
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
@@ -126,19 +128,20 @@ namespace I2CAddr {
     constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar
 
     // El VL53L1X arranca SIEMPRE en 0x29 — la misma dirección fija del
-    // TCS34725, y comparten el bus I2C nº1 (ver Pins::TOF_XSHUT). Por eso se
-    // le reasigna esta dirección nueva en cuanto sale de reset, antes de
-    // hacer cualquier otra cosa con él.
+    // TCS34725, y comparten el bus I2C nº0 (ver Pins::TOF_XSHUT). El PCA9685,
+    // que también vive en ese bus, no es un problema (0x40, distinta). Por
+    // eso se le reasigna esta dirección nueva al VL53L1X en cuanto sale de
+    // reset, antes de hacer cualquier otra cosa con él.
     //
     // ⚠️ ESA REASIGNACIÓN ES UNA ÚNICA ESCRITURA CORTA hecha mientras el
     // VL53L1X TODAVÍA responde en 0x29 — el mismo instante en que el
-    // TCS34725 trasero, que no tiene forma de silenciarse, también sigue
+    // TCS34725 delantero, que no tiene forma de silenciarse, también sigue
     // vivo en esa dirección en el mismo bus. No hay manera de evitarlo con
     // el hardware actual (el TCS34725 no tiene pin de reset/shutdown). El
     // riesgo se mantiene acotado a propósito: es SOLO esa escritura de 3
     // bytes, no la inicialización completa del sensor (que si ocurriera con
     // los dos chips en la misma dirección sí sería un problema serio). Si el
-    // TCS34725 trasero empieza a comportarse raro después de un reset, este
+    // TCS34725 delantero empieza a comportarse raro después de un reset, este
     // es el primer sospechoso — revisar con el analizador lógico.
     constexpr uint8_t VL53L1X_BOOT_ADDR = 0x29;
     constexpr uint8_t VL53L1X = 0x30;
@@ -895,16 +898,17 @@ void PushDropOldest(QueueHandle_t queue, const T &item) {
 //  agarrar vive en la Pi (raspberry-pi/src/athena/decision.py).
 //
 //  SECUENCIA DE ARRANQUE, y por qué es así:
-//  el VL53L1X comparte el bus I2C nº1 con el TCS34725 trasero, y los dos
-//  chips arrancan en la MISMA dirección fija 0x29 (ver Pins::TOF_XSHUT e
-//  I2CAddr::VL53L1X_BOOT_ADDR). La secuencia:
+//  el VL53L1X comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero.
+//  El PCA9685 no da problema (0x40, distinta), pero el TCS34725 delantero
+//  arranca en la MISMA dirección fija 0x29 que el VL53L1X (ver Pins::TOF_XSHUT
+//  e I2CAddr::VL53L1X_BOOT_ADDR). La secuencia:
 //    1. Mantener XSHUT en LOW un instante: el VL53L1X queda en reset y NO
-//       responde en el bus, así que el TCS34725 trasero no tiene con quién
+//       responde en el bus, así que el TCS34725 delantero no tiene con quién
 //       chocar mientras tanto.
 //    2. Soltar XSHUT (HIGH) y esperar el arranque del sensor.
 //    3. Reasignarle una dirección nueva (I2CAddr::VL53L1X) con UNA sola
 //       escritura corta — el único instante en que comparte 0x29 con el
-//       TCS34725 trasero. Es un riesgo aceptado y documentado (ver la nota
+//       TCS34725 delantero. Es un riesgo aceptado y documentado (ver la nota
 //       larga junto a I2CAddr::VL53L1X_BOOT_ADDR), no un descuido.
 //    4. Recién ahora, init() completo: ya en su propia dirección, sin nadie
 //       más escuchando en ella.
@@ -928,7 +932,7 @@ namespace Tof {
 VL53L1X g_tof;   // única instancia: hay un solo sensor ToF en el robot
 
 bool TofBringUp() {
-    g_tof.setBus(&Wire1);
+    g_tof.setBus(&Wire);
     g_tof.setTimeout(500);
 
     // Ver la nota larga en I2CAddr::VL53L1X_BOOT_ADDR: esta línea es la única
@@ -948,7 +952,7 @@ void TofSensorTask(void *) {
     // tarea) — a propósito: algunas placas del VL53L1X traen un pull-up en
     // XSHUT que lo deja activo por defecto, así que si se esperara a este
     // punto para ponerlo en LOW, ColorSensorTask (que corre en paralelo)
-    // podría alcanzar a inicializar el TCS34725 trasero mientras el
+    // podría alcanzar a inicializar el TCS34725 delantero mientras el
     // VL53L1X, recién encendido, todavía responde en 0x29 sin que nadie se
     // lo haya pedido. Aquí solo hace falta soltarlo.
     digitalWrite(Pins::TOF_XSHUT, HIGH);    // arranca
@@ -1406,7 +1410,7 @@ void setup() {
 
     // Los dos buses I2C se abren aquí, ANTES de lanzar las tareas, para que
     // ninguna tarea tenga que inicializar hardware compartido.
-    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // PCA9685 + TCS34725 delantero
+    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // PCA9685 + TCS34725 delantero + VL53L1X
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);  // TCS34725 trasero
 
     // Timeout corto: si un chip I2C se cuelga tirando SDA a masa, la
@@ -1417,7 +1421,7 @@ void setup() {
     // VL53L1X en reset DESDE YA, antes de crear ninguna tarea. Ver la nota
     // larga en TofSensorTask: si se dejara este pin sin tocar hasta que esa
     // tarea arranque, ColorSensorTask (que corre en paralelo, en el mismo
-    // bus I2C1) podría alcanzar a inicializar el TCS34725 trasero mientras
+    // bus I2C0) podría alcanzar a inicializar el TCS34725 delantero mientras
     // el VL53L1X sigue respondiendo en 0x29 por su cuenta (algunas placas
     // traen un pull-up en XSHUT que lo deja activo apenas se energiza).
     // Haciéndolo aquí, en setup(), antes de xTaskCreatePinnedToCore, queda
