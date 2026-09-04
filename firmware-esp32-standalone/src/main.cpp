@@ -625,6 +625,14 @@ void GripperTask(void *) {
         if (!pca_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
             pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
+            // Si el PCA9685 no respondió al arrancar (setup() de arriba se
+            // saltó el SetChannel inicial) y recién ahora reaparece, hay que
+            // mandar la pinza a 0° aquí también — si no, se queda esperando
+            // un GripperCommand que puede no llegar nunca (por ejemplo, con
+            // Mission::kMotionEnabled en false, que no manda ninguno).
+            if (pca_ok) {
+                pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+            }
         }
 
         GripperCommand cmd;
@@ -920,6 +928,12 @@ void LedTask(void *) {
 
 namespace Mission {
 
+// Interruptor de emergencia por batería baja: en false, MissionTask NO
+// mueve motores ni el gripper — solo lee los sensores y deja que el LED
+// (LedTask) siga mostrando la zona de piso. Poner en true para que el
+// robot vuelva a ejecutar la misión completa.
+constexpr bool kMotionEnabled = false;
+
 // Velocidades y umbrales — mismo rol que ControlConfig en decision.py,
 // pero constexpr porque aquí no hay archivo de configuración que cargar.
 constexpr int kVelocidadCrucero     = 45;   // % de PWM al avanzar recto
@@ -1002,6 +1016,13 @@ void MissionTask(void *pvTeam) {
         MotorCommand motor;               // por defecto: STOP
         GripperCommand gripper;
         bool send_gripper = false;
+
+        // Interruptor de batería baja (Mission::kMotionEnabled): si está en
+        // false, todo lo de aquí abajo se salta por completo. motor se queda
+        // en su valor por defecto (STOP) y gripper nunca se envía — el
+        // robot no mueve nada, solo sigue leyendo sensores y mostrando la
+        // zona por el LED (eso pasa siempre, fuera de este bloque).
+        if (Mission::kMotionEnabled) {
 
         // --- 1. PRIORIDAD MÁXIMA: no salirse de la pista -------------------
         // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase.
@@ -1166,6 +1187,8 @@ void MissionTask(void *pvTeam) {
                     break;
             }
         }
+
+        } // if (Mission::kMotionEnabled)
 
         xQueueOverwrite(g_motorCmdQueue, &motor);
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);

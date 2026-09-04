@@ -13,6 +13,17 @@ versión con Raspberry Pi. Mismo hardware, mismos drivers I2C escritos a mano
 más de FreeRTOS (`MissionTask`), en vez de vivir en Python al otro lado de un
 cable USB.
 
+## Modo actual: SIN MOVIMIENTO (batería baja)
+
+`Mission::kMotionEnabled` está en `false` en `src/main.cpp`. Con eso,
+`MissionTask` **no mueve motores ni el gripper** — solo sigue leyendo los
+sensores de color y reflectancia y mostrando la zona de piso por el LED
+(ver más abajo). Es el modo pedido para probar la identificación de línea
+sin gastar batería en los motores.
+
+Para volver a la misión completa (motores + gripper), cambiar esa constante
+a `true` y volver a subir el firmware.
+
 ## Qué se puede hacer sin Raspberry Pi, y qué no
 
 El ESP32-S3 por sí solo **no tiene cámara**: puede leer sensores de contacto
