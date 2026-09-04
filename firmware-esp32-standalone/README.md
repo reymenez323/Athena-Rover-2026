@@ -13,6 +13,31 @@ versión con Raspberry Pi. Mismo hardware, mismos drivers I2C escritos a mano
 más de FreeRTOS (`MissionTask`), en vez de vivir en Python al otro lado de un
 cable USB.
 
+## Reinicios inesperados en banco: sospechar de la batería primero
+
+Si el monitor serial muestra ráfagas de `[E][Wire.cpp:513] requestFrom():
+i2cRead returned Error ...` seguidas de que el reloj (los `[ms]` a la
+izquierda de cada línea) **vuelve a empezar cerca de 0**, el ESP32-S3 se
+está reiniciando solo — no es (solo) un fallo de lectura I2C.
+
+Con el USB nativo como único puerto (`Serial` = `DEBUG_LINK`), cada reset
+reenumera el dispositivo USB y el monitor tarda un instante en reconectar;
+los primeros logs de ese arranque —incluido el motivo del reinicio— se
+pierden en esa ventana. `setup()` ahora imprime explícitamente
+`[Setup] Motivo del ultimo reinicio: ...` (vía `esp_reset_reason()`) y
+espera hasta 1.5 s a que el monitor reconecte antes de imprimir, así que
+una captura nueva del log debería mostrarlo.
+
+Si dice **BROWNOUT**, es la batería: el voltaje cae debajo del mínimo del
+ESP32-S3 al energizar los sensores/PCA9685 y el chip se reinicia por su
+cuenta. Es el sospechoso más probable si ya sabes que la batería está baja
+— y explica de paso por qué los sensores "no responden" de forma
+intermitente (el bus queda en un estado raro justo cuando el regulador se
+desploma a medio arranque). Prueba alimentando el ESP32-S3 solo desde el
+cable USB (sin la batería) para confirmar: si los reinicios y los errores
+de I2C desaparecen, el firmware está bien y lo que hace falta es cargar o
+cambiar la batería.
+
 ## Bus I2C nº0 compartido: por qué hay un mutex
 
 `GripperTask` (PCA9685), `ColorSensorTask` (TCS34725 delantero) y

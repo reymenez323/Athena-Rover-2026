@@ -74,6 +74,7 @@
 #include <Wire.h>
 #include <VL53L1X.h>
 #include <freertos/semphr.h>   // SemaphoreHandle_t / mutex del bus I2C nº0 (ver g_i2c0Mutex)
+#include <esp_system.h>        // esp_reset_reason() — ver el log de motivo de reinicio en setup()
 
 // ===========================================================================
 //  [1] CONFIGURACIÓN
@@ -1341,10 +1342,46 @@ constexpr uint32_t SERIAL_BAUD_RATE = 115200;
 // directamente): tiene que sobrevivir a setup() retornando.
 static TeamColor g_myTeam = TeamColor::BLUE;   // sobrescrito abajo por TEAM_SELECT
 
+// Traduce el motivo del último reinicio a algo legible. Existe porque el
+// USB nativo se reenumera solo con cada reset del ESP32-S3: un monitor
+// serial conectado pierde los primeros logs mientras se reconecta, así que
+// "¿por qué se reinició?" es justo la pregunta que más se pierde sin este
+// mensaje explícito (ver el bloqueo de reconexión más abajo en setup()).
+static const char *ResetReasonToString(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON:   return "POWERON (se energizo desde cero)";
+        case ESP_RST_EXT:       return "EXTERNO (pin de reset)";
+        case ESP_RST_SW:        return "SOFTWARE (esp_restart() o similar)";
+        case ESP_RST_PANIC:     return "PANIC (excepcion/crash del firmware)";
+        case ESP_RST_INT_WDT:   return "INTERRUPT WATCHDOG";
+        case ESP_RST_TASK_WDT:  return "TASK WATCHDOG (una tarea no volvio a tiempo)";
+        case ESP_RST_WDT:       return "OTRO WATCHDOG";
+        case ESP_RST_DEEPSLEEP: return "DEEP SLEEP";
+        case ESP_RST_BROWNOUT:  return "BROWNOUT: el voltaje cayo debajo del minimo -- revisar bateria/alimentacion";
+        case ESP_RST_SDIO:      return "SDIO";
+        default:                return "DESCONOCIDO";
+    }
+}
+
 void setup() {
     DEBUG_LINK.begin(SERIAL_BAUD_RATE);
+
+    // Da tiempo a que un monitor serial conectado por USB nativo termine de
+    // reconectarse tras un reset (el dispositivo USB se reenumera solo, con
+    // este modo, en cada reinicio). Sin esto se pierden justo los primeros
+    // logs — los que dicen POR QUÉ se reinició. Acotado: si no hay ningún
+    // monitor conectado (el caso normal en competencia, sin laptop), no
+    // bloquea más de kSerialWaitMs.
+    constexpr uint32_t kSerialWaitMs = 1500;
+    const uint32_t wait_start = millis();
+    while (!DEBUG_LINK && (millis() - wait_start) < kSerialWaitMs) {
+        delay(10);
+    }
     delay(200);
+
     DEBUG_LINK.println("\nAthena Rover 2026 - firmware ESP32-S3 AUTONOMO (sin Raspberry Pi)");
+    DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
+                       ResetReasonToString(esp_reset_reason()));
 
     // -- Selector de equipo: puente físico a GND en Pins::TEAM_SELECT -------
     // Se lee UNA sola vez aquí, antes de crear ninguna tarea: MissionTask
