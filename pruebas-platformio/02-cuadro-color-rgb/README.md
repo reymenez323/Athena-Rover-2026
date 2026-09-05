@@ -43,11 +43,9 @@ marca libres para ampliaciones:
 | G | **38** |
 | B | **3** (strapping de JTAG — solo importa su nivel al encender/resetear; como salida normal después de bootear no da problema) |
 
-**Polaridad sin confirmar todavía.** El código asume cátodo común (duty PWM
-alto = canal más brillante). Si al probarlo los colores salen invertidos —por
-ejemplo, "apagado" se ve más brillante que "rojo"— es ánodo común: cambiar
-`kRgbCommonAnode` a `true` al principio de `src/main.cpp`, no hace falta
-tocar nada más.
+**Polaridad confirmada:** el LED del robot es **cátodo común** (duty PWM alto
+= canal más brillante), que es como ya está el código (`kRgbCommonAnode` en
+`false`). La constante se conserva por si algún día se cambia el LED.
 
 ## Por qué NO se usó el dataset KNN del compañero
 
@@ -112,5 +110,8 @@ son el mismo punto de partida documentado allá. Para ajustarlos:
   ese bus y las resistencias pull-up (4.7 kΩ a 3.3 V) — ver la nota de I2C en
   `hardware/conexiones-esp32-s3.md`.
 - **El RGB no enciende o se queda en un color raro**: confirmar los 3 GPIO
-  (39/38/3) y probar `kRgbCommonAnode` en el otro estado.
+  (39/38/3). ⚠️ Ojo: esta prueba usa **GPIO 3** para el canal azul, pero el
+  firmware de vuelo lo movió a **GPIO 41** (le cedió el 3 al XSHUT del
+  VL53L1X). Si vas a correr esta prueba sobre el chasis ya cableado según
+  `hardware/conexiones-esp32-s3.md`, tenés que mover ese cable.
 - **Bordes del cuadro**: mismos síntomas y causas que en la prueba 01.

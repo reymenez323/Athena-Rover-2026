@@ -223,10 +223,10 @@ static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
 //  Un solo LED RGB en todo el chasis, así que solo el sensor delantero lo
 //  controla (el trasero solo reporta por Serial0, ver [8]).
 //
-//  POLARIDAD SIN CONFIRMAR: se asume cátodo común (duty alto = canal más
+//  POLARIDAD CONFIRMADA: el LED es CÁTODO COMÚN (duty alto = canal más
 //  brillante). Si al probarlo los colores salen invertidos (por ejemplo,
-//  "apagado" se ve más brillante que "rojo"), es ánodo común: cambiar
-//  kRgbCommonAnode a true abajo, no hace falta tocar el resto del código.
+//  brillante), que es el sentido natural del código. La constante se
+//  conserva por si algún día se cambia el LED por uno de ánodo común.
 
 constexpr bool kRgbCommonAnode = false;
 

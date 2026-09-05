@@ -364,12 +364,11 @@ GPIO **40**.
 | G | **38** | |
 | B | **41** | |
 
-> ⚠️ **Polaridad sin confirmar con el LED físico.** Tanto `firmware-esp32/`
-> como `pruebas-platformio/02-cuadro-color-rgb/` asumen **cátodo común**
-> (duty PWM alto = canal más brillante). Si al probarlo los colores salen
-> invertidos, es ánodo común — hay una constante (`kCommonAnode` /
-> `kRgbCommonAnode`) en cada uno para cambiarlo sin tocar el resto del
-> código. Actualizar esta nota una vez confirmado con el LED físico.
+> **Polaridad: cátodo común**, confirmado con el LED físico. Duty PWM alto =
+> canal más brillante, que es el sentido natural del código. Todos los
+> sketches del repo ya están en ese modo (`kCommonAnode` / `kRgbCommonAnode`
+> en `false`); la constante se conserva en cada uno por si algún día se
+> reemplaza el LED por uno de ánodo común.
 
 Cable de control: igual que el resto de señales digitales/PWM de bajo
 amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** o **Blanco**
@@ -453,9 +452,9 @@ depuración.
 
 1. **Solo el ESP32** por USB. Cargar el firmware, ver el mensaje de arranque en el
    puerto de depuración a 115200.
-2. **Añadir el LED RGB** (GPIO 39/38/3). Comprobar que la Raspberry Pi lo
-   enciende en rojo y en azul, y de paso confirmar la polaridad (cátodo vs.
-   ánodo común — ver la nota en la sección del LED RGB).
+2. **Añadir el LED RGB** (GPIO 39/38/41). Comprobar que la Raspberry Pi lo
+   enciende en rojo y en azul. La polaridad ya está confirmada (cátodo
+   común), así que no hay nada que ajustar acá.
 3. **Añadir el I2C**, un chip a la vez. El firmware avisa por la consola si el
    PCA9685 o algún TCS34725 no responde. **Dejar el VL53L1X para el final de
    este paso**, después de confirmar que el TCS34725 delantero ya funciona

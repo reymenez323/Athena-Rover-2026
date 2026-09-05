@@ -921,8 +921,10 @@ namespace RgbLed {
     constexpr uint8_t CH_G = 5;
     constexpr uint8_t CH_B = 6;
 
-    // POLARIDAD SIN CONFIRMAR con el LED físico: se asume cátodo común. Si
-    // los colores salen invertidos, cambiar a true (ver firmware-esp32/).
+    // POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty
+    // alto = canal más brillante (mismo caso que firmware-esp32/). La
+    // constante se conserva por si algún día se cambia el LED por uno de
+    // ánodo común.
     constexpr bool kCommonAnode = false;
 
     void Setup() {

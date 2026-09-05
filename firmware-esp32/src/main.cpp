@@ -1133,10 +1133,10 @@ namespace RgbLed {
     constexpr uint8_t CH_G = 5;
     constexpr uint8_t CH_B = 6;
 
-    // POLARIDAD SIN CONFIRMAR con el LED físico (mismo TODO que en la prueba
-    // 02): se asume cátodo común, duty alto = canal más brillante. Si al
-    // probarlo los colores salen invertidos, es ánodo común — cambiar esta
-    // constante a true, no hace falta tocar el resto de la tarea.
+    // POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty
+    // alto = canal más brillante, que es el sentido natural del código. La
+    // constante se conserva porque documenta esa decisión y deja la vuelta
+    // preparada si algún día se cambia el LED por uno de ánodo común.
     constexpr bool kCommonAnode = false;
 
     void Setup() {

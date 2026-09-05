@@ -140,7 +140,6 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 
 - [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una estimación)
 - [ ] Calibrar el sensor de color **trasero** (hoy comparte los umbrales del delantero)
-- [ ] Confirmar la polaridad del LED RGB (se asume cátodo común)
 - [ ] Resolver el retorno a la zona propia: hoy el robot avanza recto y solo
       reconoce su zona al pisarla. Necesita odometría o referencia visual. **Es
       el hueco más grande que queda.**

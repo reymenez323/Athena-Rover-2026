@@ -370,6 +370,8 @@ void MotorsStop() { DriveSides(0, 0); }
 //  [6] LED RGB — muestra la clasificación de color en vivo (diagnóstico)
 // ===========================================================================
 
+// El LED del robot es CÁTODO COMÚN (confirmado con el LED físico): duty
+// alto = canal más brillante. Mismo valor que firmware-esp32/.
 constexpr bool kCommonAnode = false;
 
 namespace RgbLed {

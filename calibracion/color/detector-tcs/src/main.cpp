@@ -211,10 +211,9 @@ ColorLabel Clasificar(const Tcs34725::Rgbc &s) {
 //  LED RGB — muestra la clasificación del sensor DELANTERO únicamente
 // ===========================================================================
 //
-// POLARIDAD SIN CONFIRMAR con el LED físico (mismo TODO que en
-// firmware-esp32/ y pruebas-platformio/02-cuadro-color-rgb/): se asume
-// cátodo común (duty alto = canal más brillante). Cambiar kCommonAnode a
-// true si los colores salen invertidos.
+// POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty alto
+// = canal más brillante. Mismo valor que firmware-esp32/. La constante se
+// conserva por si algún día se cambia el LED por uno de ánodo común.
 
 constexpr bool kCommonAnode = false;
 

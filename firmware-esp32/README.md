@@ -130,9 +130,6 @@ Todo lo marcado con `TODO` en el código:
   [`../calibracion/color/`](../calibracion/color/)).
 - `kDarkThreshold` de los QTR, con la luz del salón de competencia (ver
   [`../calibracion/reflectancia/`](../calibracion/reflectancia/)).
-- La polaridad del LED RGB (`RgbLed::kCommonAnode`): se asume cátodo común. Si
-  al probarlo los colores salen invertidos, cambiar esa constante a `true` y
-  listo, no hay que tocar nada más.
 
 Los ángulos de la pinza (`kClawOpenDeg`, `kClawClosedLlaveDeg`,
 `kClawClosedBanderaDeg`) **ya están calibrados** con

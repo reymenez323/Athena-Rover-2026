@@ -80,6 +80,6 @@ verdad — esto es solo una herramienta de banco.
 El módulo IR genérico no está en uso (no está cableado), así que este
 sketch no lo lee.
 
-> ⚠️ Polaridad del LED sin confirmar (mismo TODO que en `firmware-esp32/` y
-> `pruebas-platformio/02-cuadro-color-rgb/`): si los colores salen
-> invertidos, cambia `kCommonAnode` a `true` en `src/main.cpp`.
+> Polaridad del LED: **cátodo común**, confirmado con el LED físico. Es como
+> ya está el código (`kCommonAnode` en `false`), igual que en
+> `firmware-esp32/`.

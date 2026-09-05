@@ -93,11 +93,9 @@ uint16_t valuesB[1];
 // LED RGB
 // =====================================================
 //
-// POLARIDAD SIN CONFIRMAR con el LED físico (mismo TODO que en
-// firmware-esp32/ y pruebas-platformio/02-cuadro-color-rgb/): se asume
-// cátodo común (duty alto = canal más brillante). Si al probarlo los
-// colores salen invertidos, cambiar kCommonAnode a true — no hace falta
-// tocar el resto del código.
+// POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty alto
+// = canal más brillante. Mismo valor que firmware-esp32/. La constante se
+// conserva por si algún día se cambia el LED por uno de ánodo común.
 
 constexpr bool kCommonAnode = false;
 
