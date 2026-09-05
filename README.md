@@ -133,7 +133,7 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 - [x] Detección de la bandera rival con modelo FOMO entrenado en Edge Impulse
 - [x] Señalización de la bandera por LED, de punta a punta (cámara → LED)
 - [x] Máquina de estados de la misión, con las reglas de descalificación probadas
-- [x] Firmware autónomo para demostrar sin Raspberry Pi
+- [x] Firmware autónomo para demostrar sin Raspberry Pi, con la misión completa habilitada
 - [x] Umbrales de color recalibrados contra 970 muestras reales
 
 **Pendiente antes de competir:**
@@ -141,8 +141,6 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 - [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una estimación)
 - [ ] Calibrar el sensor de color **trasero** (hoy comparte los umbrales del delantero)
 - [ ] Confirmar la polaridad del LED RGB (se asume cátodo común)
-- [ ] Volver a poner `Mission::kMotionEnabled = true` en el firmware autónomo
-      (está en `false` por las pruebas con batería baja)
 - [ ] Resolver el retorno a la zona propia: hoy el robot avanza recto y solo
       reconoce su zona al pisarla. Necesita odometría o referencia visual. **Es
       el hueco más grande que queda.**

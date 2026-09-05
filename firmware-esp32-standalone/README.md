@@ -58,16 +58,20 @@ no se consigue el bus a tiempo, esa operación se da por fallida esta vuelta
 y se reintenta en la siguiente, mismo criterio que ya usan los drivers de
 este archivo.
 
-## Modo actual: SIN MOVIMIENTO (batería baja)
+## Interruptor de movimiento
 
-`Mission::kMotionEnabled` está en `false` en `src/main.cpp`. Con eso,
-`MissionTask` **no mueve motores ni el gripper** — solo sigue leyendo los
-sensores de color y reflectancia y mostrando la zona de piso por el LED
-(ver más abajo). Es el modo pedido para probar la identificación de línea
-sin gastar batería en los motores.
+`Mission::kMotionEnabled` en `src/main.cpp` decide si `MissionTask` mueve algo:
 
-Para volver a la misión completa (motores + gripper), cambiar esa constante
-a `true` y volver a subir el firmware.
+- **`true` (como está ahora):** misión completa — motores y gripper.
+- **`false`:** el robot **no mueve motores ni gripper**; solo sigue leyendo
+  los sensores de color y reflectancia y mostrando la zona de piso por el LED
+  (ver más abajo). Útil para probar la identificación de línea en el banco, o
+  para desactivar el robot sin desconectarle nada.
+
+> Estuvo en `false` un tiempo, mientras se investigaba por qué el robot se
+> reiniciaba solo. La causa resultó ser un **problema de conexión**, no la
+> batería baja que se sospechó al principio. Resuelto eso, el movimiento
+> quedó habilitado de nuevo.
 
 ## Qué se puede hacer sin Raspberry Pi, y qué no
 

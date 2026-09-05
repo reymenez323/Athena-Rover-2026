@@ -1012,11 +1012,16 @@ void LedTask(void *) {
 
 namespace Mission {
 
-// Interruptor de emergencia por batería baja: en false, MissionTask NO
-// mueve motores ni el gripper — solo lee los sensores y deja que el LED
-// (LedTask) siga mostrando la zona de piso. Poner en true para que el
-// robot vuelva a ejecutar la misión completa.
-constexpr bool kMotionEnabled = false;
+// Interruptor de emergencia: en false, MissionTask NO mueve motores ni el
+// gripper — solo lee los sensores y deja que el LED (LedTask) siga mostrando
+// la zona de piso. Sirve para probar sensores en el banco, o para desactivar
+// el robot sin desconectarle nada.
+//
+// Estuvo en false durante unas pruebas en las que el robot se reiniciaba
+// solo. La causa resultó ser un problema de CONEXIÓN, no de batería baja
+// como se sospechó al principio, así que ya no hay motivo para dejarlo
+// apagado: la misión completa está habilitada.
+constexpr bool kMotionEnabled = true;
 
 // Velocidades y umbrales — mismo rol que ControlConfig en decision.py,
 // pero constexpr porque aquí no hay archivo de configuración que cargar.
