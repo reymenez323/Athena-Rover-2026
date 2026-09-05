@@ -24,6 +24,20 @@ Para que nadie pierda una ronda depurando un nombre de dispositivo,
 ``serial_port`` acepta el valor especial ``"auto"``: se prueban los candidatos
 de ``PUERTOS_CANDIDATOS`` en orden y se usa el primero que abra. Un puerto
 explícito en la configuración se respeta tal cual y no se sustituye.
+
+PERMISOS EN RASPBERRY PI OS
+---------------------------
+Abrir ``/dev/ttyACM*`` o ``/dev/ttyUSB*`` exige pertenecer al grupo
+``dialout``. En Raspberry Pi OS Bookworm ya no existe el usuario ``pi`` por
+defecto — cada quien crea el suyo al instalar — y un usuario nuevo puede
+quedar fuera de ese grupo.
+
+Ese caso se trata aparte a propósito: sin distinguirlo, un "permiso denegado"
+es un ``OSError`` como cualquier otro y se confundiría con "el cable no está
+puesto", dejando al robot mudo y reintentando en silencio para siempre. Se
+arregla una sola vez, y hay que cerrar sesión para que tome efecto::
+
+    sudo usermod -aG dialout $USER
 """
 
 from __future__ import annotations
@@ -65,6 +79,17 @@ PUERTOS_CANDIDATOS: tuple[str, ...] = (
 PUERTO_AUTO = "auto"
 
 
+def _es_permiso_denegado(exc: Exception) -> bool:
+    """¿El puerto existe pero el sistema no nos deja abrirlo?
+
+    pyserial a veces envuelve el error del sistema en un ``SerialException``,
+    así que no alcanza con mirar el tipo: se revisa también el texto.
+    """
+    if isinstance(exc, PermissionError):
+        return True
+    return "permission denied" in str(exc).lower()
+
+
 class EspLink:
     def __init__(self, port: str = PUERTO_AUTO, baud: int = 115200) -> None:
         self._configured_port = port
@@ -73,6 +98,7 @@ class EspLink:
         self._serial: serial.Serial | None = None
         self._decoder = PacketDecoder()
         self._last_attempt = 0.0
+        self._aviso_permisos = False    # el aviso de 'dialout' se da una vez
         self.telemetry_log: deque[Telemetry] = deque(maxlen=200)
 
     @property
@@ -106,6 +132,18 @@ class EspLink:
                 # puede permitirse esperar al ESP32: si no hay datos, sigue.
                 self._serial = serial.Serial(candidato, self._baud, timeout=0, write_timeout=0.1)
             except (serial.SerialException, OSError) as exc:
+                # "Permiso denegado" no es "no está conectado": el puerto SÍ
+                # existe y el problema es del sistema, no del cable. Se avisa
+                # fuerte y una sola vez, porque si no queda enterrado en un
+                # log de depuración mientras el robot parece simplemente mudo.
+                if _es_permiso_denegado(exc):
+                    if not self._aviso_permisos:
+                        self._aviso_permisos = True
+                        log.error(
+                            "Permiso denegado al abrir %s. Falta estar en el grupo "
+                            "'dialout'. Corré:  sudo usermod -aG dialout $USER  "
+                            "y volvé a iniciar sesión.", candidato,
+                        )
                 ultimo_error = exc
                 continue
             self._port_name = candidato

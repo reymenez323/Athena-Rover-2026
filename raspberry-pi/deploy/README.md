@@ -16,9 +16,16 @@ que pierde la ronda de inmediato según el reglamento.
 Desde `raspberry-pi/` en la Pi (por SSH):
 
 ```bash
-whoami   # anota tu usuario, lo vas a necesitar en el paso siguiente
+uname -m   # tiene que decir aarch64: el .eim no corre en un sistema de 32 bits
+whoami     # anota tu usuario, lo vas a necesitar en el paso siguiente
+groups     # tiene que aparecer 'dialout', si no: sudo usermod -aG dialout $USER
 ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null   # solo para saber qué hay conectado
 ```
+
+> El servicio corre como tu usuario (`User=` en el .service), así que necesita
+> el grupo **`dialout`** para abrir el puerto del ESP32. Si lo acabás de
+> agregar, cerrá sesión y volvé a entrar antes de instalar el servicio: un
+> `usermod` no afecta a las sesiones ya abiertas.
 
 > El puerto **no hace falta configurarlo**: `config.py` trae `"auto"`, que
 > prueba ttyACM0/1 y ttyUSB0/1 y se queda con el primero que abra. Solo poné

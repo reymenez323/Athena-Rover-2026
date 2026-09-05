@@ -1,8 +1,14 @@
 # Dependencias de la Raspberry Pi 4B.
 #
-# Instalación recomendada (Raspberry Pi OS de 64 bits):
+# EL SISTEMA TIENE QUE SER RASPBERRY PI OS DE 64 BITS. El modelo .eim es un
+# ejecutable AArch64 y no corre en 32 bits; además, el marcador de plataforma
+# de edge_impulse_linux (más abajo) hace que pip lo salte EN SILENCIO en un
+# sistema de 32 bits. Comprobalo con `uname -m`: tiene que decir aarch64.
+#
+# Instalación:
 #
 #   sudo apt install python3-opencv python3-numpy python3-serial
+#   sudo usermod -aG dialout $USER      # para abrir /dev/ttyACM* y /dev/ttyUSB*
 #
 # Se prefiere apt para OpenCV y NumPy: los paquetes del sistema vienen
 # compilados con las optimizaciones NEON del procesador ARM. Instalarlos con

@@ -13,15 +13,13 @@ poder ver banderas).
 | Entrada | 120×120, RGB, modo *Squash* |
 | Clases | `CILINDRO_ROJO`, `CILINDRO_AZUL` |
 | Entrenado en | Edge Impulse Studio, proyecto `athena-rover-banderas` (cuenta de Montse) |
-| Dataset | ~612 fotos: 445 de otros equipos (cámara espcam) + 167 tomadas con la cámara del robot ⚠️ |
+| Dataset | ~612 fotos: 445 de otros equipos (cámara espcam) + 167 tomadas con la cámara real del robot |
 | Export | Deployment target **"Linux (AARCH64)"** |
 
-> ⚠️ **Cuál cámara tomó esas 167 fotos está sin confirmar.** El registro de
-> la sesión de entrenamiento dice "Argom CAM20"; el equipo identificó después
-> la cámara física como una **Xtrike Me XPC-01**. Si no son la misma, esas
-> fotos no son del dominio real del robot y el modelo puede rendir peor en
-> pista de lo que dicen sus métricas. Ver
-> [`docs/handoff-vision-edge-impulse.md`](../../docs/handoff-vision-edge-impulse.md).
+> Las 167 fotos buenas se tomaron con la cámara que el robot lleva de verdad,
+> así que ese trozo del dataset sí es del dominio real. La cámara aparece con
+> dos nombres —**Argom CAM20** y **Xtrike Me XPC-01**— pero es la misma:
+> mismo fabricante, distinto vendedor.
 
 **Sí se versiona en git**, aunque pesa 13 MB. Es la excepción del
 `.gitignore`, y es deliberado: no se puede regenerar sin la cuenta de Edge

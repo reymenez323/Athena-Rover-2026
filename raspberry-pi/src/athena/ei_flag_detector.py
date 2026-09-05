@@ -15,6 +15,15 @@ REQUISITOS en la Raspberry Pi (no hacen falta en una laptop de desarrollo)::
     pip3 install edge_impulse_linux
     chmod +x models/athena_ei_banderas.eim   # el .eim necesita permiso de ejecución
 
+⚠️ HACE FALTA RASPBERRY PI OS DE **64 BITS**. El ``.eim`` no es un archivo de
+datos: es un ejecutable ELF compilado para AArch64 (así se exportó de Edge
+Impulse, target "Linux (AARCH64)"). En un Raspberry Pi OS de 32 bits —que el
+instalador sigue ofreciendo— no corre, y el fallo es confuso de dos maneras a
+la vez: ``requirements.txt`` marca ``edge_impulse_linux`` con
+``platform_machine == "aarch64"``, así que pip lo salta en silencio, y lo que
+se ve es "falta el SDK" en vez de "el sistema es de 32 bits". Por eso se
+comprueba explícitamente al construir el detector.
+
 COORDENADAS -- esto es lo más fácil de meter la pata: las cajas que devuelve
 ``detect()`` NO están en la resolución de la cámara. El SDK de Edge Impulse
 reescala/recorta el frame al tamaño que configuraste en el Impulse (120x120,
@@ -27,6 +36,7 @@ que medirlo contra esas dimensiones, no contra las de la cámara.
 from __future__ import annotations
 
 import logging
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +61,23 @@ class EiFlagDetector:
     """Envuelve ``ImageImpulseRunner`` del SDK ``edge_impulse_linux``."""
 
     def __init__(self, model_path: str | Path, min_confidence: float = 0.6) -> None:
+        # Se comprueba ANTES de importar el SDK: en un sistema de 32 bits ese
+        # import falla por "no instalado" (pip lo saltó por el marcador de
+        # plataforma) y ese mensaje mandaría a instalar algo que tampoco iba a
+        # funcionar. Mejor decir la causa de verdad.
+        #
+        # Se listan las arquitecturas MALAS, no las buenas: así una laptop de
+        # desarrollo (x86_64, AMD64, Apple Silicon) no queda bloqueada por no
+        # estar en una lista blanca.
+        maquina = platform.machine().lower()
+        if maquina.startswith(("armv6", "armv7", "armv8l")):
+            raise RuntimeError(
+                f"El modelo de Edge Impulse es un ejecutable de 64 bits (AArch64) "
+                f"y este sistema es '{platform.machine()}', de 32 bits. Hace falta "
+                f"Raspberry Pi OS de 64 BITS: reinstalá eligiendo 'Raspberry Pi OS "
+                f"(64-bit)' en Raspberry Pi Imager."
+            )
+
         try:
             from edge_impulse_linux.image import ImageImpulseRunner
         except ImportError as exc:

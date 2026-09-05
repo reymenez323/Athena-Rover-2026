@@ -68,6 +68,8 @@ Athena-Rover-2026/
 │                               un descuido.
 │
 ├── raspberry-pi/               Visión y lógica de misión (Python).
+│                               Corre sobre Raspberry Pi OS de 64 BITS: el
+│                               modelo .eim es un ejecutable AArch64.
 │   ├── src/athena/              paquete principal
 │   ├── scripts/                 el bucle del robot + herramienta de calibrado
 │   ├── models/                  el .eim entrenado en Edge Impulse
@@ -140,8 +142,6 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 
 - [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una
       estimación; el procedimiento de 5 minutos está en su docstring)
-- [ ] Confirmar qué cámara lleva el robot: el registro de entrenamiento dice
-      Argom CAM20, el equipo identificó una Xtrike Me XPC-01
 - [ ] Calibrar el sensor de color **trasero** (hoy comparte los umbrales del delantero)
 - [ ] Resolver el retorno a la zona propia: hoy el robot avanza recto y solo
       reconoce su zona al pisarla. Necesita odometría o referencia visual. **Es

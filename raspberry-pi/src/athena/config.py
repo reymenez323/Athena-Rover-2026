@@ -45,9 +45,12 @@ class GeometryConfig:
 
     LA CÁMARA
     ---------
-    Xtrike Me XPC-01: webcam USB 2.0, máximo 640x480, MJPG o YUY2 — que es
-    exactamente lo que pide ``CameraConfig``, así que ahí no hay nada que
-    ajustar.
+    Webcam USB 2.0 que se vende con dos nombres —**Argom CAM20** y **Xtrike Me
+    XPC-01**— pero es la misma: mismo fabricante, distinto revendedor. Si
+    buscás su ficha vas a encontrar las dos, y no son cámaras distintas.
+
+    Entrega 640x480 en MJPG o YUY2, que es exactamente lo que pide
+    ``CameraConfig``, así que ahí no hay nada que ajustar.
 
     ⚠️ Su ficha técnica trae DOS campos mal etiquetados, y los dos son
     trampas para quien venga a calibrar esto:

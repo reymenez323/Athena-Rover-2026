@@ -49,21 +49,51 @@ raspberry-pi/
 └── tests/                  61 tests, ninguno necesita hardware
 ```
 
-## Instalación en la Raspberry Pi
+## El sistema: Raspberry Pi OS de 64 bits
+
+**Los 64 bits no son opcionales.** El modelo `.eim` no es un archivo de datos:
+es un **ejecutable ELF compilado para AArch64** (así se exporta de Edge
+Impulse). En un Raspberry Pi OS de 32 bits no corre.
+
+Y falla de forma engañosa: `requirements.txt` marca `edge_impulse_linux` con
+`platform_machine == "aarch64"`, así que en 32 bits **pip lo salta en
+silencio** y el error que ves es "falta el SDK" — te manda a instalar algo que
+tampoco iba a funcionar. Por eso `ei_flag_detector.py` comprueba la
+arquitectura y lo dice claro.
+
+En Raspberry Pi Imager, elegí **"Raspberry Pi OS (64-bit)"**. Para verificarlo
+en una Pi ya instalada:
+
+```bash
+uname -m        # tiene que decir aarch64. Si dice armv7l, es de 32 bits.
+```
+
+## Instalación
 
 ```bash
 sudo apt install python3-opencv python3-numpy python3-serial
 sudo apt install libatlas-base-dev libportaudio0 libportaudio2 libportaudiocpp0 portaudio19-dev
 pip install --break-system-packages edge_impulse_linux
 chmod +x models/athena_ei_banderas.eim
+sudo usermod -aG dialout $USER     # después: cerrar sesión y volver a entrar
 ```
 
-Se usa `apt` para OpenCV y NumPy a propósito: los paquetes del sistema vienen
-compilados con las optimizaciones NEON del ARM. Los de `pip` son ruedas
-genéricas y corren bastante más lento.
+Cuatro cosas de esa lista que valen una explicación:
 
-El `.eim` **necesita permiso de ejecución** — es un binario, no un archivo de
-datos. Es el error más fácil de cometer al clonar el repo en una Pi nueva.
+- **`apt` para OpenCV y NumPy**, no `pip`: los paquetes del sistema vienen
+  compilados con las optimizaciones NEON del ARM. Los de `pip` son ruedas
+  genéricas y corren bastante más lento.
+- **`--break-system-packages`** hace falta desde Bookworm: Raspberry Pi OS
+  marca su Python como *externally managed* (PEP 668) y sin ese flag `pip`
+  se niega a instalar nada.
+- **`chmod +x` en el `.eim`**: es un binario y al clonar el repo llega sin
+  permiso de ejecución. Es el error más fácil de cometer en una Pi nueva.
+- **El grupo `dialout`** es el que permite abrir `/dev/ttyACM*` y
+  `/dev/ttyUSB*`. En Bookworm ya no existe el usuario `pi` por defecto —cada
+  quien crea el suyo al instalar— y un usuario nuevo puede quedar fuera. Sin
+  esto el robot arranca, no da error visible y **se queda mudo**: `link.py`
+  detecta ese caso concreto y lo avisa en el log, pero es más rápido no
+  tropezarse.
 
 ## Uso
 
