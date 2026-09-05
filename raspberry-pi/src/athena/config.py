@@ -40,11 +40,49 @@ class GeometryConfig:
 
     Sirve para decidir cuándo frenar y acercarse. La distancia FINA, la que
     dispara el cierre de la pinza, no sale de aquí sino del ToF (VL53L1X) del
-    ESP32, que mide de verdad en vez de estimar por tamaño aparente.
+    ESP32, que mide de verdad en vez de estimar por tamaño aparente. O sea:
+    que ``focal_px`` esté sin calibrar degrada el control, no lo rompe.
 
-    TODO: medir la focal real. Los valores por defecto son de una webcam
-    típica de 640x480 con ~60 grados de campo de visión horizontal; sirven
-    para arrancar, no para competir.
+    LA CÁMARA
+    ---------
+    Xtrike Me XPC-01: webcam USB 2.0, máximo 640x480, MJPG o YUY2 — que es
+    exactamente lo que pide ``CameraConfig``, así que ahí no hay nada que
+    ajustar.
+
+    ⚠️ Su ficha técnica trae DOS campos mal etiquetados, y los dos son
+    trampas para quien venga a calibrar esto:
+
+    * **"Focal Length: 70-90 cm"** NO es la focal: es la distancia de uso
+      recomendada (una webcam pensada para una cara a ~80 cm). Poner 70 en
+      ``focal_px`` daría distancias absurdas.
+    * **"Aperture: 2.8 mm"** casi seguro SÍ es la focal del lente. Una
+      apertura se expresa como f/N y no lleva unidades de longitud; 2.8 mm en
+      cambio es un valor típico de focal para una webcam.
+
+    Tomando f = 2.8 mm, ``focal_px = f * ancho_px / ancho_sensor_mm``. El
+    tamaño del sensor NO está en la ficha, y es lo que decide el resultado:
+
+    ===============  ==================================
+    Sensor           focal_px (a 320 px de ancho)
+    ===============  ==================================
+    1/4"  (3.6 mm)   ~249
+    1/5"  (2.88 mm)  ~311
+    1/6"  (2.4 mm)   ~373
+    ===============  ==================================
+
+    El valor por defecto (280) cae dentro de ese rango, así que no es un
+    disparate — pero la horquilla es de ±25%, y la distancia estimada escala
+    directo con esto.
+
+    CÓMO MEDIRLA DE VERDAD (5 minutos, y vale más que toda la tabla de
+    arriba): poné la bandera a una distancia D conocida y medida con cinta
+    métrica (por ejemplo 500 mm), mirá la altura h en píxeles de su caja en
+    ``run_rover.py --ver``, y despejá::
+
+        focal_px = h * D / 150.0        # 150 mm = alto real del cilindro
+
+    Repetilo a dos o tres distancias y promediá. Ese número, medido con ESTA
+    cámara y a ESTE ancho de frame, reemplaza al de abajo.
     """
 
     focal_px: float = 280.0           # en píxeles, referida a CameraConfig.process_width

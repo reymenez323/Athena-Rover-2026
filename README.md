@@ -138,7 +138,10 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 
 **Pendiente antes de competir:**
 
-- [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una estimación)
+- [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una
+      estimación; el procedimiento de 5 minutos está en su docstring)
+- [ ] Confirmar qué cámara lleva el robot: el registro de entrenamiento dice
+      Argom CAM20, el equipo identificó una Xtrike Me XPC-01
 - [ ] Calibrar el sensor de color **trasero** (hoy comparte los umbrales del delantero)
 - [ ] Resolver el retorno a la zona propia: hoy el robot avanza recto y solo
       reconoce su zona al pisarla. Necesita odometría o referencia visual. **Es

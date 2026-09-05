@@ -18,6 +18,19 @@
 > | "Las 577 fotos y sus rutas desordenadas están en GitHub" | Borradas del repo: el entrenamiento se hace en Edge Impulse Studio, no acá. |
 > | "Exportar como TensorFlow Lite (int8)" | Se exportó como **Linux (AARCH64)** — el `.eim` que vive en `raspberry-pi/models/`. |
 >
+> **⚠️ Conflicto sin resolver sobre la cámara.** Este documento dice que la
+> cámara del robot es una **Argom CAM20** de 720p, y que con ella se tomaron
+> las 167 fotos de la segunda tanda. Después el equipo identificó la cámara
+> física como una **Xtrike Me XPC-01**, de 640x480 máximo. Son dos cámaras
+> distintas y no puede haber sido las dos.
+>
+> Importa por dos razones: (1) si las fotos de entrenamiento se tomaron con
+> una cámara que no es la que lleva el robot, vuelve el mismo riesgo de
+> transferencia de dominio que ya dio problemas con las fotos de espcam; y
+> (2) la focal a calibrar depende del lente que sea. Hay que confirmar cuál
+> está montada de verdad. Lo que sí está confirmado es que
+> ``CameraConfig`` (640x480, MJPG) coincide con la XPC-01.
+>
 > Para el estado real, ver [`../raspberry-pi/README.md`](../raspberry-pi/README.md)
 > y [`../raspberry-pi/models/README.md`](../raspberry-pi/models/README.md).
 

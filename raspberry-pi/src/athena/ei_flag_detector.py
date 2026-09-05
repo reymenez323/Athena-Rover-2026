@@ -1,7 +1,7 @@
 """Puente hacia el modelo de banderas entrenado en Edge Impulse (FOMO).
 
 Es la ÚNICA fuente de percepción por cámara del robot: corre el modelo FOMO
-entrenado en Edge Impulse (con fotos tomadas con la Argom CAM20 real) y
+entrenado en Edge Impulse (con fotos tomadas con la cámara del robot) y
 devuelve directamente las cajas de las banderas rojas y azules sobre el
 frame. El entrenamiento se hizo FUERA de este repo, en Edge Impulse Studio;
 acá solo se ejecuta el ``.eim`` ya exportado.
