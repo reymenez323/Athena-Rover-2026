@@ -9,7 +9,7 @@ color clasifica lo que ve al pasar sobre las zonas de la pista. Como solo hay
 
 Es un sketch de banco, independiente del firmware principal y de la prueba
 01: sirve para validar el driver TCS34725 + el RGB con hardware real antes de
-integrarlos a las 7 tareas de FreeRTOS de `firmware-esp32/`. Usa los mismos
+integrarlos a las 8 tareas de FreeRTOS de `firmware-esp32/`. Usa los mismos
 pines documentados en
 [`../../hardware/conexiones-esp32-s3.md`](../../hardware/conexiones-esp32-s3.md),
 más el LED RGB (ver abajo, todavía no está en esa doc).

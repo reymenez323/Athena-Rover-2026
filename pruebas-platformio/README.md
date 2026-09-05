@@ -2,7 +2,7 @@
 
 Proyectos PlatformIO pequeños y **independientes entre sí y del firmware
 principal** (`firmware-esp32/`). Cada uno valida un solo comportamiento con
-hardware real antes de integrarlo a las 7 tareas de FreeRTOS del firmware
+hardware real antes de integrarlo a las 8 tareas de FreeRTOS del firmware
 final. Reutilizan los pines de [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md)
 para poder cablearse directo sobre el chasis ya armado.
 
@@ -16,8 +16,8 @@ se abre y se compila por separado, no como sub-proyecto de otro.
 | [`01-mantente-en-cuadro/`](01-mantente-en-cuadro/) | El QTR derecho (solo ese, ver su README) + los 2 L298N: detectar el borde de cinta negra, retroceder y girar 180° para quedarse dentro del cuadrado. |
 | [`02-cuadro-color-rgb/`](02-cuadro-color-rgb/) | Lo anterior + los 2 TCS34725 clasificando color (umbrales, sin KNN) + un LED RGB mostrando el color del sensor delantero. |
 | [`03-motores-adelante/`](03-motores-adelante/) | Solo los 2 L298N: los 4 motores adelante a velocidad máxima constante, sin sensores ni lógica. Prueba mínima de cableado y de subida. |
-| [`04-servos-a-cero/`](04-servos-a-cero/) | Solo el PCA9685: manda los 2 servos del gripper (pinza y elevación) a 0°, referencia mecánica fija para montar los cuernos del servo. |
-| [`05-evitador-linea/`](05-evitador-linea/) | Los 2 QTR (con prioridad) + los 2 TCS34725 (de respaldo, solo para NEGRO, umbrales calibrados con datos reales — ver `calibracion-color/detector-tcs/`) + los 2 L298N: evitador reactivo que gira sobre su eje sin temporizadores fijos, siempre dentro del cuadrado. |
+| [`04-servos-a-cero/`](04-servos-a-cero/) | Solo el PCA9685: manda el servo del gripper a 0°, referencia mecánica fija para montar el cuerno del servo. |
+| [`05-evitador-linea/`](05-evitador-linea/) | Los 2 QTR (con prioridad) + los 2 TCS34725 (de respaldo, solo para NEGRO, umbrales calibrados con datos reales — ver `calibracion/color/detector-tcs/`) + los 2 L298N: evitador reactivo que gira sobre su eje sin temporizadores fijos, siempre dentro del cuadrado. |
 | [`06-calibracion-gripper/`](06-calibracion-gripper/) | Solo el PCA9685: mueve el servo de la pinza (canal 0, o cualquier canal con `scan`) por comandos del monitor serial para encontrar a mano los ángulos que agarran el cilindro (asta de la bandera) y la llave (cubo). Ángulos ya integrados en `firmware-esp32/src/main.cpp` (`GripperTask`: `kClawOpenDeg`, `kClawClosedLlaveDeg`, `kClawClosedBanderaDeg`). |
 
 ## Ideas para próximas pruebas

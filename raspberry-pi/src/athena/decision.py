@@ -81,6 +81,15 @@ class Commands:
     left: int = 0
     right: int = 0
     gripper: GripperAction | None = None
+    # ¿La cámara ve AHORA la bandera contraria? Viaja al ESP32 como
+    # CMD_FLAG_SIGNAL y es lo que hace destellar el LED: el ESP32 no tiene
+    # cámara, así que sin esto no hay forma de cumplir el reto de
+    # demostración "detectar la bandera del oponente y señalizar su
+    # detección". Se marca en cuanto se ve, sin esperar a ninguna fase: lo
+    # que descalifica según el reglamento es IR a buscar la bandera antes de
+    # depositar la llave, no verla de pasada — y de ir o no ir se encarga la
+    # máquina de estados, no este campo.
+    bandera_a_la_vista: bool = False
     motivo: str = ""                  # para el log; no viaja por el cable
 
     @property
@@ -104,6 +113,20 @@ class DecisionMaker:
     ) -> Commands:
         """Decide los comandos de este ciclo y avanza la máquina de estados."""
 
+        # La señal de "veo la bandera contraria" es independiente de la fase y
+        # de la evasión de borde: se calcula una sola vez aquí y se pega a los
+        # comandos que salgan, sea cual sea el camino que tomen abajo.
+        a_la_vista = perception.best(self.state.bandera_objetivo) is not None
+        return replace(self._decidir(perception, color, reflect, tof),
+                       bandera_a_la_vista=a_la_vista)
+
+    def _decidir(
+        self,
+        perception: Perception,
+        color: ColorTelemetry | None,
+        reflect: ReflectTelemetry | None,
+        tof: ToFTelemetry | None,
+    ) -> Commands:
         # --- Prioridad 1: no salirse de la pista ---------------------------
         evasion = self._evadir_borde(reflect)
         if evasion is not None:

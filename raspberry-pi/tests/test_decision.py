@@ -265,3 +265,63 @@ def test_la_busqueda_alterna_de_sentido_para_no_dar_vueltas_siempre_igual():
     for _ in range(90):
         d.step(percepcion(), None, None)
     assert d.state.sentido_busqueda == -sentido_inicial
+
+
+# ---------------------------------------------------------------------------
+# Señalizar la bandera del oponente (reto de la demostración)
+# ---------------------------------------------------------------------------
+#
+# El ESP32 no tiene cámara: esta señal es la única forma de que sepa que hay
+# algo que anunciar con el LED. Va en Commands.bandera_a_la_vista y sale al
+# cable como CMD_FLAG_SIGNAL (ver run_rover.py).
+
+
+def test_ver_la_bandera_contraria_levanta_la_senal():
+    d = DecisionMaker(CFG, RobotState(phase=Phase.BUSCAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    cmd = d.step(percepcion(deteccion(ObjectClass.BANDERA_AZUL)), None, None)
+    assert cmd.bandera_a_la_vista is True
+
+
+def test_sin_bandera_a_la_vista_la_senal_queda_baja():
+    d = DecisionMaker(CFG, RobotState(phase=Phase.BUSCAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.bandera_a_la_vista is False
+
+
+def test_la_bandera_propia_no_levanta_la_senal():
+    """Solo cuenta la del oponente: ver la propia no es detectar nada."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.BUSCAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    cmd = d.step(percepcion(deteccion(ObjectClass.BANDERA_ROJA)), None, None)
+    assert cmd.bandera_a_la_vista is False
+
+
+def test_la_senal_se_levanta_aunque_la_llave_no_este_depositada():
+    """Ver la bandera no es buscarla, y el LED tiene que poder anunciarlo.
+
+    Lo que descalifica según el reglamento es IR a buscar la bandera antes de
+    depositar la llave. Este test fija las dos mitades de esa distinción: la
+    señal sube, pero la fase NO avanza hacia la búsqueda.
+    """
+    d = DecisionMaker(CFG, RobotState(phase=Phase.BUSCAR_ZONA_NEUTRA, team=TeamColor.RED))
+    cmd = d.step(percepcion(deteccion(ObjectClass.BANDERA_AZUL)), color(ColorLabel.FLOOR), None)
+
+    assert cmd.bandera_a_la_vista is True
+    assert d.state.phase is Phase.BUSCAR_ZONA_NEUTRA
+    assert d.state.llave_depositada is False
+
+
+def test_la_senal_sobrevive_a_la_evasion_de_borde():
+    """La evasión corta el paso a todo lo demás; la señal no es 'lo demás'.
+
+    Se calcula fuera de la máquina de estados justamente para esto: el robot
+    puede estar retrocediendo del borde y seguir anunciando que ve la bandera.
+    """
+    d = DecisionMaker(CFG, RobotState(phase=Phase.BUSCAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    cmd = d.step(percepcion(deteccion(ObjectClass.BANDERA_AZUL)), None, reflect(izq=True, der=True))
+
+    assert cmd.left < 0 and cmd.right < 0          # sí, está retrocediendo
+    assert cmd.bandera_a_la_vista is True           # y sí, sigue señalizando

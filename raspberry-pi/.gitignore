@@ -1,17 +1,19 @@
-# Recortes generados a partir de data/raw/ — se pueden regenerar, no se versionan.
-data/crops/
-# Modelos entrenados: pesan y se regeneran con scripts/train_classifier.py
+# El modelo de banderas de Edge Impulse SÍ se versiona: pesa 13 MB, pero no
+# se puede regenerar sin la cuenta de Edge Impulse de Montse, y sin él
+# run_rover.py no arranca. Tenerlo en el repo es lo que hace que un clon
+# nuevo compita el mismo día.
+!models/athena_ei_banderas.eim
+# Cualquier OTRO modelo (pruebas, versiones viejas) no se versiona.
+models/*.eim
 models/*.tflite
 models/*.h5
 models/*.keras
-# Modelo de banderas exportado de Edge Impulse (target Linux AARCH64): pesa
-# ~13 MB y se regenera reentrenando en Edge Impulse Studio y exportando de
-# nuevo, no hace falta versionarlo.
-models/*.eim
+
 # Estado del despliegue (qué equipo corre en ESTA Pi ahora, y en qué puerto
 # serial está conectado ESTE ESP32), no del código.
 deploy/equipo.env
 config/rover.json
+
 __pycache__/
 *.py[cod]
 .venv/

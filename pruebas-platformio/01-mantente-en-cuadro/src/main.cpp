@@ -11,23 +11,23 @@
 //  el borde.
 //
 //  Usa SOLO el sensor derecho (QTR_RIGHT_OUT) — es el que confirmamos que
-//  mide bien (ver calibracion-ir/). El sensor izquierdo NO se lee en
+//  mide bien (ver calibracion/reflectancia/). El sensor izquierdo NO se lee en
 //  ningún punto de este archivo: no aportaba nada a la decisión, así que
 //  se le quitó también la calibración y la telemetría (ver [1]).
 //
 //  Es un sketch de banco, deliberadamente simple (setup/loop, sin FreeRTOS
 //  ni colas): sirve para validar el comportamiento de borde ANTES de
-//  integrarlo a las 7 tareas de firmware-esp32/src/main.cpp. Usa los MISMOS
+//  integrarlo a las 8 tareas de firmware-esp32/src/main.cpp. Usa los MISMOS
 //  pines que el firmware principal (ver hardware/conexiones-esp32-s3.md) así
 //  que corre tal cual sobre el chasis ya cableado.
 //
 //  SOBRE EL UMBRAL DE "esto es cinta negra":
-//  Como SOLO decide el sensor derecho (= "sensor B" en calibracion-ir/, ver
+//  Como SOLO decide el sensor derecho (= "sensor B" en calibracion/reflectancia/, ver
 //  [4]), el umbral de reserva se saca del análisis de ESE sensor, no del
 //  izquierdo. Los logs más recientes con la atenuación del ADC ya fijada
-//  (calibracion-ir/data_logs/IR_NEGRO_2026-08-28_15-36-20.csv e
+//  (calibracion/reflectancia/data_logs/IR_NEGRO_2026-08-28_15-36-20.csv e
 //  IR_GRIS_2026-08-28_15-33-07.csv — ver el análisis completo en
-//  calibracion-ir/detector-color/src/main.cpp) dan, para el sensor B:
+//  calibracion/reflectancia/detector-negro-gris/src/main.cpp) dan, para el sensor B:
 //  NEGRO 2781–2938, GRIS 2747–2935 — un solape amplio, porque esas
 //  muestras se tomaron a mano, sin altura fija. Con el sensor sostenido a
 //  mano a distintas alturas, la reflectancia que ve el QTR depende
@@ -38,7 +38,7 @@
 //
 //  Umbral de reserva (si el arranque no calibra, ver [2]): 2910 — el mejor
 //  punto de corte encontrado sobre esos mismos logs del sensor B (52/740
-//  errores; ver el detalle en calibracion-ir/detector-color/src/main.cpp).
+//  errores; ver el detalle en calibracion/reflectancia/detector-negro-gris/src/main.cpp).
 //  OJO: antes de este ajuste, esta constante valía 3700 — un número sacado
 //  del sensor IZQUIERDO (A), que dejó de decidir nada desde que el commit
 //  c4f9b47 pasó la decisión al sensor derecho (B) y nunca se actualizó

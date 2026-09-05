@@ -1,16 +1,29 @@
-"""Enlace serial con el ESP32-S3, con reconexión automática.
+"""Enlace serial con el ESP32-S3, con reconexión y descubrimiento de puerto.
 
-El ESP32-S3 se conecta por su puerto USB nativo, que la Raspberry Pi ve como
-``/dev/ttyACM0``. Detalle importante de ese modo: cuando el ESP32 se reinicia,
-el dispositivo USB desaparece y vuelve a aparecer. Un programa que abra el
-puerto una sola vez al arrancar se queda mudo para siempre después del primer
-reset del microcontrolador — y eso pasa, por ejemplo, cada vez que se les
-reprograma el firmware entre rondas.
+Cuando el ESP32 se reinicia, su dispositivo USB desaparece y vuelve a
+aparecer. Un programa que abra el puerto una sola vez al arrancar se queda
+mudo para siempre después del primer reset del microcontrolador — y eso pasa,
+por ejemplo, cada vez que se reprograma el firmware entre rondas.
 
 Por eso esta clase nunca da el puerto por perdido: si se cae, sigue
 reintentando en segundo plano mientras el resto del programa continúa. Las
 escrituras fallidas se descartan en silencio; la lógica de decisión reenvía
 comandos constantemente, así que no vale la pena encolar los viejos.
+
+QUÉ PUERTO ES
+-------------
+Depende de por dónde esté enchufado el cable, y en la práctica cambió más de
+una vez entre sesiones de trabajo:
+
+* **/dev/ttyACM0** — puerto USB **nativo** del ESP32-S3 (GPIO 19/20), que es
+  el que usa el firmware de vuelo (``ARDUINO_USB_CDC_ON_BOOT=1``).
+* **/dev/ttyUSB0** — puerto de **programación** del DevKitC-1, que pasa por un
+  conversor USB-serie (CP2102/CH340) y por eso aparece con otro nombre.
+
+Para que nadie pierda una ronda depurando un nombre de dispositivo,
+``serial_port`` acepta el valor especial ``"auto"``: se prueban los candidatos
+de ``PUERTOS_CANDIDATOS`` en orden y se usa el primero que abra. Un puerto
+explícito en la configuración se respeta tal cual y no se sustituye.
 """
 
 from __future__ import annotations
@@ -28,6 +41,7 @@ from .protocol import (
     PacketDecoder,
     TeamColor,
     Telemetry,
+    encode_flag_signal,
     encode_gripper,
     encode_led,
     encode_motor,
@@ -38,15 +52,38 @@ log = logging.getLogger(__name__)
 
 _RECONNECT_INTERVAL_S = 1.0
 
+#: Candidatos que se prueban, en orden, cuando ``serial_port`` es ``"auto"``.
+#: Primero el USB nativo (el del firmware de vuelo), después el puerto de
+#: programación del DevKit.
+PUERTOS_CANDIDATOS: tuple[str, ...] = (
+    "/dev/ttyACM0",
+    "/dev/ttyACM1",
+    "/dev/ttyUSB0",
+    "/dev/ttyUSB1",
+)
+
+PUERTO_AUTO = "auto"
+
 
 class EspLink:
-    def __init__(self, port: str, baud: int = 115200) -> None:
-        self._port_name = port
+    def __init__(self, port: str = PUERTO_AUTO, baud: int = 115200) -> None:
+        self._configured_port = port
+        self._port_name = port          # el que se está usando de verdad
         self._baud = baud
         self._serial: serial.Serial | None = None
         self._decoder = PacketDecoder()
         self._last_attempt = 0.0
         self.telemetry_log: deque[Telemetry] = deque(maxlen=200)
+
+    @property
+    def port(self) -> str:
+        """El puerto que se está usando ahora (ya resuelto, si era ``auto``)."""
+        return self._port_name
+
+    def _candidatos(self) -> tuple[str, ...]:
+        if self._configured_port == PUERTO_AUTO:
+            return PUERTOS_CANDIDATOS
+        return (self._configured_port,)
 
     # -- conexión -----------------------------------------------------------
 
@@ -62,15 +99,23 @@ class EspLink:
             return
         self._last_attempt = now
 
-        try:
-            # timeout=0 -> lecturas no bloqueantes. El bucle de control no
-            # puede permitirse esperar al ESP32: si no hay datos, sigue.
-            self._serial = serial.Serial(self._port_name, self._baud, timeout=0, write_timeout=0.1)
+        ultimo_error: Exception | None = None
+        for candidato in self._candidatos():
+            try:
+                # timeout=0 -> lecturas no bloqueantes. El bucle de control no
+                # puede permitirse esperar al ESP32: si no hay datos, sigue.
+                self._serial = serial.Serial(candidato, self._baud, timeout=0, write_timeout=0.1)
+            except (serial.SerialException, OSError) as exc:
+                ultimo_error = exc
+                continue
+            self._port_name = candidato
             self._decoder = PacketDecoder()   # descartar cualquier trama a medias
-            log.info("Conectado al ESP32 en %s", self._port_name)
-        except (serial.SerialException, OSError) as exc:
-            self._serial = None
-            log.debug("Sin conexión con %s: %s", self._port_name, exc)
+            log.info("Conectado al ESP32 en %s", candidato)
+            return
+
+        self._serial = None
+        log.debug("Sin conexión con el ESP32 (probados: %s): %s",
+                  ", ".join(self._candidatos()), ultimo_error)
 
     def close(self) -> None:
         if self._serial is not None:
@@ -118,6 +163,17 @@ class EspLink:
 
     def send_led(self, team: TeamColor) -> bool:
         return self._write(encode_led(team))
+
+    def send_flag_signal(self, detected: bool) -> bool:
+        """Le dice al ESP32 si la cámara ve AHORA la bandera contraria.
+
+        El ESP32 no tiene cámara: sin esto no puede cumplir el reto de
+        demostración "detectar la bandera del oponente y señalizar su
+        detección". Quien llame a esto solo debería hacerlo cuando el estado
+        CAMBIA (ver ``scripts/run_rover.py``): mandarlo en cada cuadro llena
+        el cable de tramas idénticas sin aportar nada.
+        """
+        return self._write(encode_flag_signal(detected))
 
     # -- recepción ----------------------------------------------------------
 

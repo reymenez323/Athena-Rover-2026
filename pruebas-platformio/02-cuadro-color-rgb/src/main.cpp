@@ -13,7 +13,7 @@
 //  Es un sketch de banco, deliberadamente simple (setup/loop, sin FreeRTOS
 //  ni colas), independiente del firmware principal y de la prueba 01: sirve
 //  para validar delante de la pista real el driver TCS34725 + el RGB antes
-//  de integrarlos a las 7 tareas de firmware-esp32/src/main.cpp.
+//  de integrarlos a las 8 tareas de firmware-esp32/src/main.cpp.
 //
 //  SOBRE LOS UMBRALES DE COLOR:
 //  Se reutiliza tal cual la función ClassifyColor() de firmware-esp32/src/

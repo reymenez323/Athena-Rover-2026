@@ -12,7 +12,7 @@ main"*, con librerías externas solo si ahorran muchísimo trabajo.
 
 Eso se cumple así:
 
-- **Un solo archivo**, `firmware-esp32/src/main.cpp`, con las 7 tareas dentro.
+- **Un solo archivo**, `firmware-esp32/src/main.cpp`, con las 8 tareas dentro.
 - **Cero librerías externas.** Los drivers del PCA9685 y del TCS34725 están
   escritos a mano (unas 40 y 60 líneas). Traer librerías para eso no habría
   ahorrado trabajo real y sí habría añadido dependencias que mantener.

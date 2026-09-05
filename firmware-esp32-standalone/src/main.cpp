@@ -49,7 +49,7 @@
 //
 //  HARDWARE (idéntico a firmware-esp32/, más el puente TEAM_SELECT):
 //    · 2x L298N            -> 4 motores (cada driver mueve 2)
-//    · 1x PCA9685 (I2C)    -> 2 servos del gripper (pinza + elevación)
+//    · 1x PCA9685 (I2C)    -> 1 servo del gripper (la pinza que abre/cierra)
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
 //    · 1x VL53L1X (I2C)    -> telémetro delante del gripper
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
@@ -162,7 +162,6 @@ namespace I2CAddr {
 
 namespace ServoChannel {
     constexpr uint8_t CLAW = 0;   // abre/cierra la pinza
-    constexpr uint8_t LIFT = 1;   // sube/baja el gripper (no montado todavía)
 }
 
 namespace Pwm {
@@ -239,7 +238,7 @@ enum class TaskId : uint8_t {
 
 enum class TeamColor     : uint8_t { NONE = 0, RED = 1, BLUE = 2 };
 enum class MotorMode     : uint8_t { STOP = 0, DRIVE = 1 };
-enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2, RAISE = 3, LOWER = 4 };
+enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2 };
 enum class ColorLabel    : uint8_t { UNKNOWN = 0, BLACK, YELLOW, RED, BLUE, FLOOR };
 
 struct MotorCommand {
@@ -507,7 +506,7 @@ namespace Tcs34725 {
 // ===========================================================================
 //
 //  MISMOS umbrales que firmware-esp32/src/main.cpp, calibrados contra 970
-//  muestras reales del TCS34725 delantero (ver calibracion-color/). Si se
+//  muestras reales del TCS34725 delantero (ver calibracion/color/). Si se
 //  recalibra, actualizar los DOS firmwares — igual que ya advierte esa nota
 //  allá, ahora con un tercer archivo (este) para no olvidar.
 
@@ -632,17 +631,15 @@ void MotorTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.2  GripperTask — 2 servos vía PCA9685
+//  8.2  GripperTask — 1 servo vía PCA9685
 // ---------------------------------------------------------------------------
-//  Ángulos calibrados con pruebas-platformio/06-calibracion-gripper/, los
-//  mismos que usa firmware-esp32/. El servo de elevación (LIFT) no está
-//  montado todavía: todo lo que lo toca queda comentado, igual que allá.
+//  El robot tiene UN SOLO servo de gripper: agarra o suelta. Ángulos
+//  calibrados con pruebas-platformio/06-calibracion-gripper/, los mismos que
+//  usa firmware-esp32/.
 
 constexpr int kClawOpenDeg          = 0;
 constexpr int kClawClosedLlaveDeg   = 120;
 constexpr int kClawClosedBanderaDeg = 65;
-// constexpr int kLiftUpDeg            = 160;
-// constexpr int kLiftDownDeg          = 20;
 
 void GripperTask(void *) {
     // Todo acceso al PCA9685 comparte el bus I2C nº0 con el TCS34725
@@ -697,7 +694,7 @@ void GripperTask(void *) {
                         pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedBanderaDeg));
                         break;
                     default:
-                        break;   // RAISE/LOWER: sin servo de elevación montado
+                        break;   // acción desconocida: se ignora
                 }
                 I2c0Unlock();
             }

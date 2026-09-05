@@ -18,13 +18,28 @@ bucle NO se muere. Manda parada y sigue intentando. Un robot detenido conserva
 la posición de su bandera y puede ganar por proximidad al terminar el tiempo;
 un proceso caído pierde seguro.
 
-PERCEPCIÓN DE LA BANDERA: usa el modelo FOMO entrenado en Edge Impulse (fotos
-de la Argom CAM20 real), no el clasificador local (ese nunca llegó a
-entrenarse -- ver ``models/README.md``). La llave y el retorno a zona NO
-dependen de la cámara en absoluto: los maneja el sensor de color del ESP32
-(``ColorTelemetry``), así que cambiar el detector de bandera no les afecta.
-``decision.py`` sigue siendo quien manda en la secuencia obligatoria del
-reglamento (llave antes que bandera, etc.) -- eso no se tocó.
+REPARTO DE SENSORES (quién resuelve qué):
+
+* **Cámara USB + modelo FOMO de Edge Impulse** -> encontrar la bandera del
+  equipo contrario. Es lo único que hace la cámara.
+* **Sensores de color (TCS34725)** -> las zonas de color del piso: el amarillo
+  de la zona neutra (dónde soltar la llave) y el rojo/azul de la zona propia
+  (dónde termina la misión). Llegan como ``ColorTelemetry``.
+* **Sensores de reflectancia (QTR)** -> distinguir el borde negro de la pista
+  del fondo gris. Llegan como ``ReflectTelemetry`` y tienen prioridad
+  absoluta: salirse pierde la ronda.
+* **ToF (VL53L1X) delantero** -> distancia real hasta la bandera cilíndrica,
+  para saber cuándo cerrar la pinza. Llega como ``ToFTelemetry``.
+
+La llave y el retorno a zona NO dependen de la cámara en absoluto, así que
+cambiar el detector de bandera no les afecta. ``decision.py`` sigue siendo
+quien manda en la secuencia obligatoria del reglamento (llave antes que
+bandera, etc.).
+
+SEÑALIZAR LA BANDERA: cuando el modelo ve la bandera contraria se le manda
+``CMD_FLAG_SIGNAL`` al ESP32, que hace destellar el LED. Es el reto de
+demostración "detectar la bandera del oponente y señalizar su detección": el
+ESP32 no tiene cámara, así que esa señal solo puede venir de aquí.
 
 CENTRADO: la fase de perseguir la bandera usa ``athena.centering`` (línea
 central + zona muerta + giro proporcional al error normalizado) en vez del
@@ -85,12 +100,16 @@ def _percepcion_desde_ei(
 ) -> Perception:
     """Traduce la mejor detección de Edge Impulse a un ``Perception``.
 
-    ``decision.py`` no sabe ni necesita saber que el detector cambió: sigue
-    recibiendo el mismo tipo de objeto de siempre. El ángulo y la distancia se
-    calculan con el mismo modelo pinhole de ``geometry.py``, pero con la focal
-    reescalada al tamaño de frame que usa Edge Impulse (120x120 en este
-    proyecto) en vez de los 320x240 del pipeline local -- ``focal_px`` está
-    calibrada a ESE ancho de referencia (ver el docstring de GeometryConfig).
+    ``decision.py`` no sabe ni necesita saber cómo se detectó la bandera:
+    recibe siempre el mismo tipo de objeto. El ángulo y la distancia salen del
+    modelo pinhole de siempre, pero con la focal reescalada al tamaño de frame
+    que usa Edge Impulse (120x120 en este proyecto), porque ``focal_px`` está
+    calibrada contra ``CameraConfig.process_width`` (320 px) -- ver el
+    docstring de ``GeometryConfig``.
+
+    La distancia que sale de acá es una ESTIMACIÓN por tamaño aparente, buena
+    para decidir cuándo frenar. La que dispara el cierre de la pinza es la del
+    ToF del ESP32, que mide de verdad: ver ``decision._aproximar_bandera``.
     """
     if objetivo is None or frame_width_ei <= 0:
         return Perception(
@@ -105,8 +124,8 @@ def _percepcion_desde_ei(
     angle_deg = math.degrees(math.atan2(box.cx - frame_width_ei / 2.0, focal_px))
 
     distance_mm: float | None = None
-    # Igual que Geometry.distance_mm: si la bandera está cortada por el borde
-    # del frame, su altura aparente es menor que la real y saldría inflada.
+    # Si la bandera está cortada por el borde del frame, su altura aparente
+    # es menor que la real y la distancia saldría inflada: se descarta.
     if box.h > 0 and box.y > 1 and (box.y + box.h) < frame_height_ei - 1:
         distance_mm = focal_px * cfg.geometry.bandera_altura_mm / box.h
 
@@ -172,6 +191,12 @@ def main() -> int:
     ultimo_reflect: ReflectTelemetry | None = None
     ultimo_tof: ToFTelemetry | None = None
     ultima_fase = None
+    # Se manda CMD_FLAG_SIGNAL solo cuando el estado CAMBIA, no en cada
+    # cuadro: el LED del ESP32 conserva el último valor recibido, así que
+    # repetirlo 30 veces por segundo solo llenaría el cable de tramas
+    # idénticas. Arranca en None (nunca enviado) para que el primer ciclo
+    # siempre lo mande, aunque sea "no la veo".
+    ultima_senal_bandera: bool | None = None
     frames = 0
     t_inicio = time.monotonic()
 
@@ -252,6 +277,16 @@ def main() -> int:
                         comandos = replace(comandos, left=giro.left, right=giro.right)
 
                 # --- 4. Envío ----------------------------------------------
+                # La señal de bandera se manda SIEMPRE, incluso con --simular:
+                # es una luz, no un movimiento, y es justamente lo que se
+                # quiere poder verificar sin que el robot ruede.
+                if comandos.bandera_a_la_vista != ultima_senal_bandera:
+                    link.send_flag_signal(comandos.bandera_a_la_vista)
+                    ultima_senal_bandera = comandos.bandera_a_la_vista
+                    log.info("Bandera contraria %s",
+                             "A LA VISTA -> LED señalizando"
+                             if comandos.bandera_a_la_vista else "fuera de vista")
+
                 if not args.simular:
                     if comandos.gripper is not None:
                         link.send_gripper(comandos.gripper)

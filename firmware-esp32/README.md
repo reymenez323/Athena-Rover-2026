@@ -14,10 +14,11 @@ lo que hay que ajustar al calibrar.
 | Componente | Cantidad | Para qué |
 |------------|:--------:|----------|
 | L298N | 2 | 4 motores de tracción (cada driver mueve 2) |
-| PCA9685 | 1 | 2 servos del gripper, por I2C |
+| PCA9685 | 1 | **1** servo del gripper (la pinza: agarra o suelta), por I2C |
 | TCS34725 | 2 | Color del piso, delantero y trasero |
 | QTRX-HD-01A | 2 | Reflectancia delantera, izquierda y derecha |
-| LED RGB | 1 | Identificación de equipo (lo exige el reglamento); antes eran 2 LED discretos rojo/azul |
+| LED RGB | 1 | Identificación de equipo (lo exige el reglamento) **y** señalización de la bandera contraria |
+| VL53L1X | 1 | ToF delante del gripper: distancia real a la bandera cilíndrica |
 
 **Las conexiones completas están en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md).**
 Léelo antes de cablear: incluye los cinco errores que queman hardware.
@@ -37,10 +38,11 @@ pio device monitor   # ver los logs
 | Supervisor | 6 | 0 | 200 ms | Vigila los heartbeats de las demás |
 | Motors | 5 | 1 | 20 ms | Los 4 motores + failsafe propio |
 | SerialComm | 4 | 1 | 5 ms | Único punto de contacto con la Raspberry Pi |
-| Gripper | 3 | 1 | 50 ms | Los 2 servos vía PCA9685 |
-| Reflectance | 3 | 0 | 20 ms | Los 2 QTRX |
-| ColorSensors | 2 | 0 | 100 ms | Los 2 TCS34725 |
-| TeamLed | 1 | 0 | 250 ms | LED de equipo |
+| Gripper | 3 | 1 | 50 ms | El servo de la pinza, vía PCA9685 |
+| Reflectance | 3 | 0 | 20 ms | Los 2 QTRX: borde negro vs. fondo gris |
+| ColorSensors | 2 | 0 | 100 ms | Los 2 TCS34725: zonas de color del piso |
+| TofSensor | 2 | 0 | 50 ms | El VL53L1X: distancia a la bandera |
+| TeamLed | 1 | 0 | 250 ms | LED de equipo + señal de bandera a la vista |
 
 Las tareas de control crítico van fijadas al **núcleo 1**; las de sensado y
 estado al **núcleo 0**. Así un sensor lento no le quita tiempo de CPU al lazo
@@ -52,9 +54,10 @@ No existe un "estado global del robot". Cada tarea es dueña de su hardware y de
 sus datos, y los publica por colas explícitas de FreeRTOS.
 
 ```
-RPi ──USB──> SerialTask ──> motorCmdQueue   (1, overwrite) ──> MotorTask
-                        ──> gripperCmdQueue (4, FIFO)      ──> GripperTask
-                        ──> ledCmdQueue     (1, overwrite) ──> LedTask
+RPi ──USB──> SerialTask ──> motorCmdQueue      (1, overwrite) ──> MotorTask
+                        ──> gripperCmdQueue    (4, FIFO)      ──> GripperTask
+                        ──> ledCmdQueue        (1, overwrite) ──> LedTask
+                        ──> flagSignalCmdQueue (1, overwrite) ──> LedTask
 
 ColorSensorTask ──> colorQueue   (4, FIFO)      ──┐
 ReflectanceTask ──> reflectQueue (4, FIFO)      ──┼─> SerialTask ──USB──> RPi
@@ -106,22 +109,32 @@ El payload se arma y se lee **byte a byte**, en little-endian, nunca con
 clásica: el compilador inserta padding invisible que no tiene por qué coincidir
 con lo que asuma el otro lado.
 
-El formato completo está documentado en la sección `[3]` de `main.cpp`. El lado
-Python está en `raspberry-pi/src/athena/protocol.py`, y hay un test que lee
-**este archivo** y compara los números, de modo que los dos lados no se puedan
-desincronizar en silencio.
+La referencia legible del protocolo es
+[`../docs/protocolo-serial.md`](../docs/protocolo-serial.md); el formato exacto
+está en la sección `[3]` de `main.cpp` y el lado Python en
+`raspberry-pi/src/athena/protocol.py`.
+
+Hay tests que leen **este archivo** y comparan **todos** los tipos de paquete,
+todos los largos y todos los enums compartidos con los de Python, en las dos
+direcciones. Agregar algo en un solo lado rompe el test — que es exactamente
+lo que hace falta, porque ya pasó: `CMD_FLAG_SIGNAL` existió varios commits
+solo acá y la Raspberry Pi nunca supo mandarlo.
 
 ## Qué falta calibrar
 
 Todo lo marcado con `TODO` en el código:
 
-- `kLiftUpDeg`/`kLiftDownDeg` del segundo servo (elevación) — **no aplica
-  todavía**: ese servo no está montado en el robot, así que todo lo que lo
-  toca (constantes, envío inicial, casos `RAISE`/`LOWER` de `GripperTask`)
-  quedó comentado en `main.cpp` hasta que se agregue el hardware. Cuando
-  esté, hacerlo con el servo **desacoplado** del mecanismo, para no forzarlo
-  contra un tope. Los ángulos de la pinza (`kClawOpenDeg`,
-  `kClawClosedLlaveDeg`, `kClawClosedBanderaDeg`) ya están calibrados con
-  `pruebas-platformio/06-calibracion-gripper/`.
-- Umbrales de `ClassifyColor()` para el TCS34725, sobre la pista real.
-- `kDarkThreshold` de los QTR, con la luz del salón de competencia.
+- Umbrales de `ClassifyColor()` para el TCS34725 **trasero**: hoy comparte los
+  del delantero, un supuesto sin verificar. Los del delantero sí están
+  recalibrados contra 970 muestras reales (ver
+  [`../calibracion/color/`](../calibracion/color/)).
+- `kDarkThreshold` de los QTR, con la luz del salón de competencia (ver
+  [`../calibracion/reflectancia/`](../calibracion/reflectancia/)).
+- La polaridad del LED RGB (`RgbLed::kCommonAnode`): se asume cátodo común. Si
+  al probarlo los colores salen invertidos, cambiar esa constante a `true` y
+  listo, no hay que tocar nada más.
+
+Los ángulos de la pinza (`kClawOpenDeg`, `kClawClosedLlaveDeg`,
+`kClawClosedBanderaDeg`) **ya están calibrados** con
+`pruebas-platformio/06-calibracion-gripper/`. El robot tiene un solo servo, así
+que no hay ángulos de elevación que calibrar.

@@ -20,7 +20,7 @@
 //       para nada.
 //    2. Color — TCS34725 delantero (I2C0) Y trasero (I2C1), clasificados
 //       con la MISMA lógica de umbrales que
-//       calibracion-color/detector-tcs/src/main.cpp (Umbral::/Clasificar(),
+//       calibracion/color/detector-tcs/src/main.cpp (Umbral::/Clasificar(),
 //       recalibrados contra datos reales — ver ese archivo para el detalle
 //       y las limitaciones). Es un sensor DE RESPALDO, de menor prioridad:
 //       - Más lento (se muestrea cada COLOR_PERIOD_MS, no cada vuelta de
@@ -117,7 +117,7 @@ constexpr uint16_t MIN_USABLE_SPAN = 300;
 
 // Umbrales de reserva si un sensor no vio suficiente contraste al calibrar:
 // el derecho usa el valor ya confirmado contra datos reales (sensor B, ver
-// calibracion-ir/detector-color/src/main.cpp: 2910). El izquierdo no tiene
+// calibracion/reflectancia/detector-negro-gris/src/main.cpp: 2910). El izquierdo no tiene
 // ese mismo nivel de confirmación — su análisis (sensor A) dio un
 // contraste NEGRO/GRIS más parejo (~3400-4060) y el punto medio 3700 fue
 // el que se usó históricamente antes de que el equipo confirmara que el
@@ -176,7 +176,7 @@ void RunCalibration() {
 }
 
 // ===========================================================================
-//  [3] DRIVER TCS34725 — copia exacta de firmware-esp32/ y calibracion-color/
+//  [3] DRIVER TCS34725 — copia exacta de firmware-esp32/ y calibracion/color/
 // ===========================================================================
 
 namespace Tcs34725 {
@@ -240,11 +240,11 @@ namespace Tcs34725 {
 }
 
 // ===========================================================================
-//  [4] CLASIFICACIÓN DE COLOR — idéntica a calibracion-color/detector-tcs/
+//  [4] CLASIFICACIÓN DE COLOR — idéntica a calibracion/color/detector-tcs/
 // ===========================================================================
 //
 //  Umbral::, Clasificar() y LabelName() son una copia TAL CUAL de
-//  calibracion-color/detector-tcs/src/main.cpp — el evitador debe
+//  calibracion/color/detector-tcs/src/main.cpp — el evitador debe
 //  comportarse igual que ese banco de referencia, así que usa exactamente
 //  la misma clasificación (recalibrada contra 970 muestras reales del
 //  sensor delantero: 14.3% de error total, ver el detalle y las

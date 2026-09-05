@@ -15,7 +15,7 @@
 //
 //  HARDWARE
 //    · 2x L298N            -> 4 motores (cada driver mueve 2)
-//    · 1x PCA9685 (I2C)    -> 2 servos del gripper (pinza + elevación)
+//    · 1x PCA9685 (I2C)    -> 1 servo del gripper (la pinza que abre/cierra)
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
 //    · 1x VL53L1X (I2C)    -> telémetro delante del gripper, distancia a la bandera
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
@@ -158,10 +158,10 @@ namespace I2CAddr {
     constexpr uint8_t VL53L1X = 0x30;
 }
 
-// Canales del PCA9685 usados por el gripper
+// Canal del PCA9685 usado por el gripper. El robot tiene UN SOLO servo:
+// abre y cierra la pinza, nada más. No hay servo de elevación.
 namespace ServoChannel {
     constexpr uint8_t CLAW = 0;   // abre/cierra la pinza
-    constexpr uint8_t LIFT = 1;   // sube/baja el gripper
 }
 
 namespace Pwm {
@@ -273,11 +273,11 @@ enum class TaskId : uint8_t {
 
 enum class TeamColor     : uint8_t { NONE = 0, RED = 1, BLUE = 2 };
 enum class MotorMode     : uint8_t { STOP = 0, DRIVE = 1 };
-// CLOSE se separó en dos: la llave (cubo) y el asta cilíndrica de la bandera
-// necesitan ángulos de cierre distintos (ver kClawClosedLlaveDeg/
-// kClawClosedBanderaDeg más abajo, en GripperTask) — con un solo CLOSE
-// genérico no había forma de que la Raspberry Pi pidiera el correcto.
-enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2, RAISE = 3, LOWER = 4 };
+// Con UN SOLO servo, el gripper solo sabe hacer tres cosas. CLOSE está
+// separado en dos porque la llave (cubo) y el asta cilíndrica de la bandera
+// tienen grosores distintos y necesitan ángulos de cierre distintos (ver
+// kClawClosedLlaveDeg/kClawClosedBanderaDeg más abajo, en GripperTask).
+enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2 };
 enum class ColorLabel    : uint8_t { UNKNOWN = 0, BLACK, YELLOW, RED, BLUE, FLOOR };
 
 struct MotorCommand {
@@ -354,7 +354,7 @@ struct HealthReport {
 //   RPi -> ESP32
 //  ---------------------------------------------------------------------
 //   0x01 CMD_MOTOR    len=3   [0]=mode(0=STOP,1=DRIVE) [1]=left i8 [2]=right i8
-//   0x02 CMD_GRIPPER  len=1   [0]=action(0=OPEN,1=CLOSE_LLAVE,2=CLOSE_BANDERA,3=RAISE,4=LOWER)
+//   0x02 CMD_GRIPPER  len=1   [0]=action(0=OPEN,1=CLOSE_LLAVE,2=CLOSE_BANDERA)
 //   0x03 CMD_LED      len=1   [0]=team(0=NONE,1=RED,2=BLUE)
 //   0x04 CMD_FLAG_SIGNAL len=1  [0]=detected(0=no, 1=sí, la cámara ve la bandera contraria)
 //
@@ -660,13 +660,13 @@ namespace Tcs34725 {
 //  luz del salón, y pasa a depender solo del tono.
 //
 //  RECALIBRADO 2026-08-28 contra 970 muestras reales del TCS34725
-//  DELANTERO (calibracion-color/data_logs/, generadas con
-//  calibracion-color/calibrar_color.py) usando
-//  calibracion-color/analizar_umbrales_tcs.py — descenso de coordenadas
+//  DELANTERO (calibracion/color/data_logs/, generadas con
+//  calibracion/color/calibrar_color.py) usando
+//  calibracion/color/analizar_umbrales_tcs.py — descenso de coordenadas
 //  sobre esta MISMA estructura de reglas. Error total 14.3% sobre esas 970
 //  muestras (era 58.1% con los umbrales anteriores, sin calibrar). El
 //  detalle completo —incluida la matriz de confusión por color— vive en
-//  calibracion-color/detector-tcs/src/main.cpp, que usa exactamente estos
+//  calibracion/color/detector-tcs/src/main.cpp, que usa exactamente estos
 //  mismos números: si se recalibra, actualizar LOS DOS archivos o quedan
 //  desincronizados (pasó antes con el umbral IR, commit c4f9b47).
 //
@@ -684,7 +684,7 @@ namespace Tcs34725 {
 //  ⚠️ TODAVÍA sin calibrar el sensor TRASERO: estos umbrales solo se
 //  probaron contra datos del DELANTERO — comparten el mismo juego de
 //  umbrales con el trasero por ahora, un supuesto sin verificar (ver
-//  calibracion-color/README.md). Cuando existan capturas del trasero,
+//  calibracion/color/README.md). Cuando existan capturas del trasero,
 //  recalibrar y comparar antes de confiar en que un solo juego alcanza
 //  para los dos.
 // ---------------------------------------------------------------------------
@@ -826,33 +826,24 @@ void MotorTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.2  GripperTask — 2 servos vía PCA9685
+//  8.2  GripperTask — 1 servo vía PCA9685
 // ---------------------------------------------------------------------------
-//  Ángulos de la pinza calibrados a mano con pruebas-platformio/
+//  El robot tiene UN SOLO servo de gripper: agarra o suelta. No sube ni baja
+//  nada. Los ángulos están calibrados a mano con pruebas-platformio/
 //  06-calibracion-gripper/ (ver su README) — el mismo "abierta" sirve para
 //  los dos objetos, pero "cerrada" NO: la llave (cubo) y el asta cilíndrica
 //  de la bandera tienen grosores distintos, de ahí los dos closed distintos
-//  y por qué GripperAction ya no tiene un CLOSE genérico.
-//
-//  El servo de elevación (canal LIFT) TODAVÍA NO ESTÁ MONTADO en el robot:
-//  todo lo que lo toca queda comentado a propósito (constantes, el envío
-//  inicial y los casos RAISE/LOWER del switch) hasta que se agregue el
-//  hardware. GripperAction conserva RAISE/LOWER en el protocolo sin tocar
-//  (nadie los manda todavía, ver raspberry-pi/src/athena/decision.py) para
-//  no tener que renumerar nada al reactivar esto.
+//  y por qué GripperAction no tiene un CLOSE genérico.
 
 constexpr int kClawOpenDeg          = 0;
 constexpr int kClawClosedLlaveDeg   = 120;
 constexpr int kClawClosedBanderaDeg = 65;
-// constexpr int kLiftUpDeg            = 160;
-// constexpr int kLiftDownDeg          = 20;
 
 void GripperTask(void *) {
     // El bus I2C ya fue inicializado en setup(); aquí solo se configura el chip.
     bool pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
     if (pca_ok) {
         Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
-        // Pca9685::SetChannel(ServoChannel::LIFT, ServoAngleToTicks(kLiftUpDeg));
     } else {
         DEBUG_LINK.println("[Gripper] PCA9685 no responde. Reintentando en segundo plano.");
     }
@@ -886,14 +877,6 @@ void GripperTask(void *) {
                 case GripperAction::CLOSE_BANDERA:
                     pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawClosedBanderaDeg));
                     break;
-                // Sin servo de elevación montado todavía: RAISE/LOWER no hacen
-                // nada por ahora (y nadie los manda desde decision.py).
-                // case GripperAction::RAISE:
-                //     pca_ok = Pca9685::SetChannel(ServoChannel::LIFT, ServoAngleToTicks(kLiftUpDeg));
-                //     break;
-                // case GripperAction::LOWER:
-                //     pca_ok = Pca9685::SetChannel(ServoChannel::LIFT, ServoAngleToTicks(kLiftDownDeg));
-                //     break;
                 default:
                     break;
             }
@@ -1270,7 +1253,7 @@ void SerialDispatch(uint8_t type, const uint8_t *payload, uint8_t len) {
         }
         case Proto::CMD_GRIPPER: {
             if (len != Proto::LEN_CMD_GRIPPER) return;
-            if (payload[0] > (uint8_t)GripperAction::LOWER) return;
+            if (payload[0] > (uint8_t)GripperAction::CLOSE_BANDERA) return;
             GripperCommand cmd;
             cmd.action = (GripperAction)payload[0];
             xQueueSend(g_gripperCmdQueue, &cmd, 0);

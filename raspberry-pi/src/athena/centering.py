@@ -51,7 +51,7 @@ def calcular_giro(
 
     Error positivo (objetivo a la derecha) -> gira a la derecha, es decir la
     rueda izquierda queda más rápida que la derecha. Mismo convenio de signos
-    que ``Geometry.angle_deg`` y ``decision._perseguir``, para no meter una
+    que ``Detection.angle_deg`` y ``decision._perseguir``, para no meter una
     inversión de sentido a la hora de integrarlo con el resto del robot.
     """
     if abs(error) <= zona_muerta:

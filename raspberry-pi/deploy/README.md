@@ -17,8 +17,12 @@ Desde `raspberry-pi/` en la Pi (por SSH):
 
 ```bash
 whoami   # anota tu usuario, lo vas a necesitar en el paso siguiente
-ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null   # confirma cómo ve la Pi al ESP32 AHORA
+ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null   # solo para saber qué hay conectado
 ```
+
+> El puerto **no hace falta configurarlo**: `config.py` trae `"auto"`, que
+> prueba ttyACM0/1 y ttyUSB0/1 y se queda con el primero que abra. Solo poné
+> uno explícito en `config/rover.json` si querés forzarlo.
 
 Edita `deploy/athena-rover.service` y reemplaza **las 3 apariciones** de
 `TU_USUARIO_AQUI` por tu usuario real (el de `whoami`).
@@ -31,12 +35,12 @@ cp config/rover.example.json config/rover.json
 nano config/rover.json          # pon el puerto que confirmaste arriba con ls
 ```
 
-**Obligatorio ahora:** `run_rover.py` no arranca sin el modelo de Edge
-Impulse (falla rápido y claro si falta, a propósito). Copiá el `.eim` a la Pi
-antes de instalar el servicio:
+**Obligatorio ahora:** el modelo de Edge Impulse ya viene en el repo
+(`models/athena_ei_banderas.eim`), pero al clonar queda **sin permiso de
+ejecución** y `run_rover.py` no arranca sin él (falla rápido y claro, a
+propósito):
 
 ```bash
-scp ruta/al/athena_ei_banderas.eim usuario@IP_PI:~/Athena-Rover-2026/raspberry-pi/models/
 chmod +x models/athena_ei_banderas.eim
 ```
 
@@ -64,9 +68,8 @@ sudo systemctl restart athena-rover.service
 ## 4. Detenerlo (para probar otros scripts a mano)
 
 Mientras el servicio esté activo, tiene la cámara y el puerto serial
-ocupados — cualquier otro script (`run_flag_tracker_ei.py`,
-`capture_dataset.py`, `benchmark.py`, etc.) va a fallar al abrirlos hasta que
-lo pares:
+ocupados — `run_flag_tracker_ei.py` va a fallar al abrirlos hasta que lo
+pares:
 
 ```bash
 sudo systemctl stop athena-rover.service

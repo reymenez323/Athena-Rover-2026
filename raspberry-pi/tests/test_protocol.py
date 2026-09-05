@@ -1,9 +1,15 @@
 """Tests del protocolo serial.
 
-El test importante es ``test_constantes_coinciden_con_el_firmware``: abre el
-``main.cpp`` real, extrae los números del protocolo y los compara con los de
+El test importante es el bloque "Contrato con el firmware": abre los
+``main.cpp`` reales, extrae los números del protocolo y los compara con los de
 Python. Si alguien cambia un código de paquete en un lado y olvida el otro,
 falla aquí y no en plena competencia con el robot haciendo cosas raras.
+
+La comparación es EXHAUSTIVA a propósito, y en las dos direcciones: no hay una
+lista de constantes escrita a mano que alguien pueda olvidar ampliar. Eso ya
+pasó de verdad — ``CMD_FLAG_SIGNAL`` vivió varios commits existiendo solo en
+el firmware, porque el test de entonces enumeraba los paquetes uno por uno y
+nadie agregó el nuevo a esa lista.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import pytest  # noqa: E402
 from athena import protocol as p  # noqa: E402
 
 FIRMWARE = REPO.parent / "firmware-esp32" / "src" / "main.cpp"
+FIRMWARE_STANDALONE = REPO.parent / "firmware-esp32-standalone" / "src" / "main.cpp"
 
 
 # ---------------------------------------------------------------------------
@@ -28,45 +35,144 @@ FIRMWARE = REPO.parent / "firmware-esp32" / "src" / "main.cpp"
 
 
 def _constantes_del_firmware() -> dict[str, int]:
-    """Extrae las constexpr del namespace Proto de main.cpp."""
+    """Extrae las constexpr y los miembros del enum del namespace Proto."""
     texto = FIRMWARE.read_text(encoding="utf-8")
-
     inicio = texto.index("namespace Proto")
-    fin = texto.index("\n}", inicio)
-    bloque = texto[inicio:fin]
+    bloque = texto[inicio:texto.index("\n}", inicio)]
 
     valores: dict[str, int] = {}
     # constexpr uint8_t NOMBRE = 0x12;   /  NOMBRE = 3;
-    for nombre, valor in re.findall(r"constexpr\s+uint8_t\s+(\w+)\s*=\s*(0x[0-9A-Fa-f]+|\d+)", bloque):
+    for nombre, valor in re.findall(
+        r"constexpr\s+uint8_t\s+(\w+)\s*=\s*(0x[0-9A-Fa-f]+|\d+)", bloque
+    ):
         valores[nombre] = int(valor, 0)
     # Miembros del enum PacketType:  CMD_MOTOR   = 0x01,
-    for nombre, valor in re.findall(r"^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*,", bloque, re.MULTILINE):
+    for nombre, valor in re.findall(
+        r"^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*,", bloque, re.MULTILINE
+    ):
         valores[nombre] = int(valor, 0)
     return valores
 
 
+def _enum_del_firmware(ruta: Path, nombre: str) -> dict[str, int]:
+    """Lee un ``enum class X : uint8_t { A = 0, B = 1 };`` de un main.cpp.
+
+    Los miembros sin valor explícito toman el siguiente correlativo, igual que
+    en C++, para no obligar a que el firmware los escriba todos.
+    """
+    texto = ruta.read_text(encoding="utf-8")
+    cuerpo = re.search(
+        r"enum\s+class\s+" + nombre + r"\s*:\s*uint8_t\s*\{(.*?)\}", texto, re.DOTALL
+    )
+    assert cuerpo is not None, "no se encontró 'enum class " + nombre + "' en " + ruta.name
+
+    valores: dict[str, int] = {}
+    siguiente = 0
+    for miembro in cuerpo.group(1).split(","):
+        miembro = re.sub(r"//.*", "", miembro).strip()
+        if not miembro:
+            continue
+        if "=" in miembro:
+            clave, crudo = (parte.strip() for parte in miembro.split("=", 1))
+            siguiente = int(crudo, 0)
+        else:
+            clave = miembro
+        valores[clave] = siguiente
+        siguiente += 1
+    return valores
+
+
 @pytest.mark.skipif(not FIRMWARE.exists(), reason="no se encontró el firmware")
-def test_constantes_coinciden_con_el_firmware():
+def test_todos_los_tipos_de_paquete_coinciden():
+    """Ni un paquete de más ni uno de menos, en ninguno de los dos lados."""
     fw = _constantes_del_firmware()
 
     assert fw["START_BYTE"] == p.START_BYTE
     assert fw["MAX_PAYLOAD"] == p.MAX_PAYLOAD
 
-    assert fw["CMD_MOTOR"] == p.PacketType.CMD_MOTOR
-    assert fw["CMD_GRIPPER"] == p.PacketType.CMD_GRIPPER
-    assert fw["CMD_LED"] == p.PacketType.CMD_LED
-    assert fw["TLM_COLOR"] == p.PacketType.TLM_COLOR
-    assert fw["TLM_REFLECT"] == p.PacketType.TLM_REFLECT
-    assert fw["TLM_HEALTH"] == p.PacketType.TLM_HEALTH
-    assert fw["TLM_TOF"] == p.PacketType.TLM_TOF
+    # El firmware es la referencia: todo lo que declare como CMD_/TLM_ tiene
+    # que existir en Python con el mismo valor...
+    tipos_firmware = {
+        nombre: valor
+        for nombre, valor in fw.items()
+        if nombre.startswith(("CMD_", "TLM_"))
+    }
+    assert tipos_firmware, "no se extrajo ningún tipo de paquete del firmware"
 
-    assert fw["LEN_CMD_MOTOR"] == p.LEN_CMD_MOTOR
-    assert fw["LEN_CMD_GRIPPER"] == p.LEN_CMD_GRIPPER
-    assert fw["LEN_CMD_LED"] == p.LEN_CMD_LED
-    assert fw["LEN_TLM_COLOR"] == p.LEN_TLM_COLOR
-    assert fw["LEN_TLM_REFLECT"] == p.LEN_TLM_REFLECT
-    assert fw["LEN_TLM_HEALTH"] == p.LEN_TLM_HEALTH
-    assert fw["LEN_TLM_TOF"] == p.LEN_TLM_TOF
+    for nombre, valor in tipos_firmware.items():
+        assert hasattr(p.PacketType, nombre), (
+            f"{nombre} existe en el firmware pero no en protocol.py"
+        )
+        actual = int(getattr(p.PacketType, nombre))
+        assert actual == valor, (
+            f"{nombre}: firmware=0x{valor:02X} != python=0x{actual:02X}"
+        )
+
+    # ...y al revés: Python no puede inventarse paquetes que el ESP32 ignora.
+    for miembro in p.PacketType:
+        assert miembro.name in tipos_firmware, (
+            f"{miembro.name} existe en protocol.py pero no en el firmware"
+        )
+
+
+@pytest.mark.skipif(not FIRMWARE.exists(), reason="no se encontró el firmware")
+def test_todos_los_largos_de_payload_coinciden():
+    fw = _constantes_del_firmware()
+    largos_firmware = {n: v for n, v in fw.items() if n.startswith("LEN_")}
+    assert largos_firmware, "no se extrajo ningún LEN_ del firmware"
+
+    for nombre, valor in largos_firmware.items():
+        assert hasattr(p, nombre), f"{nombre} existe en el firmware pero no en protocol.py"
+        assert getattr(p, nombre) == valor, (
+            f"{nombre}: firmware={valor} != python={getattr(p, nombre)}"
+        )
+
+    # Y al revés, para que no queden LEN_ huérfanos en Python.
+    for nombre in dir(p):
+        if nombre.startswith("LEN_"):
+            assert nombre in largos_firmware, (
+                f"{nombre} existe en protocol.py pero no en el firmware"
+            )
+
+
+@pytest.mark.skipif(not FIRMWARE.exists(), reason="no se encontró el firmware")
+@pytest.mark.parametrize(
+    "nombre_cpp, enum_python",
+    [
+        ("MotorMode", p.MotorMode),
+        ("GripperAction", p.GripperAction),
+        ("TeamColor", p.TeamColor),
+        ("ColorLabel", p.ColorLabel),
+    ],
+)
+def test_los_enums_compartidos_coinciden(nombre_cpp, enum_python):
+    """Los bytes que viajan por el cable significan lo mismo en los dos lados.
+
+    Cubre, por ejemplo, el caso real del gripper de un solo servo: si alguien
+    vuelve a agregar RAISE/LOWER en un lado y no en el otro, la Raspberry Pi
+    mandaría un número que el ESP32 rechaza en silencio.
+    """
+    fw = _enum_del_firmware(FIRMWARE, nombre_cpp)
+    py = {miembro.name: int(miembro) for miembro in enum_python}
+    assert fw == py, f"{nombre_cpp}: firmware={fw} != python={py}"
+
+
+@pytest.mark.skipif(
+    not FIRMWARE_STANDALONE.exists(), reason="no se encontró el firmware autónomo"
+)
+@pytest.mark.parametrize("nombre_cpp", ["GripperAction", "ColorLabel", "TeamColor"])
+def test_el_firmware_autonomo_usa_los_mismos_enums(nombre_cpp):
+    """El firmware sin Raspberry Pi comparte hardware, y por tanto semántica.
+
+    No habla el protocolo serial (no hay con quién), pero maneja los mismos
+    servos y sensores. Si sus enums se separan de los del firmware de vuelo,
+    los ángulos del gripper y los colores de zona dejan de significar lo mismo
+    entre las dos variantes, que es justo lo que vuelve imposible depurar una
+    comparándola con la otra.
+    """
+    assert _enum_del_firmware(FIRMWARE_STANDALONE, nombre_cpp) == _enum_del_firmware(
+        FIRMWARE, nombre_cpp
+    )
 
 
 @pytest.mark.skipif(not FIRMWARE.exists(), reason="no se encontró el firmware")
@@ -75,6 +181,24 @@ def test_los_largos_declarados_son_los_que_se_generan():
     assert len(p.encode_motor(p.MotorMode.DRIVE, 10, -10)) == 4 + p.LEN_CMD_MOTOR
     assert len(p.encode_gripper(p.GripperAction.OPEN)) == 4 + p.LEN_CMD_GRIPPER
     assert len(p.encode_led(p.TeamColor.RED)) == 4 + p.LEN_CMD_LED
+    assert len(p.encode_flag_signal(True)) == 4 + p.LEN_CMD_FLAG_SIGNAL
+
+
+def test_la_senal_de_bandera_va_byte_a_byte():
+    """El reto de demostración 'señalizar la detección' pasa por esta trama."""
+    trama = p.encode_flag_signal(True)
+    assert trama[0] == 0xAA
+    assert trama[1] == int(p.PacketType.CMD_FLAG_SIGNAL) == 0x04
+    assert trama[2] == p.LEN_CMD_FLAG_SIGNAL
+    assert trama[3] == 1
+    assert trama[4] == p.checksum(0x04, trama[3:4])
+
+    assert p.encode_flag_signal(False)[3] == 0
+
+
+def test_la_senal_de_bandera_no_es_telemetria():
+    """El ESP32 la recibe; la Raspberry Pi nunca debe aceptarla de vuelta."""
+    assert p.PacketType.CMD_FLAG_SIGNAL not in p.RECEIVABLE_TYPES
 
 
 # ---------------------------------------------------------------------------

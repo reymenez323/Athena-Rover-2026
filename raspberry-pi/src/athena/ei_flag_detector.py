@@ -1,11 +1,14 @@
 """Puente hacia el modelo de banderas entrenado en Edge Impulse (FOMO).
 
-Camino de percepción PARALELO al de ``proposals.py`` + ``classifier.py``: en
-vez de color HSV + una CNN de clasificación de recortes, corre un detector de
-objetos completo (FOMO, entrenado con fotos tomadas con la Argom CAM20 real
-del robot) que devuelve directamente las cajas de las banderas rojas y azules
-sobre el frame. No toca la detección de la llave ni del fondo: eso sigue
-viviendo en el pipeline local de ``detector.py``.
+Es la ÚNICA fuente de percepción por cámara del robot: corre el modelo FOMO
+entrenado en Edge Impulse (con fotos tomadas con la Argom CAM20 real) y
+devuelve directamente las cajas de las banderas rojas y azules sobre el
+frame. El entrenamiento se hizo FUERA de este repo, en Edge Impulse Studio;
+acá solo se ejecuta el ``.eim`` ya exportado.
+
+La llave no pasa por acá ni por ninguna cámara: el robot arranca con ella en
+la pinza y la suelta cuando el sensor de color del ESP32 ve el amarillo de la
+zona neutra (ver ``decision.py``).
 
 REQUISITOS en la Raspberry Pi (no hacen falta en una laptop de desarrollo)::
 

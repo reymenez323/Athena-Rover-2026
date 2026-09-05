@@ -1,45 +1,69 @@
 # Raspberry Pi 4B — visión y decisión
 
-La Raspberry Pi es el cerebro: mira por la cámara web USB, decide qué hacer, y
-le manda órdenes al ESP32-S3 por USB. El ESP32 no piensa, solo ejecuta.
+La Raspberry Pi es el cerebro: mira por la cámara USB, decide qué hacer, y le
+manda órdenes al ESP32-S3 por USB. **El ESP32 no piensa, solo ejecuta; la Pi
+no toca hardware, solo decide.** El contrato entre ambos está en
+[`docs/protocolo-serial.md`](../docs/protocolo-serial.md).
+
+## Qué hace la cámara, y qué NO
+
+Esto es lo primero que hay que entender, porque casi todo lo demás se deduce
+de acá:
+
+| | Resuelto por |
+|---|---|
+| Encontrar la **bandera del oponente** | La cámara + el modelo de Edge Impulse. Es lo **único** que hace la cámara. |
+| Soltar la **llave** en la zona neutra | El sensor de **color** del ESP32 al ver amarillo. Nunca dependió de la cámara. |
+| Saber que llegó a la **zona propia** | El sensor de **color** al ver el rojo/azul del equipo. |
+| No **salirse de la pista** | Los sensores de **reflectancia**, que separan borde negro de fondo gris. |
+| Cuándo **cerrar la pinza** | El **ToF** del ESP32: mide de verdad, no estima. |
+
+Por eso cambiar el detector de bandera no rompe el resto de la misión.
+
+> **El entrenamiento del modelo se hizo FUERA de este repo**, en Edge Impulse
+> Studio (cuenta de Montse). Acá no hay scripts de captura ni de
+> entrenamiento: se borraron porque nunca llegaron a usarse. Lo único que vive
+> acá es el `.eim` ya exportado y el código que lo ejecuta. El historial
+> completo de ese trabajo está en
+> [`docs/handoff-vision-edge-impulse.md`](../docs/handoff-vision-edge-impulse.md).
 
 ## Cómo está organizado
 
 ```
 raspberry-pi/
-├── src/athena/          paquete principal
-│   ├── protocol.py       contrato binario con el ESP32 (¡espejo de main.cpp!)
-│   ├── link.py           enlace serial con reconexión automática
-│   ├── camera.py         captura en hilo aparte, descartando frames viejos
-│   ├── proposals.py      etapa 1: candidatos por color y forma (barato)
-│   ├── classifier.py     etapa 2: CNN INT8 en TFLite (solo sobre candidatos)
-│   ├── tracker.py        seguimiento por IoU, evita reclasificar cada frame
-│   ├── detector.py       orquesta todo lo anterior
-│   ├── geometry.py       distancia y ángulo a partir de la caja
-│   ├── decision.py       máquina de estados de la misión + control visual
-│   ├── config.py         parámetros ajustables
-│   └── types.py          tipos comunes
+├── src/athena/
+│   ├── protocol.py         contrato binario con el ESP32 (¡espejo de main.cpp!)
+│   ├── link.py             enlace serial: reconexión y descubrimiento de puerto
+│   ├── camera.py           captura en hilo aparte, descartando frames viejos
+│   ├── ei_flag_detector.py el modelo de Edge Impulse -> cajas de banderas
+│   ├── centering.py        línea central + zona muerta -> giro proporcional
+│   ├── decision.py         máquina de estados de la misión
+│   ├── config.py           parámetros ajustables
+│   └── types.py            tipos comunes de percepción
 ├── scripts/
-│   ├── capture_dataset.py   tomar fotos para entrenar
-│   ├── train_classifier.py  entrenar y exportar el .tflite (en tu laptop)
-│   ├── benchmark.py         medir el rendimiento real en TU Pi
-│   ├── run_rover.py         el bucle principal del robot
-│   └── auto_label_ei.py     APARTE, no forma parte de este flujo — ver nota abajo
-├── data/                 dataset de entrenamiento (ver data/README.md)
-├── models/               el .tflite entrenado
-└── tests/                tests que corren sin robot
+│   ├── run_rover.py            EL PROGRAMA DE COMPETENCIA
+│   └── run_flag_tracker_ei.py  herramienta para calibrar el seguimiento a ojo
+├── models/                 athena_ei_banderas.eim (el modelo entrenado)
+├── config/                 rover.json de ESTA Pi (no se versiona)
+├── deploy/                 arranque automático con systemd
+└── tests/                  61 tests, ninguno necesita hardware
 ```
 
 ## Instalación en la Raspberry Pi
 
 ```bash
 sudo apt install python3-opencv python3-numpy python3-serial
-pip install --break-system-packages tflite-runtime
+sudo apt install libatlas-base-dev libportaudio0 libportaudio2 libportaudiocpp0 portaudio19-dev
+pip install --break-system-packages edge_impulse_linux
+chmod +x models/athena_ei_banderas.eim
 ```
 
 Se usa `apt` para OpenCV y NumPy a propósito: los paquetes del sistema vienen
 compilados con las optimizaciones NEON del ARM. Los de `pip` son ruedas
 genéricas y corren bastante más lento.
+
+El `.eim` **necesita permiso de ejecución** — es un binario, no un archivo de
+datos. Es el error más fácil de cometer al clonar el repo en una Pi nueva.
 
 ## Uso
 
@@ -49,139 +73,35 @@ python3 scripts/run_rover.py --equipo rojo --simular --ver
 
 # En competencia
 python3 scripts/run_rover.py --equipo rojo
-
-# Medir el rendimiento real
-python3 scripts/benchmark.py
 ```
 
----
+Con `--simular` los motores no se mueven, pero **la señal de bandera sí se
+manda**: es una luz, no un movimiento, así que se puede verificar el LED sobre
+la mesa sin que el robot ruede.
 
-## Cómo entrenar el clasificador (paso a paso)
-
-Esto es lo que hace falta para que el robot reconozca bandera_roja,
-bandera_azul, llave y fondo. Sin este modelo, el robot **igual se mueve**: cae
-a reglas de color/forma ("modo degradado", ver más abajo), menos preciso pero
-funcional — así que no es un bloqueante para probar mecánica y control.
-
-**1. Tomar fotos** (en la laptop o en la Pi, donde tengas la cámara conectada):
+Para ajustar a ojo la zona muerta y la ganancia de giro sin correr la misión
+completa cada vez:
 
 ```bash
-python3 scripts/capture_dataset.py --clase bandera_roja
-python3 scripts/capture_dataset.py --clase bandera_azul
-python3 scripts/capture_dataset.py --clase llave
-python3 scripts/capture_dataset.py --clase fondo
+python3 scripts/run_flag_tracker_ei.py --equipo rojo --ver
 ```
 
-`ESPACIO` guarda foto, `a` activa captura automática, `q` sale. Apunta a
-150–300 fotos por clase, variando distancia/ángulo/luz/fondo — detalle
-completo en [data/README.md](data/README.md). **`fondo` es la clase más
-importante**: mete ahí cinta roja/azul del piso, reflejos, el LED del otro
-robot — todo lo que se pueda confundir con una bandera. Las fotos quedan en
-`data/raw/<clase>/` y sí se versionan en git (son irremplazables).
+> No uses ese script en competencia: no deposita la llave, y arrancarlo solo
+> pierde la ronda de inmediato según el reglamento.
 
-**2. Entrenar** — esto va en tu **laptop, NO en la Raspberry Pi** (tardaría
-horas ahí):
+## El puerto serial
 
-```bash
-pip install "tensorflow>=2.15" pillow
-python3 scripts/train_classifier.py
-```
+`config.py` trae `serial_port = "auto"`, que prueba en orden `/dev/ttyACM0`,
+`/dev/ttyACM1`, `/dev/ttyUSB0`, `/dev/ttyUSB1` y se queda con el primero que
+abra. No es capricho: el ESP32 aparece como **ttyACM** por su USB nativo y
+como **ttyUSB** por el puerto de programación, y en la práctica cambió entre
+sesiones de trabajo. Si querés forzar uno, ponelo explícito en
+`config/rover.json`.
 
-Recorta los objetos de las fotos con el mismo detector que usa el robot en
-producción, entrena una CNN chica, y exporta `models/athena_cls.tflite`
-cuantizado a INT8.
-
-**3. Llevar el modelo a la Raspberry Pi**: copia el archivo
-`models/athena_cls.tflite` de tu laptop a la misma ruta relativa en la Pi
-(scp, USB, lo que tengas a mano). No se versiona en git — hay que copiarlo a
-mano cada vez que se reentrena.
-
-**4. Verificar que la Pi lo está usando**:
-
-```bash
-python3 scripts/run_rover.py --equipo rojo --simular --ver
-```
-
-`--simular` no mueve motores; `--ver` abre una ventana con lo que detecta y
-las cajas dibujadas. En consola, al arrancar debe aparecer algo como
-`Clasificador listo: athena_cls.tflite (...)`. Si en cambio dice `Sin modelo
-CNN: corriendo en modo degradado`, el `.tflite` no está donde `config.py` lo
-busca (`models/athena_cls.tflite`, relativo a esta carpeta `raspberry-pi/`).
-
-> ### ⚠️ `scripts/auto_label_ei.py` es un flujo APARTE, no este
->
-> Ese script pre-etiqueta fotos que llegaron de **otro equipo** para subirlas
-> a **Edge Impulse Studio** (un servicio externo), reusando las etiquetas
-> `CILINDRO_ROJO`/`CILINDRO_AZUL` de un proyecto de Edge Impulse que ya
-> existía por fuera de este repo. Su salida (`bounding_boxes.labels`) no se
-> conecta con `train_classifier.py` ni con `models/`: sirve para entrenar en
-> Edge Impulse, no para generar el `.tflite` que usa `run_rover.py`. Si lo que
-> quieres es que la Pi reconozca objetos, el flujo de los 4 pasos de arriba es
-> el que necesitas — no este script.
-
----
-
-## Cómo funciona la visión (y por qué así)
-
-El objetivo era aprovechar los cuatro núcleos de la Pi 4B **sin ahogarlos**,
-porque la CPU que gasta la visión es CPU que le falta al control.
-
-### Lo que NO se hizo, y por qué
-
-Lo obvio sería lanzar un detector tipo YOLO o SSD sobre el frame completo. En
-una Raspberry Pi 4B eso cuesta **50–80 ms por frame** y ocupa los cuatro
-núcleos: 12–20 FPS, sin CPU sobrante para nada más.
-
-### Lo que se hizo: dos etapas
-
-El reglamento dice que las banderas son **cilindros rojos o azules**. Eso no es
-un dato menor, es información fuerte sobre el problema. Aprovecharla:
-
-```
-frame 320x240
-   │
-   ├─ 1. PROPUESTAS  (~2-4 ms, 1 núcleo)
-   │     umbral HSV + morfología + componentes conexas
-   │     → de 76.800 píxeles a ~5 cajas candidatas
-   │
-   ├─ 2. TRACKING  (<1 ms)
-   │     empareja por solapamiento con lo que ya se vio
-   │     → la mayoría de las cajas YA están clasificadas
-   │
-   ├─ 3. CNN INT8  (~1-3 ms por recorte nuevo)
-   │     solo sobre lo nuevo, en recortes de 64x64, en lote
-   │
-   └─ 4. GEOMETRÍA  (despreciable)
-         distancia y ángulo por modelo estenopeico
-```
-
-El umbral de color hace la **localización** casi gratis. La red neuronal se
-encarga solo de lo difícil: distinguir una bandera de la cinta roja del piso,
-del LED del robot rival o de una camisa de color.
-
-### Decisiones concretas de optimización
-
-| Decisión | Por qué |
-|----------|---------|
-| Procesar a 320×240, no 640×480 | Cuesta la cuarta parte. Una bandera a 1.5 m sigue midiendo ~20 px: de sobra. |
-| Cuantización INT8 + XNNPACK | XNNPACK usa las instrucciones NEON del Cortex-A72. INT8 procesa 4 valores por instrucción donde float32 procesa 1. |
-| 3 hilos, no 4 | Hay que dejarle un núcleo a la captura y al control. Pedir los 4 hace que compitan y sale más lento. |
-| Clasificar en lote | Invocar el intérprete tiene costo fijo. Un lote de 6 recortes es mucho más rápido que 6 invocaciones. |
-| Reclasificar cada 8 frames | El tracking conserva la identidad. Baja las llamadas a la red casi un 90 %. |
-| Buffers reservados una vez | Reservar arrays a 30 FPS le da trabajo constante al recolector de basura, y esas pausas se notan en el control. |
-| Captura en hilo con descarte | `read()` devuelve el frame más VIEJO del buffer. Sin descartar, el robot reacciona a lo que vio hace medio segundo. |
-
-**No te fíes de estos números: mide los tuyos** con `scripts/benchmark.py`.
-Cambian con el modelo de Pi, la temperatura, la fuente y hasta con cuántos
-objetos de color haya en el encuadre.
-
-### Modo degradado
-
-Si no hay `.tflite`, el sistema **sigue funcionando**: clasifica por reglas de
-color y proporción (una bandera es 3 veces más alta que ancha; la llave es
-casi cuadrada). Detecta peor y se traga más falsos positivos, pero el robot
-rueda. Eso permite probar mecánica y control desde el primer día, sin esperar
-a tener el dataset.
+El enlace también se **reconecta solo**: cuando el ESP32 se reinicia, su
+dispositivo USB desaparece y vuelve a aparecer. Un programa que abra el puerto
+una sola vez al arrancar se queda mudo para siempre después del primer reset —
+y eso pasa cada vez que se reprograma el firmware entre rondas.
 
 ---
 
@@ -204,14 +124,36 @@ INICIO → BUSCAR_ZONA_NEUTRA → DEPOSITAR_LLAVE → BUSCAR_BANDERA
        → ENTREGAR → TERMINADO
 ```
 
-El seguimiento del objetivo es un **control proporcional** sobre el ángulo: se
-gira hacia la bandera y se avanza, bajando la velocidad al acercarse. Es un P
-puro, sin I ni D, a propósito: el objetivo está quieto y el lazo corre a 30 Hz,
-así que un PID completo solo añadiría dos ganancias más que calibrar.
-
 `DecisionMaker.step()` es una **función pura** de sus entradas: no toca el
 puerto serial ni guarda estado escondido. Por eso toda la lógica de misión se
 prueba sin robot, sin cámara y sin ESP32.
+
+### Dos controles de giro, a propósito
+
+- `decision._perseguir` corrige sobre el **ángulo en grados**, derivado del
+  modelo pinhole. Lo usa toda la máquina de estados y es lo que prueban los
+  tests.
+- `centering.calcular_giro` corrige sobre el **error normalizado** (−1..1)
+  medido directamente contra la caja que devolvió el modelo, con una zona
+  muerta central.
+
+En la fase de perseguir la bandera, `run_rover.py` reemplaza el primero por el
+segundo: es más directo trabajar sobre la caja real que sobre un ángulo
+derivado de una focal que todavía no está calibrada. El de grados se conserva
+porque es el que la máquina de estados usa para decidir si está *centrada*.
+
+### Señalizar la bandera
+
+Cuando el modelo ve la bandera contraria, `decision.py` marca
+`Commands.bandera_a_la_vista` y `run_rover.py` manda `CMD_FLAG_SIGNAL` al
+ESP32, que hace destellar el LED alternando blanco con el color de equipo (así
+ninguna de las dos señales tapa a la otra). Es el reto de demostración
+"detectar la bandera del oponente y señalizar su detección".
+
+Se marca **en cuanto se ve**, sin esperar a ninguna fase. Lo que descalifica
+según el reglamento es *ir a buscar* la bandera antes de depositar la llave, no
+verla de pasada — y de ir o no ir se encarga la máquina de estados, no esa
+señal. El comando se manda **solo cuando el estado cambia**, no en cada cuadro.
 
 ---
 
@@ -221,25 +163,24 @@ prueba sin robot, sin cámara y sin ESP32.
 python3 -m pytest tests/ -q
 ```
 
-28 tests, ninguno necesita hardware. El más importante es
-`test_constantes_coinciden_con_el_firmware`: abre el `main.cpp` real, extrae
-los números del protocolo y los compara con los de Python. Si alguien cambia un
-código de paquete en un lado y olvida el otro, **falla el test** en vez de
-fallar el robot en plena competencia.
+61 tests, ninguno necesita hardware. Los más importantes son los de contrato:
+abren el `main.cpp` **real** de los dos firmwares, extraen cada tipo de
+paquete, cada largo y cada enum compartido, y los comparan con Python **en las
+dos direcciones**. Agregar algo en un solo lado rompe el test.
+
+Eso importa porque ya pasó de verdad: `CMD_FLAG_SIGNAL` existió varios commits
+solo en el firmware y la Pi nunca supo mandarlo, así que el LED nunca
+señalizó nada. El test de entonces enumeraba los paquetes a mano y no lo notó.
 
 ---
 
-## Lo que falta (hueco conocido)
+## Lo que falta
 
-En `RETORNAR_A_ZONA` el robot avanza recto y solo reconoce su zona cuando ya
-pisa la línea de color. Funciona si quedó orientado hacia su lado, pero **no se
-recupera si quedó girado**. Resolverlo necesita odometría (encoders en los
-motores) o reconocer visualmente la línea de la zona propia. Es el hueco más
-grande que queda en la lógica de misión, y está marcado como TODO en el código.
-
-También hay que **calibrar** antes de competir:
-
-- La focal de la cámara en `GeometryConfig` (hoy es una estimación; ver
-  `geometry.py` para el procedimiento).
-- Los rangos HSV en `ProposalConfig`, con la luz real del salón.
-- Los umbrales de color del TCS34725 y de los QTR, del lado del firmware.
+- **El retorno a la zona propia.** El robot avanza recto y solo reconoce su
+  zona cuando ya pisa la línea de color. Funciona si quedó orientado hacia su
+  lado, pero **no se recupera si quedó girado**. Necesita odometría (encoders)
+  o reconocer visualmente la línea. Es el hueco más grande de la lógica de
+  misión, y está marcado como TODO en el código.
+- **Calibrar la focal** de la cámara (`GeometryConfig.focal_px` es hoy una
+  estimación de webcam genérica). Afecta la distancia estimada, no el cierre
+  de la pinza — de eso se encarga el ToF.

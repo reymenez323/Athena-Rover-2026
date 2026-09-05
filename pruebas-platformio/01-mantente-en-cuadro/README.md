@@ -16,7 +16,7 @@ y la telemetría — ver el encabezado de `src/main.cpp`.
 
 Es un sketch de banco, independiente del firmware principal
 (`firmware-esp32/`): sirve para validar el comportamiento de borde con
-hardware real antes de integrarlo a las 7 tareas de FreeRTOS. Usa los mismos
+hardware real antes de integrarlo a las 8 tareas de FreeRTOS. Usa los mismos
 pines documentados en [`../../hardware/conexiones-esp32-s3.md`](../../hardware/conexiones-esp32-s3.md),
 así que corre tal cual sobre el chasis ya cableado (solo necesita el QTR
 derecho y los 2 L298N — no requiere PCA9685 ni TCS34725 para esta prueba).
@@ -57,7 +57,7 @@ máximo que vio y usa el punto medio como umbral.
 
 Por qué calibra en cada arranque en vez de usar un número fijo: ver el
 análisis completo en el encabezado de `src/main.cpp` y en
-[`../../calibracion-ir/README.md`](../../calibracion-ir/README.md) — en
+[`../../calibracion/reflectancia/README.md`](../../calibracion/reflectancia/README.md) — en
 resumen, el contraste NEGRO/GRIS medido a mano (sin altura fija) varía
 demasiado sesión a sesión como para confiar en una constante copiada de un
 log puntual.
@@ -65,7 +65,7 @@ log puntual.
 Si en esos 3 segundos el sensor no ve suficiente contraste, se avisa por
 consola y usa el umbral de reserva `FALLBACK_THRESHOLD` (2910 al momento de
 escribir esto — sacado del sensor derecho/B, ver
-`../../calibracion-ir/detector-color/src/main.cpp`).
+`../../calibracion/reflectancia/detector-negro-gris/src/main.cpp`).
 
 ## Parámetros para ajustar
 

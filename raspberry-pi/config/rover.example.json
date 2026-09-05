@@ -1,3 +1,5 @@
 {
-  "serial_port": "/dev/ttyUSB0"
+  "_comentario": "Copiá este archivo a config/rover.json y ajustá lo que haga falta. Describe ESTA Pi, no el codigo, por eso rover.json no se versiona.",
+  "_serial_port": "auto prueba ttyACM0, ttyACM1, ttyUSB0 y ttyUSB1 en orden. Pone un puerto explicito solo si queres forzar uno.",
+  "serial_port": "auto"
 }

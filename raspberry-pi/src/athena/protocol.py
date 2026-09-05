@@ -33,6 +33,7 @@ class PacketType(IntEnum):
     CMD_MOTOR = 0x01
     CMD_GRIPPER = 0x02
     CMD_LED = 0x03
+    CMD_FLAG_SIGNAL = 0x04
     # ESP32 -> RPi
     TLM_COLOR = 0x10
     TLM_REFLECT = 0x11
@@ -43,6 +44,7 @@ class PacketType(IntEnum):
 LEN_CMD_MOTOR = 3
 LEN_CMD_GRIPPER = 1
 LEN_CMD_LED = 1
+LEN_CMD_FLAG_SIGNAL = 1
 LEN_TLM_COLOR = 7
 LEN_TLM_REFLECT = 9
 LEN_TLM_HEALTH = 5
@@ -55,15 +57,18 @@ class MotorMode(IntEnum):
 
 
 class GripperAction(IntEnum):
+    """Lo único que sabe hacer el gripper: agarrar o soltar.
+
+    El robot tiene UN SOLO servo, así que no hay subir/bajar. La llave (cubo)
+    y el asta cilíndrica de la bandera necesitan ángulos de cierre distintos
+    (calibrados en ``pruebas-platformio/06-calibracion-gripper/``), de ahí que
+    no haya un CLOSE genérico — ver ``GripperAction`` en
+    ``firmware-esp32/src/main.cpp``, sección [8.2] GripperTask.
+    """
+
     OPEN = 0
-    # La llave (cubo) y el asta cilíndrica de la bandera necesitan ángulos de
-    # cierre distintos (calibrados en pruebas-platformio/06-calibracion-gripper/),
-    # de ahí que no haya un CLOSE genérico — ver GripperAction en firmware-esp32/
-    # src/main.cpp, sección [8.2] GripperTask.
     CLOSE_LLAVE = 1
     CLOSE_BANDERA = 2
-    RAISE = 3
-    LOWER = 4
 
 
 class TeamColor(IntEnum):
@@ -200,6 +205,20 @@ def encode_gripper(action: GripperAction) -> bytes:
 
 def encode_led(team: TeamColor) -> bytes:
     return _frame(PacketType.CMD_LED, struct.pack("<B", int(team)))
+
+
+def encode_flag_signal(detected: bool) -> bytes:
+    """Avisa al ESP32 si la cámara está viendo AHORA la bandera contraria.
+
+    El ESP32 no tiene cámara: esta es la única forma de que sepa que hay que
+    señalizar la detección con el LED, que es uno de los retos de la
+    demostración ("detectar la bandera del oponente y señalizar su
+    detección"). Es una señal de estado instantáneo, no un evento: se manda
+    cada vez que cambia, y el firmware la trata como "lo que pasa ahora
+    mismo" (cola de un solo elemento, sobrescribible). Si el enlace se cae, el
+    LED vuelve solo al color de equipo fijo.
+    """
+    return _frame(PacketType.CMD_FLAG_SIGNAL, struct.pack("<B", 1 if detected else 0))
 
 
 # ---------------------------------------------------------------------------

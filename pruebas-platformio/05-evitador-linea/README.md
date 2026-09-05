@@ -16,7 +16,7 @@ sensor diga.
    color no necesita estar de acuerdo para nada de lo que decide el QTR.
 2. **Color — de respaldo.** Los DOS TCS34725 (delantero I2C0, trasero
    I2C1), clasificados con la MISMA lógica de umbrales que
-   [`../../calibracion-color/detector-tcs/`](../../calibracion-color/detector-tcs/)
+   [`../../calibracion/color/detector-tcs/`](../../calibracion/color/detector-tcs/)
    (`Umbral::`/`Clasificar()`, recalibrados contra 970 muestras reales —
    ver ese archivo para el detalle y las limitaciones, sobre todo con
    NEGRO). Menor prioridad que el QTR de tres formas:
@@ -33,11 +33,11 @@ dispara nada, no evita nada. Sí se sigue mostrando en el LED RGB y la
 consola, como diagnóstico.
 
 > Antes esta prueba usaba un clasificador K-NN entrenado con el mismo
-> dataset (ver `../../calibracion-color/generar_dataset_knn.py`, que sigue
+> dataset (ver `../../calibracion/color/generar_dataset_knn.py`, que sigue
 > disponible si hace falta esa precisión extra más adelante). Se cambió a
 > los umbrales de `detector-tcs/` para que las dos herramientas se
 > comporten igual — el costo conocido es que el K-NN identificaba NEGRO
-> bastante mejor (ver la comparación en `calibracion-color/README.md`).
+> bastante mejor (ver la comparación en `calibracion/color/README.md`).
 
 ## Máquina de estados
 
@@ -89,7 +89,7 @@ firmware final.
   prioridad), pero pierde la red de seguridad del color.
 - **El color nunca ayuda a detectar el borde**: normal en parte — NEGRO es
   la clase que peor detecta este clasificador de umbrales (~58% de
-  acierto, ver `calibracion-color/detector-tcs/src/main.cpp`). El QTR
+  acierto, ver `calibracion/color/detector-tcs/src/main.cpp`). El QTR
   sigue siendo quien debe cargar con la detección la mayoría del tiempo;
   el color es un respaldo, no el plan principal.
 - **El giro no gira** (mismo problema que se vio en `01`): si a

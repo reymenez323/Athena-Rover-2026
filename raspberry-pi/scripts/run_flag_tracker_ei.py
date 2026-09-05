@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Persigue la bandera del equipo contrario usando el modelo FOMO de Edge Impulse.
 
-Camino de percepción alternativo a ``run_rover.py``: en vez del pipeline local
-color+CNN, usa el detector de objetos entrenado en Edge Impulse (ver
-``src/athena/ei_flag_detector.py``) para encontrar directamente la bandera
-rival, y un control proporcional simple (``src/athena/centering.py``) para
-centrarla y avanzar.
+Usa el mismo detector que el robot en competencia
+(``src/athena/ei_flag_detector.py``) y el mismo control proporcional
+(``src/athena/centering.py``), pero SIN la máquina de estados de la misión:
+solo busca la bandera rival, la centra, avanza hacia ella y señaliza la
+detección con el LED.
 
 ``run_rover.py`` YA integra este mismo modelo y esta misma lógica de centrado
 dentro de la misión completa (llave, zona neutra, gripper, retorno) -- este
@@ -114,6 +114,8 @@ def main() -> int:
     frames = 0
     frames_sin_objetivo = 0
     sentido_busqueda = 1
+    # Igual que en run_rover.py: CMD_FLAG_SIGNAL solo cuando el estado cambia.
+    ultima_senal_bandera: bool | None = None
     t_inicio = time.monotonic()
 
     try:
@@ -138,6 +140,15 @@ def main() -> int:
 
                 detecciones = detector.detect(frame)
                 objetivo = detector.best(detecciones, etiqueta_objetivo)
+
+                # Señalizar la detección con el LED del ESP32 (reto de la
+                # demostración). Se manda también con --simular: es una luz,
+                # no un movimiento, y así se puede verificar en la mesa sin
+                # que el robot ruede.
+                a_la_vista = objetivo is not None
+                if a_la_vista != ultima_senal_bandera:
+                    link.send_flag_signal(a_la_vista)
+                    ultima_senal_bandera = a_la_vista
 
                 if objetivo is not None:
                     frames_sin_objetivo = 0
