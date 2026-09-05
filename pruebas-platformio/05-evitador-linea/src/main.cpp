@@ -39,7 +39,7 @@
 //  Sketch de banco, deliberadamente simple (setup/loop, sin FreeRTOS ni
 //  colas) — usa los MISMOS pines que firmware-esp32/ (ver
 //  hardware/conexiones-esp32-s3.md): los 2 QTR, los 2 TCS34725, los 2
-//  L298N, el LED de equipo y el LED RGB. Es, en los sensores que toca, un
+//  L298N y el LED RGB. Es, en los sensores que toca, un
 //  subconjunto completo del firmware final (todo menos el PCA9685).
 //
 // ===========================================================================
@@ -82,16 +82,20 @@ namespace Pins {
     constexpr uint8_t L298N_R_IN4 = 14;
     constexpr uint8_t L298N_R_ENB = 17;
 
-    // LED de equipo: RED parpadea durante la calibración de arranque,
-    // BLUE indica "girando para evitar el borde".
-    constexpr uint8_t LED_TEAM_RED  = 40;
-    constexpr uint8_t LED_TEAM_BLUE = 41;
-
     // LED RGB — muestra en vivo la clasificación de color del sensor
-    // DELANTERO (diagnóstico; no decide nada por sí solo, ver encabezado).
+    // DELANTERO, y el destello de alerta durante la maniobra de borde
+    // (diagnóstico; no decide nada por sí solo, ver encabezado).
+    // LED RGB del robot. Antes había además 2 LED discretos rojo/azul en
+    // GPIO 40 y 41 para señalar la maniobra de borde: ya no existen, el
+    // equipo los reemplazó por este único LED RGB, y el GPIO 41 pasó a ser
+    // su canal AZUL.
+    //
+    // El canal azul también se movió: estaba en GPIO 3, que ahora es el
+    // XSHUT del VL53L1X (ver hardware/conexiones-esp32-s3.md). Manejarlo
+    // desde acá dejaría al ToF en reset permanente en el chasis real.
     constexpr uint8_t RGB_R = 39;
     constexpr uint8_t RGB_G = 38;
-    constexpr uint8_t RGB_B = 3;
+    constexpr uint8_t RGB_B = 41;
 }
 
 namespace I2CAddr {
@@ -104,7 +108,7 @@ namespace I2CAddr {
 //  [2] CALIBRACIÓN DEL QTR EN ARRANQUE — los DOS sensores
 // ===========================================================================
 //
-//  Durante CALIBRATION_MS los dos LED de equipo parpadean juntos: es la
+//  Durante CALIBRATION_MS el LED RGB parpadea en blanco: es la
 //  señal para pasar el robot a mano por ENCIMA de la cinta negra y del piso
 //  gris varias veces, cubriendo ambos sensores. Cada uno se queda con su
 //  propio mínimo/máximo y arma su propio umbral — igual que hacía la
@@ -128,6 +132,13 @@ constexpr uint16_t FALLBACK_THRESHOLD_RIGHT = 2910;
 uint16_t g_leftThreshold  = FALLBACK_THRESHOLD_LEFT;
 uint16_t g_rightThreshold = FALLBACK_THRESHOLD_RIGHT;
 
+// Declaración adelantada: la calibración parpadea el LED, pero vive antes que
+// el bloque [6] donde el RGB está definido. Se declara acá en vez de mover
+// código para no reordenar un sketch que ya está probado en banco.
+// setup() llama a RgbLed::Setup() antes de RunCalibration(), así que el PWM
+// ya está enganchado cuando esto corre.
+namespace RgbLed { void SetRaw(uint8_t r, uint8_t g, uint8_t b); }
+
 void RunCalibration() {
     uint16_t leftMin = 4095, leftMax = 0;
     uint16_t rightMin = 4095, rightMax = 0;
@@ -149,13 +160,11 @@ void RunCalibration() {
         if ((uint32_t)(millis() - lastBlink) > 150) {
             lastBlink = millis();
             blinkState = !blinkState;
-            digitalWrite(Pins::LED_TEAM_RED, blinkState ? HIGH : LOW);
-            digitalWrite(Pins::LED_TEAM_BLUE, blinkState ? HIGH : LOW);
+            RgbLed::SetRaw(blinkState ? 255 : 0, blinkState ? 255 : 0, blinkState ? 255 : 0);
         }
         delay(5);
     }
-    digitalWrite(Pins::LED_TEAM_RED, LOW);
-    digitalWrite(Pins::LED_TEAM_BLUE, LOW);
+    RgbLed::SetRaw(0, 0, 0);
 
     const uint16_t leftSpan  = leftMax - leftMin;
     const uint16_t rightSpan = rightMax - rightMin;
@@ -473,8 +482,6 @@ void ActualizarColor() {
         (g_backValido  && g_backLabel  == ColorLabel::NEGRO);
     g_colorConfirmaNegro = Confirmar(crudoNegro, g_confirmColorNegro, kConfirmacionesColor);
 
-    RgbLed::SetRaw(0, 0, 0);
-    if (g_frontValido) RgbLed::ApplyLabel(g_frontLabel);   // diagnóstico: solo el delantero, un LED
 }
 
 // ===========================================================================
@@ -550,7 +557,6 @@ void RunStateMachine(bool qtrRawNegro) {
                 DEBUG_LINK.printf(
                     "[Borde] negro confirmado (qtr=%d color_respaldo=%d) -> REVERSING\n",
                     qtrConfirma, g_colorConfirmaNegro);
-                digitalWrite(Pins::LED_TEAM_BLUE, HIGH);
                 g_confirmQtrClaro = 0;
                 g_confirmColorNegro = 0;   // arranca fresca, no re-dispara de inmediato al volver
                 EnterState(State::REVERSING);
@@ -586,13 +592,34 @@ void RunStateMachine(bool qtrRawNegro) {
             const bool qtrDespejado = Confirmar(!qtrRawNegro, g_confirmQtrClaro, kConfirmacionesQtr);
             if (qtrDespejado) {
                 DEBUG_LINK.println("[Borde] despejado (QTR) -> DRIVING");
-                digitalWrite(Pins::LED_TEAM_BLUE, LOW);
                 g_confirmQtrNegro = 0;
                 EnterState(State::DRIVING);
             }
             break;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+//  LED RGB de estado
+// ---------------------------------------------------------------------------
+//  Con un solo LED no se puede mostrar a la vez el color del piso y que hay
+//  una maniobra de borde en curso. Manda la maniobra: es el evento, y el
+//  color se vuelve a ver apenas termina. El destello ROJO/AZUL alterno es el
+//  mismo código de alerta que usa firmware-esp32-standalone/, y no se
+//  confunde con ningún color de piso porque esos se muestran fijos.
+//
+//  Se refresca desde loop() y no dentro de las transiciones, para que el
+//  destello siga vivo mientras dure la maniobra completa (reversa + giro).
+
+void ActualizarRgb() {
+    if (g_state != State::DRIVING) {
+        if (((millis() / 125) % 2) == 0) RgbLed::SetRaw(255, 0, 0);
+        else                             RgbLed::SetRaw(0, 0, 255);
+        return;
+    }
+    RgbLed::SetRaw(0, 0, 0);
+    if (g_frontValido) RgbLed::ApplyLabel(g_frontLabel);   // diagnóstico: solo el delantero
 }
 
 // ===========================================================================
@@ -604,8 +631,6 @@ void setup() {
     delay(200);
     DEBUG_LINK.println("\nPrueba 05 - Evitador de linea (QTR con prioridad + color de respaldo)");
 
-    pinMode(Pins::LED_TEAM_RED, OUTPUT);
-    pinMode(Pins::LED_TEAM_BLUE, OUTPUT);
 
     // Reflectancia: igual que firmware-esp32 (ADC de 12 bits, atenuación
     // 11 dB para cubrir la excursión completa del QTR a 3.3 V).
@@ -649,6 +674,7 @@ void loop() {
     const bool qtrRawNegro = (left > g_leftThreshold) || (right > g_rightThreshold);
 
     ActualizarColor();          // no-op si todavia no toca (ver COLOR_PERIOD_MS)
+    ActualizarRgb();
     RunStateMachine(qtrRawNegro);
 
     static uint32_t lastPrint = 0;

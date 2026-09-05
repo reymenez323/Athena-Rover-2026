@@ -50,7 +50,7 @@ con los otros tres, vuelve a poner `L298N_L_IN1, L298N_L_IN2` en orden.
 
 ## Cómo se calibra el umbral
 
-Al encender, el LED rojo de equipo parpadea durante 3 segundos: es la señal
+Al encender, el LED RGB parpadea en blanco durante 3 segundos: es la señal
 para pasar el robot **a mano** sobre la cinta negra y el piso gris varias
 veces, cubriendo el sensor derecho. El sketch se queda con el mínimo y el
 máximo que vio y usa el punto medio como umbral.
@@ -122,10 +122,21 @@ el estado (`FORWARD`/`REVERSING`/`TURNING`) y el conteo de confirmación.
 - Si nunca calibra bien (se detiene incluso sobre gris, o nunca detecta el
   negro): la calibración no vio suficiente contraste — repetir el arranque
   pasando el sensor de forma más deliberada sobre ambas superficies durante
-  el parpadeo del LED rojo.
+  el parpadeo blanco del LED.
 - Si retrocede en ráfagas o parece trabarse al girar: casi seguro el giro
   no está completando los 180° (ver "El giro" arriba) — el robot vuelve a
   `FORWARD` todavía cerca del borde y dispara otra reversa casi de
   inmediato. No es un bug de la máquina de estados, es la maniobra de giro
   que no está funcionando.
-- Al empezar a girar se enciende el LED azul; se apaga al volver a avanzar.
+- Durante la reversa y el giro, el LED destella alternando rojo y azul; se
+  apaga al volver a avanzar.
+## Qué dice el LED RGB
+
+El robot tiene **un solo LED RGB** (GPIO 39/38/41), cátodo común. Este sketch
+lo usa con el mismo código de alerta que `firmware-esp32-standalone/`:
+
+| Señal | Qué significa |
+|---|---|
+| Parpadeo **blanco** | Calibrando (solo al arrancar, 3 s) |
+| Destello **rojo/azul** alterno | Maniobra de borde en curso (reversa + giro) |
+

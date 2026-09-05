@@ -81,21 +81,60 @@ namespace Pins {
     constexpr uint8_t L298N_R_IN4 = 14;
     constexpr uint8_t L298N_R_ENB = 17;
 
-    // LED de equipo, reutilizados aquí como indicador de calibración y de
-    // maniobra de borde en curso (no hace falta laptop conectada para ver
-    // si el sketch está funcionando).
-    constexpr uint8_t LED_TEAM_RED  = 40;   // solo parpadea durante la calibración de arranque
-    constexpr uint8_t LED_TEAM_BLUE = 41;   // encendido mientras dura la reversa+giro (sensor DERECHO)
+    // LED RGB del robot, usado aquí como indicador de estado: no hace falta
+    // tener la laptop conectada para ver si el sketch está funcionando.
+    //
+    // Antes esto eran 2 LED discretos rojo/azul en GPIO 40 y 41. Ya no
+    // existen: el equipo los reemplazó por este único LED RGB, y el GPIO 41
+    // pasó a ser su canal AZUL. Un sketch que siguiera escribiendo en el 40
+    // no encendería nada, y lo que escribiera en el 41 saldría por el azul
+    // del RGB sin querer.
+    constexpr uint8_t LED_RGB_R = 39;
+    constexpr uint8_t LED_RGB_G = 38;
+    constexpr uint8_t LED_RGB_B = 41;
 }
 
 #define DEBUG_LINK Serial0   // consola por el puerto UART del DevKit
+
+// ---------------------------------------------------------------------------
+//  LED RGB de estado
+// ---------------------------------------------------------------------------
+//  Se maneja con digitalWrite, no con PWM: este sketch solo necesita colores
+//  a plena intensidad (blanco, rojo, azul, apagado), y así no hay que
+//  generalizar el PwmAttach de los motores, que es de una sola frecuencia.
+//  El LED del robot es CÁTODO COMÚN (confirmado), o sea HIGH = canal
+//  encendido.
+//
+//  CÓDIGO DE COLORES, el mismo que usa firmware-esp32-standalone/:
+//    · parpadeo BLANCO            -> calibrando (solo al arrancar, 3 s)
+//    · destello ROJO/AZUL alterno -> maniobra de borde en curso (alerta)
+//    · apagado                    -> avanzando normal
+
+namespace RgbLed {
+    void Setup() {
+        pinMode(Pins::LED_RGB_R, OUTPUT);
+        pinMode(Pins::LED_RGB_G, OUTPUT);
+        pinMode(Pins::LED_RGB_B, OUTPUT);
+    }
+
+    void Set(bool r, bool g, bool b) {
+        digitalWrite(Pins::LED_RGB_R, r ? HIGH : LOW);
+        digitalWrite(Pins::LED_RGB_G, g ? HIGH : LOW);
+        digitalWrite(Pins::LED_RGB_B, b ? HIGH : LOW);
+    }
+
+    void Off()   { Set(false, false, false); }
+    void White() { Set(true,  true,  true);  }
+    void Red()   { Set(true,  false, false); }
+    void Blue()  { Set(false, false, true);  }
+}
 
 // ===========================================================================
 //  [2] CALIBRACIÓN EN ARRANQUE
 // ===========================================================================
 //
-//  Durante los primeros CALIBRATION_MS tras encender, los dos LED de equipo
-//  parpadean juntos: es la señal para pasar el robot a mano por ENCIMA de la
+//  Durante los primeros CALIBRATION_MS tras encender, el LED RGB parpadea
+//  en blanco: es la señal para pasar el robot a mano por ENCIMA de la
 //  cinta negra y del piso gris varias veces, cubriendo el sensor derecho. El
 //  sketch se queda con el mínimo y el máximo que vio y arma el umbral como
 //  el punto medio.
@@ -128,14 +167,12 @@ void RunCalibration() {
         if ((uint32_t)(millis() - lastBlink) > 150) {
             lastBlink = millis();
             blinkState = !blinkState;
-            digitalWrite(Pins::LED_TEAM_RED, blinkState ? HIGH : LOW);
-            digitalWrite(Pins::LED_TEAM_BLUE, blinkState ? HIGH : LOW);
+            if (blinkState) RgbLed::White(); else RgbLed::Off();
         }
         delay(5);
     }
 
-    digitalWrite(Pins::LED_TEAM_RED, LOW);
-    digitalWrite(Pins::LED_TEAM_BLUE, LOW);
+    RgbLed::Off();
 
     const uint16_t rightSpan = rightMax - rightMin;
 
@@ -335,7 +372,6 @@ void RunStateMachine(bool rightRaw) {
         case State::FORWARD: {
             if (Confirmar(rightRaw, g_confirmRight)) {
                 DEBUG_LINK.println("[Borde] linea negra detectada (sensor derecho) -> reversa");
-                digitalWrite(Pins::LED_TEAM_BLUE, HIGH);
                 EnterState(State::REVERSING);
             } else {
                 DriveSides(kForwardSpeed, kForwardSpeed);
@@ -356,13 +392,24 @@ void RunStateMachine(bool rightRaw) {
             DriveSides(kTurnSpeed, -kTurnSpeed);   // pivote: izq adelante, der atrás
             if ((uint32_t)(millis() - g_stateEnteredAtMs) >= kTurn180Ms) {
                 DEBUG_LINK.println("[Borde] giro completo -> FORWARD");
-                digitalWrite(Pins::LED_TEAM_BLUE, LOW);
                 g_confirmRight = 0;   // exige una deteccion fresca, ver nota arriba
                 EnterState(State::FORWARD);
             }
             break;
         }
     }
+}
+
+// El LED se refresca desde loop() en vez de encenderse/apagarse dentro de las
+// transiciones: así el destello de alerta sigue vivo mientras dure la maniobra,
+// que puede durar más de un segundo entre la reversa y el giro.
+void ActualizarLed() {
+    if (g_state == State::FORWARD) {
+        RgbLed::Off();
+        return;
+    }
+    // Destello rojo/azul a ~4 Hz mientras dura la reversa + giro.
+    if (((millis() / 125) % 2) == 0) RgbLed::Red(); else RgbLed::Blue();
 }
 
 // ===========================================================================
@@ -374,8 +421,8 @@ void setup() {
     delay(200);
     DEBUG_LINK.println("\nPrueba 01 - Mantente en el cuadro");
 
-    pinMode(Pins::LED_TEAM_RED, OUTPUT);
-    pinMode(Pins::LED_TEAM_BLUE, OUTPUT);
+    RgbLed::Setup();
+    RgbLed::Off();
 
     // Reflectancia: igual que firmware-esp32 (ADC de 12 bits, atenuación
     // 11 dB para cubrir la excursión completa del QTR a 3.3 V).
@@ -402,6 +449,7 @@ void loop() {
     // El debounce (Confirmar) vive dentro de RunStateMachine y solo se
     // acumula en FORWARD — ver la nota junto a kConfirmacionesNecesarias.
     RunStateMachine(rightRaw);
+    ActualizarLed();
 
     // Telemetría de banco, para ajustar velocidades y tiempos con el
     // monitor serial abierto. Se puede comentar una vez calibrado a gusto.

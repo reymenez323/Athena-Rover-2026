@@ -30,10 +30,10 @@ main.cpp` sección `[2]` y `raspberry-pi/src/athena/protocol.py`). Si vuelves
 a calibrar (otro gripper, otro objeto), actualiza esas constantes allá
 también.
 
-Sigue pendiente `kLiftUpDeg`/`kLiftDownDeg` del segundo servo (elevación,
-canal 1) — este sketch, tal como está, solo controla un canal a la vez
-(seleccionable con `canal <n>`), así que sirve igual para calibrarlo cuando
-ese servo esté montado.
+El robot tiene **un solo servo**, así que no hay más ángulos que calibrar.
+El sketch conserva el comando `canal <n>` porque sigue siendo útil para
+identificar en qué canal del PCA9685 quedó conectado el servo si alguien
+recablea.
 
 ## Antes de encender
 

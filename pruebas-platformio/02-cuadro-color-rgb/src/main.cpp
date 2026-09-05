@@ -70,11 +70,6 @@ namespace Pins {
     constexpr uint8_t L298N_R_IN4 = 14;
     constexpr uint8_t L298N_R_ENB = 17;
 
-    // LED de equipo, reutilizados como indicador de calibración y de qué
-    // lado disparó el borde — igual que en la prueba 01.
-    constexpr uint8_t LED_TEAM_RED  = 40;   // se enciende cuando dispara el sensor IZQUIERDO
-    constexpr uint8_t LED_TEAM_BLUE = 41;   // se enciende cuando dispara el sensor DERECHO
-
     // -------- Bus I2C nº0: TCS34725 DELANTERO (mismo bus que el PCA9685 en
     // el firmware principal, aquí no se usa el PCA9685) --------------------
     constexpr uint8_t I2C0_SDA = 8;
@@ -97,9 +92,18 @@ namespace Pins {
     // GPIO 3 es strapping de JTAG: solo importa su nivel en el instante de
     // encender/resetear, como salida normal después de bootear no da
     // problema.
+    // LED RGB del robot. Antes había además 2 LED discretos rojo/azul en
+    // GPIO 40 y 41 para indicar qué sensor disparó el borde: ya no existen,
+    // el equipo los reemplazó por este único LED RGB. El GPIO 41 pasó a ser
+    // el canal AZUL del RGB, así que seguir escribiéndole con digitalWrite
+    // peleaba con el PWM del propio LED.
+    //
+    // El canal azul también se movió: estaba en GPIO 3, que ahora es el
+    // XSHUT del VL53L1X (ver hardware/conexiones-esp32-s3.md). Manejarlo
+    // desde acá dejaría al ToF en reset permanente en el chasis real.
     constexpr uint8_t RGB_R = 39;
     constexpr uint8_t RGB_G = 38;
-    constexpr uint8_t RGB_B = 3;
+    constexpr uint8_t RGB_B = 41;
 }
 
 namespace I2CAddr {
@@ -199,18 +203,28 @@ const char *ColorLabelName(ColorLabel c) {
     }
 }
 
+// Umbrales RECALIBRADOS 2026-08-28 contra 970 muestras reales del TCS34725
+// delantero (calibracion/color/data_logs/). Error total 14.3%, contra 58.1%
+// de los umbrales originales "a ojo" que esta prueba tenía antes.
+//
+// Son los MISMOS números que usan ClassifyColor() en firmware-esp32/ y
+// firmware-esp32-standalone/, Clasificar() en 05-evitador-linea/ y
+// Clasificar() en calibracion/color/detector-tcs/. Los cinco comparten
+// también la misma configuración del sensor (ATIME_24MS, GAIN_4X), así que
+// los valores son directamente comparables: si se recalibra, hay que
+// actualizar LOS CINCO o quedan diciendo cosas distintas sobre el mismo piso.
 static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
     // Muy poca luz reflejada = cinta negra (o el sensor mirando al vacío).
-    if (s.c < 300) return ColorLabel::BLACK;
+    if (s.c < 392) return ColorLabel::BLACK;
 
     const float total = (float)s.c;
     const float r = (float)s.r / total;
     const float g = (float)s.g / total;
     const float b = (float)s.b / total;
 
-    if (r > 0.45f && g < 0.30f && b < 0.30f) return ColorLabel::RED;
-    if (b > 0.40f && r < 0.30f)              return ColorLabel::BLUE;
-    if (r > 0.35f && g > 0.35f && b < 0.25f) return ColorLabel::YELLOW;
+    if (r > 0.450f && g < 0.312f && b < 0.300f) return ColorLabel::RED;
+    if (b > 0.216f && r < 0.390f)               return ColorLabel::BLUE;
+    if (r > 0.416f && g > 0.350f && b < 0.250f) return ColorLabel::YELLOW;
 
     // Canales parejos = superficie gris: el tapete de la pista.
     return ColorLabel::FLOOR;
@@ -374,14 +388,12 @@ void RunCalibration() {
         if ((uint32_t)(millis() - lastBlink) > 150) {
             lastBlink = millis();
             blinkState = !blinkState;
-            digitalWrite(Pins::LED_TEAM_RED, blinkState ? HIGH : LOW);
-            digitalWrite(Pins::LED_TEAM_BLUE, blinkState ? HIGH : LOW);
+            RgbLed::SetRaw(blinkState ? 255 : 0, blinkState ? 255 : 0, blinkState ? 255 : 0);
         }
         delay(5);
     }
 
-    digitalWrite(Pins::LED_TEAM_RED, LOW);
-    digitalWrite(Pins::LED_TEAM_BLUE, LOW);
+    RgbLed::SetRaw(0, 0, 0);
 
     const uint16_t leftSpan  = leftMax - leftMin;
     const uint16_t rightSpan = rightMax - rightMin;
@@ -420,6 +432,15 @@ enum class Edge : uint8_t { NONE, LEFT, RIGHT, BOTH };
 
 State g_state = State::FORWARD;
 Edge g_triggeredBy = Edge::NONE;
+
+const char *EdgeName(Edge e) {
+    switch (e) {
+        case Edge::LEFT:  return "IZQ";
+        case Edge::RIGHT: return "DER";
+        case Edge::BOTH:  return "AMBOS";
+        default:          return "-";
+    }
+}
 uint32_t g_stateStartMs = 0;
 
 void EnterState(State s, Edge trigger = Edge::NONE) {
@@ -428,11 +449,17 @@ void EnterState(State s, Edge trigger = Edge::NONE) {
     if (trigger != Edge::NONE) g_triggeredBy = trigger;
 }
 
-void UpdateEdgeLeds() {
-    digitalWrite(Pins::LED_TEAM_RED,  (g_state != State::FORWARD &&
-        (g_triggeredBy == Edge::LEFT  || g_triggeredBy == Edge::BOTH)) ? HIGH : LOW);
-    digitalWrite(Pins::LED_TEAM_BLUE, (g_state != State::FORWARD &&
-        (g_triggeredBy == Edge::RIGHT || g_triggeredBy == Edge::BOTH)) ? HIGH : LOW);
+// Con un solo LED ya no se puede mostrar a la vez el color del piso y qué
+// sensor disparó el borde. Manda el borde: es el evento, y el color se
+// vuelve a ver en cuanto termina la maniobra. Cuál de los dos sensores
+// disparó sigue saliendo por consola (ver el printf de telemetría), que es
+// donde de todas formas se lee al ajustar umbrales.
+//
+// Destello ROJO/AZUL alterno = maniobra de borde, el mismo código de alerta
+// que usa firmware-esp32-standalone/. No se puede confundir con ningún color
+// de piso porque esos se muestran fijos.
+bool MostrandoBorde() {
+    return g_state != State::FORWARD;
 }
 
 void RunStateMachine(bool leftOnLine, bool rightOnLine) {
@@ -478,8 +505,6 @@ void RunStateMachine(bool leftOnLine, bool rightOnLine) {
             break;
         }
     }
-
-    UpdateEdgeLeds();
 }
 
 // ===========================================================================
@@ -525,7 +550,12 @@ void UpdateColorSensors() {
         }
     }
 
-    RgbLed::ApplyLabel(g_frontOk ? g_frontLabel : ColorLabel::UNKNOWN);
+    if (MostrandoBorde()) {
+        if (((millis() / 125) % 2) == 0) RgbLed::SetRaw(255, 0, 0);
+        else                             RgbLed::SetRaw(0, 0, 255);
+    } else {
+        RgbLed::ApplyLabel(g_frontOk ? g_frontLabel : ColorLabel::UNKNOWN);
+    }
 }
 
 // ===========================================================================
@@ -537,8 +567,6 @@ void setup() {
     delay(200);
     DEBUG_LINK.println("\nPrueba 02 - Cuadro + color + RGB");
 
-    pinMode(Pins::LED_TEAM_RED, OUTPUT);
-    pinMode(Pins::LED_TEAM_BLUE, OUTPUT);
 
     // Reflectancia: ADC de 12 bits, atenuación 11 dB para cubrir la
     // excursión completa del QTR a 3.3 V.
@@ -593,12 +621,12 @@ void loop() {
     if ((uint32_t)(millis() - lastPrint) > 200) {
         lastPrint = millis();
         DEBUG_LINK.printf(
-            "izq=%u(%s) der=%u(%s) estado=%d | "
+            "izq=%u(%s) der=%u(%s) estado=%d disparo=%s | "
             "color_delant=%s [R=%u G=%u B=%u C=%u]%s | "
             "color_tras=%s [R=%u G=%u B=%u C=%u]%s\n",
             left, leftOnLine ? "NEGRO" : "gris",
             right, rightOnLine ? "NEGRO" : "gris",
-            (int)g_state,
+            (int)g_state, EdgeName(g_triggeredBy),
             ColorLabelName(g_frontLabel), g_frontRaw.r, g_frontRaw.g, g_frontRaw.b, g_frontRaw.c,
             g_frontOk ? "" : " (SIN RESPUESTA)",
             ColorLabelName(g_backLabel), g_backRaw.r, g_backRaw.g, g_backRaw.b, g_backRaw.c,

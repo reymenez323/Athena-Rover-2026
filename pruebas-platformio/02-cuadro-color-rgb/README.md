@@ -31,17 +31,34 @@ código) gira al revés respecto a las otras tres. Se resuelve intercambiando
 el orden de `L298N_L_IN1`/`L298N_L_IN2` en la definición de `kMotorFL` — sin
 flags ni ramas en `MotorApply()`, que queda idéntica para los 4 motores.
 
-## Cableado nuevo — LED RGB
+## LED RGB
 
-No estaba en `hardware/conexiones-esp32-s3.md` (esa doc solo documenta los 2
-LED de equipo rojo/azul). Se usaron los únicos 3 GPIO que esa misma doc
-marca libres para ampliaciones:
+Es el **único** LED del robot: los 2 LED discretos rojo/azul de equipo que
+esta prueba usaba en GPIO 40 y 41 ya no existen, fueron reemplazados por
+este. Los pines son los mismos que usa `firmware-esp32/` (ver
+`hardware/conexiones-esp32-s3.md`):
 
 | Canal | GPIO ESP32-S3 |
 |-------|:-------------:|
 | R | **39** |
 | G | **38** |
-| B | **3** (strapping de JTAG — solo importa su nivel al encender/resetear; como salida normal después de bootear no da problema) |
+| B | **41** |
+
+> El canal azul estuvo en GPIO 3 hasta que ese pin pasó a ser el **XSHUT del
+> VL53L1X**. Manejarlo desde acá dejaría al ToF en reset permanente sobre el
+> chasis real.
+
+### Qué muestra
+
+Normalmente, **el color que clasifica el sensor delantero** — que es el
+propósito de esta prueba. Mientras dura una maniobra de borde, en cambio,
+destella alternando **rojo/azul** (el mismo código de alerta que usa
+`firmware-esp32-standalone/`), y durante la calibración de arranque parpadea
+en **blanco**.
+
+Con un solo LED no se puede mostrar el color y qué sensor disparó el borde a
+la vez, así que **cuál de los dos disparó ahora sale por consola**, en el
+campo `disparo=` de la telemetría.
 
 **Polaridad confirmada:** el LED del robot es **cátodo común** (duty PWM alto
 = canal más brillante), que es como ya está el código (`kRgbCommonAnode` en
@@ -110,8 +127,5 @@ son el mismo punto de partida documentado allá. Para ajustarlos:
   ese bus y las resistencias pull-up (4.7 kΩ a 3.3 V) — ver la nota de I2C en
   `hardware/conexiones-esp32-s3.md`.
 - **El RGB no enciende o se queda en un color raro**: confirmar los 3 GPIO
-  (39/38/3). ⚠️ Ojo: esta prueba usa **GPIO 3** para el canal azul, pero el
-  firmware de vuelo lo movió a **GPIO 41** (le cedió el 3 al XSHUT del
-  VL53L1X). Si vas a correr esta prueba sobre el chasis ya cableado según
-  `hardware/conexiones-esp32-s3.md`, tenés que mover ese cable.
+  (39/38/41) y que el LED sea de cátodo común (`kRgbCommonAnode` en `false`).
 - **Bordes del cuadro**: mismos síntomas y causas que en la prueba 01.

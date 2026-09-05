@@ -3,9 +3,13 @@
 //  Athena Rover 2026 · Retos del Rover H07 · INTEC · Reymildo & Montse
 // ===========================================================================
 //
-//  OBJETIVO: la única función de este sketch es mandar los servos del
-//  gripper (pinza y elevación, canales 0 y 1 del PCA9685) a 0°, y dejarlos
-//  ahí. Sin sensores, sin lógica, sin protocolo con la Raspberry Pi.
+//  OBJETIVO: la única función de este sketch es mandar el servo del gripper
+//  (la pinza, canal 0 del PCA9685) a 0°, y dejarlo ahí. Sin sensores, sin
+//  lógica, sin protocolo con la Raspberry Pi.
+//
+//  El robot tiene UN SOLO servo. Este sketch movía también un canal 1 de
+//  "elevación" que nunca existió en el hardware: escribirle no rompía nada,
+//  pero hacía creer que había un segundo servo que montar y calibrar.
 //
 //  Para qué sirve:
 //    - Punto de referencia mecánico fijo (0°) para montar los brazos/cuernos
@@ -39,8 +43,7 @@ namespace I2CAddr {
 
 // Canales del PCA9685 usados por el gripper (ver firmware-esp32/src/main.cpp).
 namespace ServoChannel {
-    constexpr uint8_t CLAW = 0;   // abre/cierra la pinza
-    constexpr uint8_t LIFT = 1;   // sube/baja el gripper
+    constexpr uint8_t CLAW = 0;   // abre/cierra la pinza — el único servo
 }
 
 #define DEBUG_LINK Serial0   // consola por el puerto UART del DevKit
@@ -132,7 +135,7 @@ namespace Pca9685 {
 void setup() {
     DEBUG_LINK.begin(115200);
     delay(200);
-    DEBUG_LINK.println("\nPrueba 04 - Servos a cero (pinza y elevacion)");
+    DEBUG_LINK.println("\nPrueba 04 - Servo del gripper a cero");
 
     Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
 
@@ -143,10 +146,8 @@ void setup() {
 
     const uint16_t zero_ticks = ServoAngleToTicks(0);
     const bool claw_ok = Pca9685::SetChannel(ServoChannel::CLAW, zero_ticks);
-    const bool lift_ok = Pca9685::SetChannel(ServoChannel::LIFT, zero_ticks);
 
     DEBUG_LINK.printf("[Setup] pinza a 0: %s\n", claw_ok ? "OK" : "FALLO");
-    DEBUG_LINK.printf("[Setup] elevacion a 0: %s\n", lift_ok ? "OK" : "FALLO");
 }
 
 void loop() {

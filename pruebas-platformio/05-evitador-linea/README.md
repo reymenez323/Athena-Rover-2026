@@ -76,7 +76,7 @@ ver `platformio.ini`.
 Los pines completos de `hardware/conexiones-esp32-s3.md`, en los sensores
 que toca esta prueba: los 2 QTR (GPIO1/2) + control de emisores (GPIO42),
 los 2 TCS34725 por I2C0 (GPIO8/9) e I2C1 (GPIO47/48) + sus LED (GPIO18/21),
-los 2 L298N, el LED de equipo (GPIO40/41) y el LED RGB (GPIO39/38/3). No
+los 2 L298N y el LED RGB (GPIO39/38/41). No
 requiere el PCA9685 — en todo lo demás es un subconjunto completo del
 firmware final.
 
