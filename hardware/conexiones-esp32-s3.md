@@ -435,8 +435,18 @@ más abajo — es exactamente el escenario que se evitó no tocando esos pines.
 | Terminal del switch | Conexión | Cable | Nota |
 |---|---|:---:|---|
 | Común (pin del medio) | **GND** | **Negro** | |
-| Tiro "AZUL" | **GPIO 21** | **Azul** | Cerrado a GND = equipo azul (buscar bandera roja) |
-| Tiro "ROJO" | **GPIO 40** | **Azul** | Cerrado a GND = equipo rojo (buscar bandera azul) |
+| Tiro "AZUL" | **GPIO 40** | **Azul** | Cerrado a GND = equipo azul (buscar bandera roja) |
+| Tiro "ROJO" | **GPIO 21** | **Azul** | Cerrado a GND = equipo rojo (buscar bandera azul) |
+
+> ⚠️ Esta tabla quedó **al revés** en el borrador original (GPIO 21 = AZUL,
+> GPIO 40 = ROJO) — al cablear el switch de verdad en banco, los tiros
+> quedaron invertidos respecto a ese borrador. El firmware (`Pins::
+> TEAM_SWITCH_BLUE`/`TEAM_SWITCH_RED` en `firmware-esp32/` y
+> `firmware-esp32-standalone/`) ya se corrigió para reflejar ESTA tabla, la
+> real. Si vuelves a cablear el switch desde cero y por algún motivo los
+> tiros no dan estos GPIO, confirmalo con `TLM_TEAM_SWITCH` (o
+> `scripts/prueba_enlace.py --solo-escuchar`) antes de asumir que coincide
+> con lo escrito acá.
 
 Los 2 GPIO se leen con **pull-up interno** (`INPUT_PULLUP`, sin resistencias
 externas): el ESP32-S3 los sostiene en 3.3 V por su cuenta, y el switch
@@ -453,7 +463,7 @@ ni poner resistencias externas.
 > canales del LED RGB, etc.) — el nombre del tiro ("AZUL"/"ROJO") describe
 > el equipo, no el color físico del cable.
 
-| Posición física | GPIO 21 (AZUL) | GPIO 40 (ROJO) | Significado |
+| Posición física | GPIO 40 (AZUL) | GPIO 21 (ROJO) | Significado |
 |:---:|:---:|:---:|---|
 | **0** (centro) | HIGH | HIGH | Nadie ha elegido equipo. El robot no se mueve. |
 | **1** | LOW | HIGH | Equipo **AZUL** — misión: buscar la bandera **roja** |
@@ -510,10 +520,10 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 2 | QTR derecho (ADC) | 16 | L298N‑I ENB |
 | 3 | XSHUT del VL53L1X (ToF) | 17 | L298N‑D ENB |
 | 4 | L298N‑I IN1 | 18 | LED TCS34725 delantero |
-| 5 | L298N‑I IN2 | 21 | Switch equipo — tiro AZUL |
+| 5 | L298N‑I IN2 | 21 | Switch equipo — tiro ROJO |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro ROJO |
+| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro AZUL |
 | 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |

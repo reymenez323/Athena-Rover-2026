@@ -54,6 +54,21 @@ propósito):
 chmod +x models/athena_ei_banderas.eim
 ```
 
+**Obligatorio también:** el apagado seguro (ver más abajo) necesita permiso
+`sudo` SIN contraseña para el comando `shutdown` puntual -- el servicio
+corre sin terminal interactiva, así que un `sudo` que pida contraseña se
+quedaría colgado para siempre esperándola. Se agrega en un archivo aparte
+bajo `/etc/sudoers.d/`, no editando `/etc/sudoers` directamente (mismo
+efecto, menos riesgo de dejar el archivo principal mal formado):
+
+```bash
+echo "$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/shutdown, /sbin/shutdown" | sudo tee /etc/sudoers.d/athena-rover-shutdown
+sudo visudo -c   # valida la sintaxis antes de confiar en el archivo
+```
+
+Esto le da permiso a tu usuario de correr *solamente* `shutdown` sin
+contraseña -- nada más se amplía.
+
 ```bash
 sudo cp deploy/athena-rover.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -67,6 +82,30 @@ sudo systemctl start athena-rover.service
 sudo systemctl status athena-rover.service
 journalctl -u athena-rover.service -f      # log en vivo, Ctrl+C para salir
 ```
+
+## 2b. Apagado seguro al terminar una ronda
+
+Cuando el switch físico de equipo vuelve al **centro** (posición 0) DESPUÉS
+de haber estado en AZUL o ROJO, `run_rover.py` interpreta eso como "ya
+terminé" y pide un `sudo shutdown -h now` -- no se limita a terminar el
+proceso. Es a propósito: cortar la energía de la Raspberry Pi con el sistema
+de archivos todavía montado es la forma clásica de corromper la tarjeta SD,
+y como el objetivo de este arranque automático es no depender de monitor ni
+SSH, hacía falta una forma de apagar la Pi que tampoco dependiera de eso.
+
+**Procedimiento al terminar una ronda:**
+
+1. Mové el switch físico de 3 posiciones de vuelta al centro (posición 0).
+2. Esperá a que la Raspberry Pi termine de apagarse sola -- unos 15-20
+   segundos es normal. Si tiene un LED de actividad de la propia tarjeta SD,
+   dejar de parpadear es la señal más confiable; si no, esperá ese margen de
+   tiempo igual.
+3. Recién ahí desenergizá el robot (el switch general de la batería).
+
+Si el log (`journalctl -u athena-rover.service -f`) muestra el aviso de
+"Apagando la Raspberry Pi de forma segura" pero el sistema NO se apaga, casi
+seguro es que falta el permiso `sudo` sin contraseña de más arriba -- el
+propio log lo dice explícitamente en vez de fallar en silencio.
 
 ## 3. Cambiar de equipo antes de una ronda
 

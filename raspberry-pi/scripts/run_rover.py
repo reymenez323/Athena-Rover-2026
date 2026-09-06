@@ -17,6 +17,15 @@ puro inicio de la secuencia -- posición 0/central = nadie ha elegido todavía
 existiendo para bancos de prueba sin el switch instalado: si se pasa, se usa
 directamente y no se espera nada del ESP32.
 
+APAGADO SEGURO: cuando el switch vuelve al centro DESPUÉS de haber estado en
+un equipo real (la señal de "ya terminé"), este script pide un ``sudo
+shutdown`` -- no solo termina el proceso -- para no dejar que corten la
+energía del robot con la Raspberry Pi todavía con el sistema de archivos
+montado (la forma clásica de corromper la tarjeta SD). No se sale del bucle
+al completar la misión (``Phase.TERMINADO``) justamente para poder seguir
+esperando esa señal después de una ronda. Requiere permiso ``sudo`` sin
+contraseña para ese comando puntual -- ver ``deploy/README.md``.
+
 DISEÑO DEL BUCLE: es de un solo hilo a propósito (la captura de cámara sí corre
 aparte). Percepción, decisión y envío en el mismo hilo hacen que el orden de
 los eventos sea siempre el mismo y que un fallo sea reproducible. Con varios
@@ -31,7 +40,11 @@ un proceso caído pierde seguro.
 REPARTO DE SENSORES (quién resuelve qué):
 
 * **Cámara USB + modelo FOMO de Edge Impulse** -> encontrar la bandera del
-  equipo contrario. Es lo único que hace la cámara.
+  equipo contrario. Es lo único que hace la cámara. Si el modelo no la ve en
+  un cuadro (por ejemplo, iluminación distinta a la de sus fotos de
+  entrenamiento), se prueba con ``athena.color_shape_detector`` -- color HSV
+  + relación de aspecto del cilindro, de pie o caído -- antes de darse por
+  vencido ese cuadro. El modelo manda cuando los dos coinciden.
 * **Sensores de color (TCS34725)** -> las zonas de color del piso: el amarillo
   de la zona neutra (dónde soltar la llave) y el rojo/azul de la zona propia
   (dónde termina la misión). Llegan como ``ColorTelemetry``.
@@ -63,6 +76,7 @@ import argparse
 import logging
 import math
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -72,6 +86,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
 from athena.centering import calcular_giro, error_horizontal  # noqa: E402
+from athena.color_shape_detector import ColorShapeDetection, ColorShapeDetector  # noqa: E402
 from athena.config import Config  # noqa: E402
 from athena.decision import DecisionMaker, Phase, RobotState  # noqa: E402
 from athena.ei_flag_detector import EiDetection, EiFlagDetector  # noqa: E402
@@ -84,7 +99,39 @@ from athena.protocol import (  # noqa: E402
     TeamSwitchTelemetry,
     ToFTelemetry,
 )
-from athena.types import Detection, ObjectClass, Perception  # noqa: E402
+from athena.types import BBox, Detection, ObjectClass, Perception  # noqa: E402
+
+
+def _apagar_pi_de_forma_segura() -> None:
+    """Pide un apagado ORDENADO del sistema operativo, no solo del proceso.
+
+    Por qué existe: cortar la energía de la Raspberry Pi con el sistema de
+    archivos montado (en vez de un ``shutdown`` que lo desmonta primero) es
+    el mecanismo clásico de corrupción de tarjeta SD. Sin esto, la única
+    forma de terminar una ronda es apagar el proceso (Ctrl+C, o que
+    ``Phase.TERMINADO`` lo cierre solo) y confiar en que quien opera el
+    robot recuerde entrar por SSH a hacer ``sudo shutdown`` antes de
+    desenergizar -- exactamente lo que se quiere evitar al no depender de
+    monitor/SSH cada vez.
+
+    Requiere que el usuario del servicio tenga permiso ``sudo`` SIN
+    contraseña para este comando puntual (ver ``deploy/README.md``, sección
+    de apagado seguro) -- el proceso corre sin terminal interactiva, así que
+    un ``sudo`` que pida contraseña se quedaría colgado para siempre.
+    """
+    log.warning(
+        "Apagando la Raspberry Pi de forma segura (sudo shutdown). "
+        "Esperá a que el sistema termine de apagarse antes de desenergizar el robot."
+    )
+    try:
+        subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+    except Exception:
+        log.exception(
+            "No se pudo iniciar el apagado automático (¿falta el permiso sudo "
+            "sin contraseña? ver deploy/README.md). Apagá la Raspberry Pi a "
+            "mano con:  sudo shutdown -h now"
+        )
+
 
 log = logging.getLogger("rover")
 _parar = False
@@ -99,6 +146,69 @@ def _signal_handler(signum, frame) -> None:
     log.info("Señal recibida, deteniendo...")
 
 
+def _perception_from_box(
+    box: BBox,
+    confidence: float,
+    cls_objetivo: ObjectClass,
+    frame_width: int,
+    frame_height: int,
+    cfg: Config,
+    frame_id: int,
+    timestamp: float,
+    latency_ms: float,
+) -> Perception:
+    """Traduce una caja (de CUALQUIER detector) a un ``Perception``.
+
+    ``decision.py`` no sabe ni necesita saber cómo se detectó la bandera --
+    modelo de Edge Impulse o el detector de color+forma de respaldo, ver
+    ``_percepcion_desde_ei``/``_percepcion_desde_color`` -- así que ambos
+    caminos terminan acá. El ángulo y la distancia salen del modelo pinhole
+    de siempre, con la focal reescalada al ancho real del frame en el que
+    está medida ``box`` (``focal_px`` está calibrada contra
+    ``CameraConfig.process_width``, ver el docstring de ``GeometryConfig``).
+
+    DE PIE O CAÍDA: se usa el lado MÁS LARGO de la caja (``max(w, h)``) como
+    referencia de los 150 mm del cilindro, no siempre ``h`` -- de pie es
+    prácticamente lo mismo (el lado largo ya es el alto), pero si la bandera
+    se cayó y quedó de costado, el lado largo pasa a ser el ancho, y usar
+    ``h`` a ciegas ahí daría una distancia varias veces menor a la real (le
+    metería el diámetro donde va la altura).
+
+    La distancia que sale de acá es una ESTIMACIÓN por tamaño aparente, buena
+    para decidir cuándo frenar. La que dispara el cierre de la pinza es la del
+    ToF del ESP32, que mide de verdad: ver ``decision._aproximar_bandera``.
+    """
+    if frame_width <= 0:
+        return Perception(
+            frame_id=frame_id, timestamp=timestamp, detections=(),
+            latency_ms=latency_ms, model_active=True,
+        )
+
+    escala = frame_width / cfg.camera.process_width
+    focal_px = cfg.geometry.focal_px * escala
+
+    angle_deg = math.degrees(math.atan2(box.cx - frame_width / 2.0, focal_px))
+
+    distance_mm: float | None = None
+    lado_largo = max(box.w, box.h)
+    # Si la bandera está cortada por cualquier borde del frame, su tamaño
+    # aparente es menor que el real y la distancia saldría inflada: se
+    # descarta en vez de confiar en una medición parcial.
+    tocando_borde = box.x <= 1 or box.y <= 1 or (box.x + box.w) >= frame_width - 1 \
+        or (box.y + box.h) >= frame_height - 1
+    if lado_largo > 0 and not tocando_borde:
+        distance_mm = focal_px * cfg.geometry.bandera_altura_mm / lado_largo
+
+    deteccion = Detection(
+        cls=cls_objetivo, box=box, confidence=confidence,
+        distance_mm=distance_mm, angle_deg=angle_deg, track_id=1,
+    )
+    return Perception(
+        frame_id=frame_id, timestamp=timestamp, detections=(deteccion,),
+        latency_ms=latency_ms, model_active=True,
+    )
+
+
 def _percepcion_desde_ei(
     objetivo: EiDetection | None,
     cls_objetivo: ObjectClass,
@@ -109,44 +219,44 @@ def _percepcion_desde_ei(
     timestamp: float,
     latency_ms: float,
 ) -> Perception:
-    """Traduce la mejor detección de Edge Impulse a un ``Perception``.
-
-    ``decision.py`` no sabe ni necesita saber cómo se detectó la bandera:
-    recibe siempre el mismo tipo de objeto. El ángulo y la distancia salen del
-    modelo pinhole de siempre, pero con la focal reescalada al tamaño de frame
-    que usa Edge Impulse (120x120 en este proyecto), porque ``focal_px`` está
-    calibrada contra ``CameraConfig.process_width`` (320 px) -- ver el
-    docstring de ``GeometryConfig``.
-
-    La distancia que sale de acá es una ESTIMACIÓN por tamaño aparente, buena
-    para decidir cuándo frenar. La que dispara el cierre de la pinza es la del
-    ToF del ESP32, que mide de verdad: ver ``decision._aproximar_bandera``.
-    """
+    """Traduce la mejor detección de Edge Impulse a un ``Perception``."""
     if objetivo is None or frame_width_ei <= 0:
         return Perception(
             frame_id=frame_id, timestamp=timestamp, detections=(),
             latency_ms=latency_ms, model_active=True,
         )
-
-    escala = frame_width_ei / cfg.camera.process_width
-    focal_px = cfg.geometry.focal_px * escala
-
-    box = objetivo.box
-    angle_deg = math.degrees(math.atan2(box.cx - frame_width_ei / 2.0, focal_px))
-
-    distance_mm: float | None = None
-    # Si la bandera está cortada por el borde del frame, su altura aparente
-    # es menor que la real y la distancia saldría inflada: se descarta.
-    if box.h > 0 and box.y > 1 and (box.y + box.h) < frame_height_ei - 1:
-        distance_mm = focal_px * cfg.geometry.bandera_altura_mm / box.h
-
-    deteccion = Detection(
-        cls=cls_objetivo, box=box, confidence=objetivo.confidence,
-        distance_mm=distance_mm, angle_deg=angle_deg, track_id=1,
+    return _perception_from_box(
+        objetivo.box, objetivo.confidence, cls_objetivo,
+        frame_width_ei, frame_height_ei, cfg, frame_id, timestamp, latency_ms,
     )
-    return Perception(
-        frame_id=frame_id, timestamp=timestamp, detections=(deteccion,),
-        latency_ms=latency_ms, model_active=True,
+
+
+def _percepcion_desde_color(
+    objetivo: ColorShapeDetection | None,
+    cls_objetivo: ObjectClass,
+    frame_width: int,
+    frame_height: int,
+    cfg: Config,
+    frame_id: int,
+    timestamp: float,
+    latency_ms: float,
+) -> Perception:
+    """Traduce la mejor detección del respaldo color+forma a un ``Perception``.
+
+    Mismo tratamiento que ``_percepcion_desde_ei``, pero las cajas de
+    ``ColorShapeDetector`` están medidas en el frame de captura COMPLETO
+    (``Camera.read_full()``), no en el 120x120 recortado por el SDK de Edge
+    Impulse -- por eso ``frame_width``/``frame_height`` acá son los de
+    ``frame.shape``, no ``EiFlagDetector.frame_width``.
+    """
+    if objetivo is None or frame_width <= 0:
+        return Perception(
+            frame_id=frame_id, timestamp=timestamp, detections=(),
+            latency_ms=latency_ms, model_active=True,
+        )
+    return _perception_from_box(
+        objetivo.box, objetivo.confidence, cls_objetivo,
+        frame_width, frame_height, cfg, frame_id, timestamp, latency_ms,
     )
 
 
@@ -270,12 +380,21 @@ def main() -> int:
             log.info("Equipo elegido -- esperando %.1fs antes de empezar...", args.delay_inicio)
             time.sleep(args.delay_inicio)
 
+        # Detector de respaldo cuando el modelo de Edge Impulse falla por
+        # iluminación distinta a la de sus fotos de entrenamiento: no
+        # necesita abrir nada (no tiene ciclo de vida propio), así que va
+        # aparte del `with` de arriba.
+        color_detector = ColorShapeDetector(geometry=cfg.geometry)
+
         with Camera(cfg.camera) as cam, \
              EiFlagDetector(modelo_path, min_confidence=args.min_confianza) as ei_detector, \
              EspLink(cfg.serial_port, cfg.serial_baud) as link:
 
             link.send_led(equipo)          # el reglamento exige identificarse
             ultimo_led = time.monotonic()
+            ultima_fuente_deteccion = None
+            ultimo_switch: TeamSwitchTelemetry | None = None
+            apagado_solicitado = False
 
             while not _parar:
                 # --- 1. Telemetría del ESP32 -------------------------------
@@ -286,11 +405,48 @@ def main() -> int:
                         ultimo_reflect = paquete
                     elif isinstance(paquete, ToFTelemetry):
                         ultimo_tof = paquete
+                    elif isinstance(paquete, TeamSwitchTelemetry):
+                        # El switch volviendo al CENTRO después de haber
+                        # estado en un equipo real es la señal de "ya
+                        # terminé, apagame": dispara un shutdown ordenado en
+                        # vez de esperar a que alguien entre por SSH a
+                        # hacerlo, o peor, que corten la energía en frío.
+                        #
+                        # No dispara al arrancar: _esperar_equipo_del_switch
+                        # ya garantiza que este bucle solo empieza con el
+                        # switch en una posición de equipo, así que hace
+                        # falta una lectura PREVIA que ya fuera un equipo
+                        # real -- en banco con --equipo (switch sin instalar,
+                        # reportando NONE todo el tiempo) esa condición nunca
+                        # se cumple y el apagado nunca se dispara solo.
+                        if (ultimo_switch is not None
+                                and ultimo_switch.team is not TeamColor.NONE
+                                and paquete.team is TeamColor.NONE):
+                            apagado_solicitado = True
+                        ultimo_switch = paquete
                     elif isinstance(paquete, HealthTelemetry) and paquete.faulted_bitmask:
                         # No se aborta la ronda por esto: se registra y se sigue
                         # compitiendo con lo que quede funcionando.
                         log.warning("El ESP32 reporta tareas colgadas: %s",
                                     ", ".join(paquete.faulted_tasks))
+
+                if apagado_solicitado:
+                    log.warning("Switch de equipo -> centro (posición 0).")
+                    if not args.simular:
+                        link.send_stop()
+                    _apagar_pi_de_forma_segura()
+                    break
+
+                if decisor.state.phase is Phase.TERMINADO:
+                    # Ronda completa: ya no hay nada que decidir ni
+                    # perseguir, así que se deja de gastar cámara y modelo en
+                    # esto (el cambio de fase ya se registró la única vez que
+                    # pasó, más abajo). Se sigue dando la vuelta al bucle
+                    # -- no se sale del proceso -- solo para poder seguir
+                    # drenando telemetría arriba y detectar el switch
+                    # volviendo al centro.
+                    time.sleep(0.05)
+                    continue
 
                 # --- 2. Percepción (cámara USB -> Edge Impulse) ------------
                 # read_full() (resolución de captura completa), no read(): el
@@ -306,12 +462,42 @@ def main() -> int:
 
                 detecciones = ei_detector.detect(frame)
                 objetivo_ei = EiFlagDetector.best(detecciones, etiqueta_objetivo)
-                percepcion = _percepcion_desde_ei(
-                    objetivo_ei, decisor.state.bandera_objetivo,
-                    ei_detector.frame_width, ei_detector.frame_height,
-                    cfg, frame_id=frames, timestamp=time.time(),
-                    latency_ms=ei_detector.last_timing_ms,
-                )
+
+                # Respaldo: si el modelo no vio la bandera este cuadro, se
+                # prueba con color+forma antes de darse por vencido. Se
+                # calcula siempre (no solo cuando el modelo falla) porque es
+                # barato -- OpenCV puro, sin red neuronal -- y así el overlay
+                # de --ver también puede mostrarlo aunque el modelo sí haya
+                # detectado algo.
+                color_detecciones = color_detector.detect(frame)
+                objetivo_color = ColorShapeDetector.best(color_detecciones, etiqueta_objetivo)
+
+                fh_frame, fw_frame = frame.shape[:2]
+                if objetivo_ei is not None:
+                    fuente_deteccion = "modelo"
+                    percepcion = _percepcion_desde_ei(
+                        objetivo_ei, decisor.state.bandera_objetivo,
+                        ei_detector.frame_width, ei_detector.frame_height,
+                        cfg, frame_id=frames, timestamp=time.time(),
+                        latency_ms=ei_detector.last_timing_ms,
+                    )
+                elif objetivo_color is not None:
+                    fuente_deteccion = "color+forma"
+                    percepcion = _percepcion_desde_color(
+                        objetivo_color, decisor.state.bandera_objetivo,
+                        fw_frame, fh_frame, cfg, frame_id=frames,
+                        timestamp=time.time(), latency_ms=ei_detector.last_timing_ms,
+                    )
+                else:
+                    fuente_deteccion = None
+                    percepcion = Perception(
+                        frame_id=frames, timestamp=time.time(), detections=(),
+                        latency_ms=ei_detector.last_timing_ms, model_active=True,
+                    )
+
+                if fuente_deteccion != ultima_fuente_deteccion and fuente_deteccion is not None:
+                    log.info("Bandera detectada por: %s", fuente_deteccion)
+                ultima_fuente_deteccion = fuente_deteccion
 
                 # --- 3. Decisión --------------------------------------------
                 comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect, ultimo_tof)
@@ -329,8 +515,15 @@ def main() -> int:
                 # al error) en vez del control angular -- es la lógica de
                 # centrado que se pidió, aplicada sobre la caja real que
                 # acaba de devolver el modelo, no sobre el ángulo derivado.
-                if objetivo_ei is not None and decisor.state.phase is Phase.APROXIMAR_BANDERA:
-                    error = error_horizontal(objetivo_ei.box, ei_detector.frame_width)
+                if objetivo_ei is not None:
+                    caja_activa, ancho_activo = objetivo_ei.box, ei_detector.frame_width
+                elif objetivo_color is not None:
+                    caja_activa, ancho_activo = objetivo_color.box, fw_frame
+                else:
+                    caja_activa, ancho_activo = None, 0
+
+                if caja_activa is not None and decisor.state.phase is Phase.APROXIMAR_BANDERA:
+                    error = error_horizontal(caja_activa, ancho_activo)
                     objetivo_det = percepcion.best(decisor.state.bandera_objetivo)
                     cerca = (
                         objetivo_det is not None
@@ -384,6 +577,16 @@ def main() -> int:
                         cv2.rectangle(vista, (x, y), (x + w, y + h), color, 2)
                         cv2.putText(vista, f"{d.label} {d.confidence:.2f}", (x, max(12, y - 5)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    # Cajas del respaldo color+forma, en amarillo, ya en el
+                    # sistema de referencia del frame completo (sin rescalar):
+                    # así se distingue a simple vista cuál detector encontró
+                    # qué, y si el color+forma dispara de más con este fondo.
+                    for d in color_detecciones:
+                        b = d.box
+                        cv2.rectangle(vista, (b.x, b.y), (b.x + b.w, b.y + b.h), (0, 255, 255), 1)
+                        cv2.putText(vista, f"{d.label} ({d.orientation}) {d.confidence:.2f}",
+                                    (b.x, min(fh - 4, b.y + b.h + 12)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
                     cv2.putText(vista, f"{decisor.state.phase.name} | {ei_detector.last_timing_ms:.0f}ms",
                                 (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     if ultimo_tof is not None:
@@ -395,9 +598,6 @@ def main() -> int:
                         break
 
                 frames += 1
-                if decisor.state.phase is Phase.TERMINADO:
-                    log.info("Misión completada.")
-                    break
 
     except Exception:
         log.exception("Fallo en el bucle principal")

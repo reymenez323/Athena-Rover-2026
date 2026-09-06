@@ -36,14 +36,16 @@ raspberry-pi/
 │   ├── link.py             enlace serial: reconexión y descubrimiento de puerto
 │   ├── camera.py           captura en hilo aparte, descartando frames viejos
 │   ├── ei_flag_detector.py el modelo de Edge Impulse -> cajas de banderas
+│   ├── color_shape_detector.py detector auxiliar por color+forma (sin ML), ver más abajo
 │   ├── centering.py        línea central + zona muerta -> giro proporcional
 │   ├── decision.py         máquina de estados de la misión
 │   ├── config.py           parámetros ajustables
 │   └── types.py            tipos comunes de percepción
 ├── scripts/
-│   ├── run_rover.py            EL PROGRAMA DE COMPETENCIA
-│   ├── run_flag_tracker_ei.py  herramienta para calibrar el seguimiento a ojo
-│   └── prueba_enlace.py        prueba de banco del enlace serial (sin cámara)
+│   ├── run_rover.py               EL PROGRAMA DE COMPETENCIA
+│   ├── run_flag_tracker_ei.py     herramienta para calibrar el seguimiento a ojo
+│   ├── prueba_deteccion_color.py  experimento aislado del detector color+forma (solo cámara)
+│   └── prueba_enlace.py           prueba de banco del enlace serial (sin cámara)
 ├── models/                 athena_ei_banderas.eim (el modelo entrenado)
 ├── config/                 rover.json de ESTA Pi (no se versiona)
 ├── deploy/                 arranque automático con systemd
@@ -124,6 +126,22 @@ python3 scripts/run_flag_tracker_ei.py --equipo rojo --ver
 
 > No uses ese script en competencia: no deposita la llave, y arrancarlo solo
 > pierde la ronda de inmediato según el reglamento.
+
+Cuando el modelo de Edge Impulse falla por luz distinta a la de entrenamiento,
+hay un detector auxiliar sin ML (color HSV + relación de aspecto del
+cilindro) para probar como complemento -- ver
+[`athena/color_shape_detector.py`](src/athena/color_shape_detector.py) para
+el porqué. Se prueba aislado, solo con la cámara (sin ESP32):
+
+```bash
+python3 scripts/prueba_deteccion_color.py --equipo rojo --ver
+python3 scripts/prueba_deteccion_color.py --equipo rojo --v-min 40   # luz baja
+```
+
+Ya está integrado en `run_rover.py`: si el modelo no ve la bandera en un
+cuadro, se prueba con este detector antes de darse por vencido. El modelo
+manda cuando los dos coinciden -- ver "REPARTO DE SENSORES" en el docstring
+de `run_rover.py`.
 
 ## El puerto serial
 
