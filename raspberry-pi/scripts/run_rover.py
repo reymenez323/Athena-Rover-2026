@@ -193,6 +193,12 @@ def main() -> int:
     parser.add_argument("--kp", type=float, default=60.0, help="ganancia proporcional del giro al perseguir")
     parser.add_argument("--correccion-max", type=int, default=40)
     parser.add_argument("--min-confianza", type=float, default=0.6)
+    parser.add_argument(
+        "--delay-inicio", type=float, default=2.0,
+        help="segundos de espera tras elegir equipo (switch o --equipo) antes de que "
+             "el robot empiece a asegurar la llave -- lo pide el PDF de lógica, para "
+             "dar tiempo a alejar la mano del switch/robot",
+    )
     parser.add_argument("--ver", action="store_true", help="ventana con lo que ve el robot")
     parser.add_argument("--simular", action="store_true", help="no enviar comandos de motor")
     parser.add_argument("--verbose", action="store_true")
@@ -254,6 +260,15 @@ def main() -> int:
                   equipo.name, decisor.state.bandera_objetivo.value, etiqueta_objetivo)
         if args.simular:
             log.warning("MODO SIMULACIÓN: no se enviarán comandos de motor.")
+
+        # Delay pedido por el PDF de lógica: "una vez seleccionado el equipo,
+        # el robot debe tener un delay antes de pasar a la siguiente acción".
+        # Va aquí, no dentro de DecisionMaker, porque es sobre ELEGIR EQUIPO,
+        # no sobre asegurar la llave (ese segundo delay ya lo maneja
+        # decision.Phase.INICIO por su cuenta, con el gripper).
+        if args.delay_inicio > 0:
+            log.info("Equipo elegido -- esperando %.1fs antes de empezar...", args.delay_inicio)
+            time.sleep(args.delay_inicio)
 
         with Camera(cfg.camera) as cam, \
              EiFlagDetector(modelo_path, min_confidence=args.min_confianza) as ei_detector, \

@@ -43,9 +43,11 @@ class Phase(Enum):
     INICIO = auto()
     BUSCAR_ZONA_NEUTRA = auto()   # llevar la llave al cuadro amarillo
     DEPOSITAR_LLAVE = auto()
+    EVADIR_LLAVE = auto()         # retroceder y esquivarla para no arrastrarla
     BUSCAR_BANDERA = auto()       # solo permitido tras depositar la llave
     APROXIMAR_BANDERA = auto()
     AGARRAR_BANDERA = auto()
+    GIRO_RETORNO = auto()         # giro a tiempo fijo antes de buscar la zona propia
     RETORNAR_A_ZONA = auto()
     ENTREGAR = auto()
     TERMINADO = auto()
@@ -59,6 +61,11 @@ class RobotState:
     bandera_capturada: bool = False
     frames_sin_objetivo: int = 0
     sentido_busqueda: int = 1        # 1 = giro a la derecha, -1 = a la izquierda
+    # Cuadros transcurridos DENTRO de la fase actual. Se reinicia a 0 cada vez
+    # que la fase cambia (ver DecisionMaker._ir_a_fase) y sirve de reloj
+    # aproximado para las fases con un delay o una maniobra a tiempo fijo
+    # (asentar el gripper, esquivar la llave, girar al iniciar el regreso).
+    frames_en_fase: int = 0
 
     @property
     def bandera_objetivo(self) -> ObjectClass:
@@ -120,6 +127,15 @@ class DecisionMaker:
         return replace(self._decidir(perception, color, reflect, tof),
                        bandera_a_la_vista=a_la_vista)
 
+    def _ir_a_fase(self, phase: Phase, **kwargs) -> None:
+        """Cambia de fase y reinicia el reloj (``frames_en_fase``) de la nueva.
+
+        Único punto de la máquina de estados que cambia ``phase``: así
+        ``frames_en_fase`` nunca puede quedar desincronizado de en qué fase
+        se está.
+        """
+        self.state = replace(self.state, phase=phase, frames_en_fase=0, **kwargs)
+
     def _decidir(
         self,
         perception: Perception,
@@ -132,19 +148,26 @@ class DecisionMaker:
         if evasion is not None:
             return evasion
 
+        # El reloj de la fase actual solo avanza cuando de verdad se ejecuta
+        # lógica de esa fase -- si el robot pasó este cuadro evadiendo el
+        # borde, un delay de asentamiento del gripper o una maniobra a
+        # tiempo fijo no deberían "gastar" ese cuadro.
+        self.state = replace(self.state, frames_en_fase=self.state.frames_en_fase + 1)
+
         # --- Prioridad 2 y 3: la fase que toque ----------------------------
         phase = self.state.phase
 
         if phase is Phase.INICIO:
-            # Se arranca con la llave ya sujeta y levantada, listo para moverse.
-            self.state = replace(self.state, phase=Phase.BUSCAR_ZONA_NEUTRA)
-            return Commands(gripper=GripperAction.CLOSE_LLAVE, motivo="asegurar la llave")
+            return self._inicio()
 
         if phase is Phase.BUSCAR_ZONA_NEUTRA:
             return self._buscar_zona_neutra(color)
 
         if phase is Phase.DEPOSITAR_LLAVE:
             return self._depositar_llave()
+
+        if phase is Phase.EVADIR_LLAVE:
+            return self._evadir_llave()
 
         if phase is Phase.BUSCAR_BANDERA:
             return self._buscar_bandera(perception)
@@ -155,11 +178,14 @@ class DecisionMaker:
         if phase is Phase.AGARRAR_BANDERA:
             return self._agarrar_bandera()
 
+        if phase is Phase.GIRO_RETORNO:
+            return self._giro_retorno()
+
         if phase is Phase.RETORNAR_A_ZONA:
             return self._retornar(color)
 
         if phase is Phase.ENTREGAR:
-            self.state = replace(self.state, phase=Phase.TERMINADO)
+            self._ir_a_fase(Phase.TERMINADO)
             return Commands(gripper=GripperAction.OPEN, motivo="soltar la bandera en zona propia")
 
         return Commands(motivo="ronda terminada")
@@ -190,12 +216,27 @@ class DecisionMaker:
 
         return None
 
+    def _inicio(self) -> Commands:
+        """Asegura la llave (ya sujeta y levantada) y espera a que el servo llegue.
+
+        El PDF de lógica pide "un pequeño delay" tras agarrar la caja antes de
+        seguir a la siguiente acción -- sin esto, ``BUSCAR_ZONA_NEUTRA`` podía
+        empezar a mover el robot en el mismo instante en que se mandaba
+        ``CLOSE_LLAVE``, sin que el servo hubiera alcanzado a cerrar de verdad.
+        """
+        if self.state.frames_en_fase == 1:
+            return Commands(gripper=GripperAction.CLOSE_LLAVE, motivo="asegurar la llave")
+        if self.state.frames_en_fase >= self._cfg.frames_asentamiento_gripper:
+            self._ir_a_fase(Phase.BUSCAR_ZONA_NEUTRA)
+            return Commands(motivo="llave asegurada, saliendo a buscar la zona neutra")
+        return Commands(motivo="asentando el cierre de la pinza sobre la llave")
+
     # -- fases de la llave --------------------------------------------------
 
     def _buscar_zona_neutra(self, color: ColorTelemetry | None) -> Commands:
         """Avanza hasta que el sensor delantero vea el amarillo de la zona neutra."""
         if color is not None and color.front_valid and color.front is ColorLabel.YELLOW:
-            self.state = replace(self.state, phase=Phase.DEPOSITAR_LLAVE)
+            self._ir_a_fase(Phase.DEPOSITAR_LLAVE)
             return Commands(motivo="zona neutra alcanzada")
 
         # Sin más información que el color del piso, se avanza en línea recta.
@@ -206,17 +247,52 @@ class DecisionMaker:
         return Commands(v, v, motivo="avanzando hacia la zona neutra")
 
     def _depositar_llave(self) -> Commands:
-        """Baja el gripper, suelta la llave y solo entonces habilita la búsqueda.
+        """Abre el gripper, espera a que el servo llegue y solo entonces evade.
 
-        Este es el único sitio donde ``llave_depositada`` pasa a True. Mientras
-        sea False, ``_buscar_bandera`` no puede ejecutarse: así el error que
-        descalifica de inmediato es imposible por construcción, no por
-        disciplina de quien lea el código.
+        ``llave_depositada`` pasa a True apenas se manda soltar: mientras sea
+        False, ``_buscar_bandera`` no puede ejecutarse (ver su cinturón de
+        seguridad), así que el error que descalifica de inmediato según el
+        reglamento (buscar la bandera antes de depositar la llave) sigue
+        siendo imposible por construcción, no por disciplina de quien lea el
+        código -- eso no cambia por agregar el delay de asentamiento.
         """
-        self.state = replace(
-            self.state, phase=Phase.BUSCAR_BANDERA, llave_depositada=True, frames_sin_objetivo=0
-        )
-        return Commands(gripper=GripperAction.OPEN, motivo="llave depositada en zona neutra")
+        if self.state.frames_en_fase == 1:
+            self.state = replace(self.state, llave_depositada=True)
+            return Commands(gripper=GripperAction.OPEN, motivo="soltando la llave en la zona neutra")
+        if self.state.frames_en_fase >= self._cfg.frames_asentamiento_gripper:
+            self._ir_a_fase(Phase.EVADIR_LLAVE)
+            return Commands(motivo="llave depositada, maniobrando para no arrastrarla")
+        return Commands(motivo="asentando la apertura de la pinza")
+
+    def _evadir_llave(self) -> Commands:
+        """Retrocede y esquiva la llave recién depositada antes de seguir.
+
+        Maniobra pedida explícitamente en el PDF de lógica (y dibujada en el
+        plano de la pista): seguir de frente arrastraría la caja recién
+        depositada. Es a tiempo fijo, sin sensores -- ``frames_retroceso_
+        evasion``/``frames_giro_evasion`` en ``ControlConfig``, A CALIBRAR EN
+        CANCHA según el tamaño real de la caja y dónde quede el robot al
+        detenerse.
+        """
+        f = self.state.frames_en_fase
+        v = self._cfg.velocidad_aproximacion
+        t1 = self._cfg.frames_retroceso_evasion
+        t2 = t1 + self._cfg.frames_giro_evasion
+        t3 = t2 + self._cfg.frames_giro_evasion
+
+        if f <= t1:
+            return Commands(-v, -v, motivo="retrocediendo para no arrastrar la llave")
+        if f <= t2:
+            # Avanza girando a la derecha (izquierda más rápida) para
+            # rodear la caja por su lado derecho -- ver el plano de la pista.
+            return Commands(v, v // 3, motivo="esquivando la llave hacia la derecha")
+        if f <= t3:
+            # Corrige de vuelta hacia la izquierda para volver a quedar de
+            # frente a la zona del contrincante.
+            return Commands(v // 3, v, motivo="reposicionándose de frente tras esquivar la llave")
+
+        self._ir_a_fase(Phase.BUSCAR_BANDERA)
+        return Commands(motivo="maniobra de evasión completada, buscando la bandera")
 
     # -- fases de la bandera ------------------------------------------------
 
@@ -224,14 +300,12 @@ class DecisionMaker:
         # Cinturón de seguridad: si algún día alguien reordena las fases, esto
         # evita que se busque la bandera antes de tiempo y se pierda la ronda.
         if not self.state.llave_depositada:
-            self.state = replace(self.state, phase=Phase.BUSCAR_ZONA_NEUTRA)
+            self._ir_a_fase(Phase.BUSCAR_ZONA_NEUTRA)
             return Commands(motivo="la llave todavía no está depositada")
 
         objetivo = perception.best(self.state.bandera_objetivo)
         if objetivo is not None:
-            self.state = replace(
-                self.state, phase=Phase.APROXIMAR_BANDERA, frames_sin_objetivo=0
-            )
+            self._ir_a_fase(Phase.APROXIMAR_BANDERA, frames_sin_objetivo=0)
             return self._perseguir(objetivo)
 
         # Girar sobre el propio eje barriendo el campo. Se invierte el sentido
@@ -256,9 +330,7 @@ class DecisionMaker:
             frames = self.state.frames_sin_objetivo + 1
             self.state = replace(self.state, frames_sin_objetivo=frames)
             if frames > 10:
-                self.state = replace(
-                    self.state, phase=Phase.BUSCAR_BANDERA, frames_sin_objetivo=0
-                )
+                self._ir_a_fase(Phase.BUSCAR_BANDERA, frames_sin_objetivo=0)
                 return Commands(motivo="objetivo perdido, volviendo a buscar")
             return Commands(motivo="objetivo perdido momentáneamente")
 
@@ -279,21 +351,53 @@ class DecisionMaker:
             distancia = objetivo.distance_mm
 
         if distancia is not None and distancia <= self._cfg.distancia_agarre_mm and centrado:
-            self.state = replace(self.state, phase=Phase.AGARRAR_BANDERA)
+            self._ir_a_fase(Phase.AGARRAR_BANDERA)
             return Commands(motivo="bandera al alcance")
 
         return self._perseguir(objetivo)
 
     def _agarrar_bandera(self) -> Commands:
-        self.state = replace(
-            self.state, phase=Phase.RETORNAR_A_ZONA, bandera_capturada=True
-        )
-        return Commands(gripper=GripperAction.CLOSE_BANDERA, motivo="cerrando la pinza sobre la bandera")
+        """Cierra el gripper sobre la bandera y espera a que el servo llegue.
+
+        Igual que ``_inicio``/``_depositar_llave``: sin este delay,
+        ``GIRO_RETORNO`` podía empezar a girar con la pinza todavía a medio
+        cerrar y tirar la bandera en el proceso.
+
+        LIMITACIÓN CONOCIDA (la señala también el PDF de lógica): no hay
+        forma de VERIFICAR que la bandera quedó bien agarrada -- ningún
+        sensor confirma que el gripper cerró sobre algo y no sobre el aire.
+        Se manda cerrar y se asume que funcionó.
+        """
+        if self.state.frames_en_fase == 1:
+            self.state = replace(self.state, bandera_capturada=True)
+            return Commands(gripper=GripperAction.CLOSE_BANDERA, motivo="cerrando la pinza sobre la bandera")
+        if self.state.frames_en_fase >= self._cfg.frames_asentamiento_gripper:
+            self._ir_a_fase(Phase.GIRO_RETORNO)
+            return Commands(motivo="bandera asegurada, girando para volver a la zona propia")
+        return Commands(motivo="asentando el cierre de la pinza sobre la bandera")
+
+    def _giro_retorno(self) -> Commands:
+        """Gira ~180° a tiempo fijo antes de buscar la zona propia.
+
+        Sin odometría (mismo hueco que anota ``_retornar`` más abajo), el
+        robot suele quedar orientado HACIA el fondo de la pista justo
+        después de perseguir y agarrar la bandera contraria -- seguir de
+        frente en ese momento lo aleja más de su zona, no lo acerca. Un giro
+        a tiempo fijo antes de ``_retornar`` le da al menos una oportunidad
+        real de apuntar de vuelta. ``frames_giro_retorno`` en
+        ``ControlConfig``, A CALIBRAR EN CANCHA -- depende del punto exacto
+        donde se agarra la bandera y de la fricción de la pista.
+        """
+        if self.state.frames_en_fase >= self._cfg.frames_giro_retorno:
+            self._ir_a_fase(Phase.RETORNAR_A_ZONA)
+            return Commands(motivo="giro completado, regresando a la zona propia")
+        v = self._cfg.velocidad_busqueda
+        return Commands(v, -v, motivo="girando ~180° para encarar la zona propia")
 
     def _retornar(self, color: ColorTelemetry | None) -> Commands:
         """Vuelve a la zona propia. La línea de color del piso avisa al llegar."""
         if color is not None and color.front_valid and color.front is self.state.color_zona_propia:
-            self.state = replace(self.state, phase=Phase.ENTREGAR)
+            self._ir_a_fase(Phase.ENTREGAR)
             return Commands(motivo="zona propia alcanzada")
 
         # TODO: aquí hace falta odometría o una referencia visual para saber

@@ -106,6 +106,17 @@ class ControlConfig:
     angulo_muerto_deg: float = 3.0   # por debajo de esto, se considera centrado
     distancia_agarre_mm: float = 120.0  # a esta distancia se cierra la pinza
 
+    # -- Temporizadores de la máquina de estados, en CUADROS de decisión ----
+    # decision.py no tiene reloj de pared (es una función pura de sus
+    # entradas): se cuenta en cuadros, igual que ya hacía la alternancia de
+    # sentido de _buscar_bandera ("90 cuadros ~3s a 30 FPS"). Es una
+    # aproximación -- el bucle real no corre siempre a 30 FPS exactos-- pero
+    # es la misma convención que ya usaba este archivo, no una nueva.
+    frames_asentamiento_gripper: int = 12   # ~0.4s: tiempo para que el servo llegue
+    frames_retroceso_evasion: int = 15      # ~0.5s retrocediendo tras soltar la llave
+    frames_giro_evasion: int = 12           # ~0.4s por cada giro (derecha, luego izquierda)
+    frames_giro_retorno: int = 45           # ~1.5s de giro al iniciar el regreso -- A CALIBRAR EN CANCHA
+
 
 @dataclass(frozen=True)
 class Config:

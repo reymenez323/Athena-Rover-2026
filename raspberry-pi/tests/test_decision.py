@@ -75,11 +75,22 @@ def test_no_se_busca_la_bandera_antes_de_depositar_la_llave():
     assert d.state.phase is Phase.BUSCAR_ZONA_NEUTRA
 
 
+def _avanzar(d: DecisionMaker, n: int, *, color_: ColorTelemetry | None = None) -> None:
+    """Llama a ``step`` ``n`` veces seguidas, para cruzar un delay de fase."""
+    for _ in range(n):
+        d.step(percepcion(), color_, None)
+
+
 def test_la_secuencia_completa_respeta_el_orden_del_reglamento():
     d = DecisionMaker(CFG, RobotState(team=TeamColor.RED))
     assert d.state.phase is Phase.INICIO
 
-    d.step(percepcion(), None, None)
+    # INICIO: el primer cuadro manda CLOSE_LLAVE y el resto es el delay de
+    # asentamiento del servo -- no se avanza a BUSCAR_ZONA_NEUTRA de un tirón.
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.gripper is GripperAction.CLOSE_LLAVE
+    assert d.state.phase is Phase.INICIO
+    _avanzar(d, CFG.frames_asentamiento_gripper - 1)
     assert d.state.phase is Phase.BUSCAR_ZONA_NEUTRA
     assert not d.state.llave_depositada
 
@@ -87,10 +98,71 @@ def test_la_secuencia_completa_respeta_el_orden_del_reglamento():
     d.step(percepcion(), color(ColorLabel.YELLOW), None)
     assert d.state.phase is Phase.DEPOSITAR_LLAVE
 
+    # DEPOSITAR_LLAVE: igual que INICIO, primer cuadro abre y suelta la
+    # llave; el resto es el delay antes de maniobrar para no arrastrarla.
     cmd = d.step(percepcion(), None, None)
     assert cmd.gripper is GripperAction.OPEN
-    assert d.state.llave_depositada
+    assert d.state.llave_depositada          # ya se habilita _buscar_bandera...
+    assert d.state.phase is Phase.DEPOSITAR_LLAVE  # ...pero todavía no se pasa a buscarla
+    _avanzar(d, CFG.frames_asentamiento_gripper - 1)
+    assert d.state.phase is Phase.EVADIR_LLAVE
+
+    # EVADIR_LLAVE: retrocede, gira a la derecha, gira a la izquierda, y
+    # solo AHORA se habilita la búsqueda de la bandera. +1 porque la
+    # transición ocurre recién en el cuadro SIGUIENTE al último de la
+    # maniobra (ver el "else" implícito al final de ``_evadir_llave``).
+    total_evasion = CFG.frames_retroceso_evasion + 2 * CFG.frames_giro_evasion + 1
+    _avanzar(d, total_evasion)
     assert d.state.phase is Phase.BUSCAR_BANDERA   # recién ahora se habilita
+
+
+# ---------------------------------------------------------------------------
+# Maniobra de evasión de la llave y giro de retorno (PDF de lógica)
+# ---------------------------------------------------------------------------
+
+
+def test_evadir_llave_retrocede_luego_gira_derecha_luego_izquierda():
+    """La maniobra pedida en el PDF: retroceder, doblar derecha, doblar izq."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.EVADIR_LLAVE, llave_depositada=True))
+
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left < 0 and cmd.right < 0 and cmd.left == cmd.right   # retrocede recto
+
+    _avanzar(d, CFG.frames_retroceso_evasion - 1)
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left > 0 and cmd.right > 0 and cmd.left > cmd.right    # avanza girando a la derecha
+
+    _avanzar(d, CFG.frames_giro_evasion - 1)
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left > 0 and cmd.right > 0 and cmd.right > cmd.left    # corrige hacia la izquierda
+
+    # +1 extra cuadro: la transición ocurre recién cuando se SUPERA el total
+    # de la maniobra (ver el "else" implícito al final de ``_evadir_llave``).
+    _avanzar(d, CFG.frames_giro_evasion)
+    assert d.state.phase is Phase.BUSCAR_BANDERA
+
+
+def test_agarrar_bandera_espera_el_gripper_antes_de_girar():
+    d = DecisionMaker(CFG, RobotState(phase=Phase.AGARRAR_BANDERA, team=TeamColor.RED,
+                                      llave_depositada=True))
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.gripper is GripperAction.CLOSE_BANDERA
+    assert d.state.bandera_capturada
+    assert d.state.phase is Phase.AGARRAR_BANDERA   # todavía asentando
+
+    _avanzar(d, CFG.frames_asentamiento_gripper - 1)
+    assert d.state.phase is Phase.GIRO_RETORNO
+
+
+def test_giro_retorno_gira_a_tiempo_fijo_y_pasa_a_retornar():
+    d = DecisionMaker(CFG, RobotState(phase=Phase.GIRO_RETORNO, team=TeamColor.RED,
+                                      llave_depositada=True, bandera_capturada=True))
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left != cmd.right                    # está girando, no avanzando recto
+    assert d.state.phase is Phase.GIRO_RETORNO
+
+    _avanzar(d, CFG.frames_giro_retorno - 1)
+    assert d.state.phase is Phase.RETORNAR_A_ZONA
 
 
 def test_el_borde_de_la_pista_tiene_prioridad_sobre_todo():
