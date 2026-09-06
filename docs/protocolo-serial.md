@@ -127,6 +127,29 @@ gana.
   propósito: así el robot frena aunque el problema esté en la tarea de
   comunicación, en el cable USB o en la propia Raspberry Pi.
 
+## Cómo probarlo con hardware de verdad
+
+Los tests de arriba prueban el *contrato*; no prueban el cable. Para eso está
+[`raspberry-pi/scripts/prueba_enlace.py`](../raspberry-pi/scripts/prueba_enlace.py),
+que manda los comandos uno por uno con pausas para mirar el LED y, al mismo
+tiempo, decodifica toda la telemetría que llega de vuelta:
+
+```bash
+cd raspberry-pi
+python3 scripts/prueba_enlace.py --equipo rojo
+```
+
+Lo único que hace falta tener conectado es el cable USB. Las 8 tareas del
+firmware arrancan aunque no haya un solo sensor puesto —cada una reintenta su
+hardware en segundo plano en vez de bloquear—, así que los sensores que falten
+se ven como telemetría **inválida**, no como silencio. Que la trama llegue,
+con el largo correcto y sin descartes, es justamente lo que se está probando.
+
+Al terminar imprime cuántas tramas llegaron de cada tipo, a qué ritmo, y el
+contador de descartadas por checksum malo (`EspLink.dropped_frames`). Ese
+contador es la métrica de calidad del cable: si sube con los motores andando,
+el problema es ruido eléctrico, no software.
+
 ## Cómo agregar un paquete nuevo
 
 1. Agregarlo al `namespace Proto` de `firmware-esp32/src/main.cpp` (código,
