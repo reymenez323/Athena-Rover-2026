@@ -151,8 +151,11 @@ namespace Pins {
     // GPIO, leídos con pull-up interno (INPUT_PULLUP): HIGH = tiro abierto,
     // LOW = tiro cerrado. GPIO21 se liberó del LED trasero del TCS34725 (ver
     // arriba); GPIO40 es el mismo pin que ya usaba TEAM_SELECT.
-    constexpr uint8_t TEAM_SWITCH_BLUE = 21;  // tiro "AZUL" cerrado a GND = equipo azul
-    constexpr uint8_t TEAM_SWITCH_RED  = 40;  // tiro "ROJO" cerrado a GND = equipo rojo
+    // Mismo cableado físico que firmware-esp32/ -- ver el comentario ahí:
+    // el tiro "AZUL" quedó en GPIO 40 y el "ROJO" en GPIO 21, al revés del
+    // borrador original de hardware/conexiones-esp32-s3.md.
+    constexpr uint8_t TEAM_SWITCH_BLUE = 40;  // tiro "AZUL" cerrado a GND = equipo azul
+    constexpr uint8_t TEAM_SWITCH_RED  = 21;  // tiro "ROJO" cerrado a GND = equipo rojo
 }
 
 namespace I2CAddr {

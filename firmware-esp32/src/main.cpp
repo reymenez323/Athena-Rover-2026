@@ -112,8 +112,14 @@ namespace Pins {
     // TEAM_SELECT) — aquí se suma el segundo tiro para tener una posición de
     // reposo real (0 = nadie ha elegido equipo todavía) en vez de arrancar
     // siempre decidido a AZUL u ROJO.
-    constexpr uint8_t TEAM_SWITCH_BLUE = 21;  // tiro "AZUL": cerrado a GND = equipo azul
-    constexpr uint8_t TEAM_SWITCH_RED  = 40;  // tiro "ROJO": cerrado a GND = equipo rojo
+    // Cableado real del robot (confirmado en banco, no el borrador original de
+    // hardware/conexiones-esp32-s3.md): el tiro que cablearon como "AZUL"
+    // terminó en GPIO 40, y el "ROJO" en GPIO 21 -- al revés de como se había
+    // documentado antes de instalar el switch. Los nombres de acá siguen al
+    // COMPORTAMIENTO real, no al GPIO original: total, lo único que importa
+    // es que TEAM_SWITCH_BLUE apunte al pin que de verdad selecciona azul.
+    constexpr uint8_t TEAM_SWITCH_BLUE = 40;  // tiro "AZUL": cerrado a GND = equipo azul
+    constexpr uint8_t TEAM_SWITCH_RED  = 21;  // tiro "ROJO": cerrado a GND = equipo rojo
 
     // -------- VL53L1X (ToF), delante del gripper ---------------------------
     // Va en el bus I2C nº0 (mismo que el PCA9685 y el TCS34725 delantero). El

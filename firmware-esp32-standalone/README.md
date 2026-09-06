@@ -114,8 +114,8 @@ indica equipo ni "veo la bandera":
 
 Sin Raspberry Pi que le diga `--equipo rojo` o `--equipo azul` por línea de
 comandos, el equipo se elige con un **switch físico de 3 posiciones
-(ON-OFF-ON)** en `Pins::TEAM_SWITCH_BLUE` (GPIO21) y `Pins::TEAM_SWITCH_RED`
-(GPIO40) — ver `hardware/conexiones-esp32-s3.md` para el cableado completo:
+(ON-OFF-ON)** en `Pins::TEAM_SWITCH_BLUE` (GPIO40) y `Pins::TEAM_SWITCH_RED`
+(GPIO21) — ver `hardware/conexiones-esp32-s3.md` para el cableado completo:
 
 | Posición | Equipo | Qué hace el robot |
 |:---:|---|---|
