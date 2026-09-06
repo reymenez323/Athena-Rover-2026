@@ -1203,6 +1203,23 @@ void MissionTask(void *pvTeam) {
             evadiendo = true;
         }
 
+        // DIAGNÓSTICO TEMPORAL: kDarkThreshold nunca se calibró contra el
+        // piso/luz reales (ver el TODO junto a su declaración). Si el robot
+        // solo retrocede y el gripper nunca recibe comandos, lo primero a
+        // revisar es si "evadiendo" da true todo el tiempo — este log
+        // muestra los valores crudos para comparar contra el umbral.
+        // Quitar una vez que kDarkThreshold quede calibrado en banco.
+        {
+            static uint32_t last_reflect_log_ms = 0;
+            if ((uint32_t)(millis() - last_reflect_log_ms) > 500) {
+                last_reflect_log_ms = millis();
+                DEBUG_LINK.printf(
+                    "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d -> evadiendo=%d\n",
+                    last_reflect.left_raw, last_reflect.right_raw, kDarkThreshold,
+                    last_reflect.left_on_line, last_reflect.right_on_line, evadiendo);
+            }
+        }
+
         // Ayuda a depurar en banco: cambiar de fase se ve en el monitor
         // serial sin tener que instrumentar cada rama.
         if (phase != last_logged_phase) {
