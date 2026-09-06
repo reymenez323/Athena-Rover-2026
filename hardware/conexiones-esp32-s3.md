@@ -92,9 +92,9 @@ este orden:
 |-------|-----|
 | **Negro** | GND — todas las masas, sin excepción |
 | **Rojo** | 🛑 **Compartido a propósito entre TRES dominios** — potencia de motores (batería 7.4–12 V cruda hacia los L298N), lógica 3.3 V (VIN de los QTRX y los TCS34725) **y** servos (salida 5–6 V del BEC hacia el V+ del PCA9685). Ver el aviso grande abajo: es el color más peligroso de todo el documento. |
-| **Amarillo** | **I2C — SDA, en ambos buses.** Exclusivo. |
+| **Amarillo** | **I2C — SDA, en ambos buses.** También: CTRL de los QTR (control de los emisores IR) — no se mezclan porque los QTR están en otra zona del chasis, lejos del I2C. |
 | **Verde** | **I2C — SCL, en ambos buses.** Exclusivo: al quedar liberado de la potencia de servos (ahora en Rojo), se dedicó por completo a esto. |
-| **Azul** | PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
+| **Azul** | PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
 
 > 🛑 **AVISO — Rojo lleva 7.4–12 V, 5–6 V Y 3.3 V a la vez: es el color
 > donde más fácil se quema algo.** El resto de este documento evita por
@@ -337,11 +337,11 @@ conviviendo en el mismo bus.
 
 | Señal | GPIO ESP32-S3 | Nota |
 |-------|:-------------:|------|
-| OUT izquierdo | **1** | ADC1_CH0 |
-| OUT derecho | **2** | ADC1_CH1 |
-| CTRL (ambos) | **42** | Control de los emisores IR, compartido |
-| VIN | **3.3 V** | ⚠️ **Nunca 5 V** — ver la tabla de riesgos |
-| GND | GND | |
+| OUT izquierdo | **1** | ADC1_CH0 — cable azul |
+| OUT derecho | **2** | ADC1_CH1 — cable azul |
+| CTRL (ambos) | **42** | Control de los emisores IR, compartido — cable **amarillo** |
+| VIN | **3.3 V** | ⚠️ **Nunca 5 V** — ver la tabla de riesgos — cable rojo |
+| GND | GND | cable negro |
 
 > Tienen que ir en **ADC1** (GPIO 1–10). El ADC2 del ESP32 queda inutilizable
 > en cuanto se enciende el WiFi.
