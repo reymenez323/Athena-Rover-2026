@@ -140,16 +140,16 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ### L298N nº 1 — lado IZQUIERDO
 
-| Pin L298N | GPIO ESP32-S3 | Función |
-|-----------|:-------------:|---------|
-| IN1 | **4** | Motor delantero izq. — sentido A |
-| IN2 | **5** | Motor delantero izq. — sentido B |
-| ENA | **6** | Motor delantero izq. — velocidad (PWM) |
-| IN3 | **7** | Motor trasero izq. — sentido A |
-| IN4 | **15** | Motor trasero izq. — sentido B |
-| ENB | **16** | Motor trasero izq. — velocidad (PWM) |
-| GND | GND | Masa común (obligatorio) |
-| 12 V | Batería de motores | Alimentación de potencia |
+| Pin L298N | GPIO ESP32-S3 | Cable | Función |
+|-----------|:-------------:|:---:|---------|
+| IN1 | **4** | Azul | Motor delantero izq. — sentido A |
+| IN2 | **5** | Azul | Motor delantero izq. — sentido B |
+| ENA | **6** | Azul | Motor delantero izq. — velocidad (PWM) |
+| IN3 | **7** | Azul | Motor trasero izq. — sentido A |
+| IN4 | **15** | Azul | Motor trasero izq. — sentido B |
+| ENB | **16** | Azul | Motor trasero izq. — velocidad (PWM) |
+| GND | GND | Negro | Masa común (obligatorio) |
+| 12 V | Batería de motores | Rojo | Alimentación de potencia — ver el aviso de Rojo compartido |
 
 > ⚠️ **El motor en OUT1/OUT2 de este driver gira al revés de los otros
 > tres.** Con el cableado físico actual, el motor conectado ahí (la rueda
@@ -168,16 +168,16 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ### L298N nº 2 — lado DERECHO
 
-| Pin L298N | GPIO ESP32-S3 | Función |
-|-----------|:-------------:|---------|
-| IN1 | **10** | Motor delantero der. — sentido A |
-| IN2 | **11** | Motor delantero der. — sentido B |
-| ENA | **12** | Motor delantero der. — velocidad (PWM) |
-| IN3 | **13** | Motor trasero der. — sentido A |
-| IN4 | **14** | Motor trasero der. — sentido B |
-| ENB | **17** | Motor trasero der. — velocidad (PWM) |
-| GND | GND | Masa común (obligatorio) |
-| 12 V | Batería de motores | Alimentación de potencia |
+| Pin L298N | GPIO ESP32-S3 | Cable | Función |
+|-----------|:-------------:|:---:|---------|
+| IN1 | **10** | Azul | Motor delantero der. — sentido A |
+| IN2 | **11** | Azul | Motor delantero der. — sentido B |
+| ENA | **12** | Azul | Motor delantero der. — velocidad (PWM) |
+| IN3 | **13** | Azul | Motor trasero der. — sentido A |
+| IN4 | **14** | Azul | Motor trasero der. — sentido B |
+| ENB | **17** | Azul | Motor trasero der. — velocidad (PWM) |
+| GND | GND | Negro | Masa común (obligatorio) |
+| 12 V | Batería de motores | Rojo | Alimentación de potencia — ver el aviso de Rojo compartido |
 
 > PWM a **1 kHz**. El L298N es un driver bipolar antiguo: a 20 kHz calienta y
 > pierde par. A 1 kHz se oye un zumbido agudo — es normal, no está fallando.
@@ -186,13 +186,13 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ## Servos — PCA9685 (I2C, dirección 0x40)
 
-| Pin PCA9685 | Conexión | Nota |
-|-------------|----------|------|
-| VCC | 3.3 V del ESP32 | Solo la lógica del chip |
-| **V+** | **Fuente aparte de 5–6 V** | Alimentación de los servos. **No** desde el ESP32. |
-| GND | GND común | |
-| SDA | **GPIO 8** | Bus I2C nº 0 |
-| SCL | **GPIO 9** | Bus I2C nº 0 |
+| Pin PCA9685 | Conexión | Cable | Nota |
+|-------------|----------|:---:|------|
+| VCC | 3.3 V del ESP32 | Rojo | Solo la lógica del chip |
+| **V+** | **Fuente aparte de 5–6 V** | Rojo | Alimentación de los servos. **No** desde el ESP32. Comparte color con VCC y con la batería de motores — ver el aviso de Rojo compartido en el [código de colores](#código-de-colores-de-cableado). |
+| GND | GND común | Negro | |
+| SDA | **GPIO 8** | Amarillo | Bus I2C nº 0 |
+| SCL | **GPIO 9** | Verde | Bus I2C nº 0 |
 
 | Canal PCA9685 | Servo |
 |:-------------:|-------|
@@ -209,23 +209,23 @@ así te ahorras el multiplexor TCA9548A.
 
 ### Sensor DELANTERO — bus I2C nº 0 (compartido con el PCA9685 y el VL53L1X)
 
-| Pin | GPIO ESP32-S3 |
-|-----|:-------------:|
-| SDA | **8** |
-| SCL | **9** |
-| VIN | 3.3 V |
-| GND | GND |
-| LED | **18** |
+| Pin | GPIO ESP32-S3 | Cable |
+|-----|:-------------:|:---:|
+| SDA | **8** | Amarillo |
+| SCL | **9** | Verde |
+| VIN | 3.3 V | Rojo |
+| GND | GND | Negro |
+| LED | **18** | Azul |
 
 ### Sensor TRASERO — bus I2C nº 1 (dedicado)
 
-| Pin | GPIO ESP32-S3 |
-|-----|:-------------:|
-| SDA | **47** |
-| SCL | **48** |
-| VIN | 3.3 V |
-| GND | GND |
-| LED | **21** |
+| Pin | GPIO ESP32-S3 / Conexión | Cable |
+|-----|:-------------:|:---:|
+| SDA | **47** | Amarillo |
+| SCL | **48** | Verde |
+| VIN | 3.3 V | Rojo |
+| GND | GND | Negro |
+| LED | **3.3 V directo** (ya no es GPIO 21 — ver más abajo) | Rojo |
 
 > Cada bus necesita resistencias de pull-up de 4.7 kΩ a 3.3 V en SDA y SCL.
 > La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones tres
@@ -253,10 +253,10 @@ reproduce EXACTAMENTE el mismo comportamiento y libera GPIO 21 para el
 Si algún día se implementa esa mitigación, hace falta volver a pasar este
 LED por un GPIO (cualquiera libre en ese momento).
 
-| Señal | GPIO ESP32-S3 / Conexión |
-|-------|:------------------------:|
-| LED sensor delantero | **18** |
-| LED sensor trasero | **3.3V directo** (ya no es un GPIO) |
+| Señal | GPIO ESP32-S3 / Conexión | Cable |
+|-------|:------------------------:|:---:|
+| LED sensor delantero | **18** | Azul |
+| LED sensor trasero | **3.3V directo** (ya no es un GPIO) | Rojo |
 
 El LED delantero va en cable **azul**, igual que el resto de señales
 digitales de control de este robot (ver el
@@ -287,13 +287,13 @@ un bus propio: comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero
 (el PCA9685 no da problema, es 0x40), y su pin **XSHUT** es imprescindible
 (no opcional) para poder arrancar sin que las dos direcciones 0x29 choquen.
 
-| Pin VL53L1X | GPIO ESP32-S3 / Conexión | Nota |
-|-------------|:------------------------:|------|
-| SDA | **8** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
-| SCL | **9** | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
-| XSHUT | **3** | Reset por software. Ver la secuencia de arranque abajo, y la nota de JTAG más abajo |
-| VIN | 3.3 V | |
-| GND | GND común | |
+| Pin VL53L1X | GPIO ESP32-S3 / Conexión | Cable | Nota |
+|-------------|:------------------------:|:---:|------|
+| SDA | **8** | Amarillo | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
+| SCL | **9** | Verde | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
+| XSHUT | **3** | Azul | Reset por software. Ver la secuencia de arranque abajo, y la nota de JTAG más abajo |
+| VIN | 3.3 V | Rojo | |
+| GND | GND común | Negro | |
 
 > **Por qué GPIO 3 y no otro:** es el único pin que queda físicamente libre
 > junto al bus I2C0 en el header J1 del DevKitC-1 (justo debajo de GPIO8), así
@@ -352,13 +352,13 @@ conviviendo en el mismo bus.
 
 ## Reflectancia — 2× QTRX-HD-01A
 
-| Señal | GPIO ESP32-S3 | Nota |
-|-------|:-------------:|------|
-| OUT izquierdo | **1** | ADC1_CH0 — cable azul |
-| OUT derecho | **2** | ADC1_CH1 — cable azul |
-| CTRL (ambos) | **42** | Control de los emisores IR, compartido — cable **amarillo** |
-| VIN | **3.3 V** | ⚠️ **Nunca 5 V** — ver la tabla de riesgos — cable rojo |
-| GND | GND | cable negro |
+| Señal | GPIO ESP32-S3 | Cable | Nota |
+|-------|:-------------:|:---:|------|
+| OUT izquierdo | **1** | Azul | ADC1_CH0 |
+| OUT derecho | **2** | Azul | ADC1_CH1 |
+| CTRL (ambos) | **42** | Amarillo | Control de los emisores IR, compartido |
+| VIN | **3.3 V** | Rojo | ⚠️ **Nunca 5 V** — ver la tabla de riesgos |
+| GND | GND | Negro | |
 
 > Tienen que ir en **ADC1** (GPIO 1–10). El ADC2 del ESP32 queda inutilizable
 > en cuanto se enciende el WiFi.
@@ -389,11 +389,12 @@ lo está: ahora es uno de los 2 pines del
 [switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo)
 de más abajo — ver esa sección para por qué no quedó ningún GPIO libre.
 
-| Canal | GPIO ESP32-S3 | Nota |
-|-------|:-------------:|------|
-| R | **39** | |
-| G | **38** | |
-| B | **41** | |
+| Canal | GPIO ESP32-S3 | Cable | Nota |
+|-------|:-------------:|:---:|------|
+| R | **39** | Azul | |
+| G | **38** | Azul | |
+| B | **41** | Azul | |
+| Común (cátodo) | GND | Negro | |
 
 > **Polaridad: cátodo común**, confirmado con el LED físico. Duty PWM alto =
 > canal más brillante, que es el sentido natural del código. Todos los
@@ -401,10 +402,10 @@ de más abajo — ver esa sección para por qué no quedó ningún GPIO libre.
 > en `false`); la constante se conserva en cada uno por si algún día se
 > reemplaza el LED por uno de ánodo común.
 
-Cable de control: igual que el resto de señales digitales/PWM de bajo
-amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** según el
-[código de colores](#código-de-colores-de-cableado) — no comparte zona de
-cableado con el I2C, así que no hay riesgo de confundirlo con SDA/SCL.
+Los 3 canales van en **Azul** (no comparten zona de cableado con el I2C,
+así que no hay riesgo de confundirlos con SDA/SCL) — mismo criterio que el
+resto de señales digitales/PWM de bajo amperaje de este robot (ENA/ENB, OUT
+de los QTR). Ver el [código de colores](#código-de-colores-de-cableado).
 
 ---
 
