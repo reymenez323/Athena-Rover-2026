@@ -1113,6 +1113,24 @@ inline ColorLabel ZonaPropia(TeamColor team) {
     return (team == TeamColor::RED) ? ColorLabel::RED : ColorLabel::BLUE;
 }
 
+// Nombre legible de cada fase, para el log — sin esto, el monitor serial
+// solo mostraba el número crudo del enum y había que contar a mano.
+inline const char *PhaseName(Phase phase) {
+    switch (phase) {
+        case Phase::ARRANQUE:            return "ARRANQUE";
+        case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
+        case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
+        case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
+        case Phase::BUSCAR_BANDERA:      return "BUSCAR_BANDERA";
+        case Phase::AGARRAR_BANDERA:     return "AGARRAR_BANDERA";
+        case Phase::RETORNAR_GIRANDO:    return "RETORNAR_GIRANDO";
+        case Phase::RETORNAR_AVANZANDO:  return "RETORNAR_AVANZANDO";
+        case Phase::ENTREGAR:            return "ENTREGAR";
+        case Phase::TERMINADO:           return "TERMINADO";
+        default:                         return "DESCONOCIDA";
+    }
+}
+
 } // namespace Mission
 
 // Evita depender de que el compilador trate a MotorCommand como agregado
@@ -1188,7 +1206,7 @@ void MissionTask(void *pvTeam) {
         // Ayuda a depurar en banco: cambiar de fase se ve en el monitor
         // serial sin tener que instrumentar cada rama.
         if (phase != last_logged_phase) {
-            DEBUG_LINK.printf("[Mission] fase -> %d\n", (int)phase);
+            DEBUG_LINK.printf("[Mission] fase -> %s\n", Mission::PhaseName(phase));
             last_logged_phase = phase;
         }
 
