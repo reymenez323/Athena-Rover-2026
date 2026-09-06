@@ -1190,17 +1190,28 @@ void MissionTask(void *pvTeam) {
         if (Mission::kMotionEnabled) {
 
         // --- 1. PRIORIDAD MÁXIMA: no salirse de la pista -------------------
-        // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase.
+        // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase...
+        // EXCEPTO mientras se asegura la llave. Pedido explícito: el gripper
+        // tiene que cerrar ANTES de que el robot se mueva por cualquier
+        // motivo, incluida la evasión de borde. Sin este freno, un umbral de
+        // reflectancia sin calibrar (ver kDarkThreshold) podía hacer que el
+        // robot arrancara moviéndose para atrás desde el segundo 0, sin que
+        // el switch(phase) de más abajo llegara siquiera a mandar
+        // CLOSE_LLAVE (evadiendo=true se salta ese switch por completo).
+        const bool puede_moverse = (phase != Mission::Phase::ARRANQUE &&
+                                     phase != Mission::Phase::ASEGURAR_LLAVE);
         bool evadiendo = false;
-        if (last_reflect.left_on_line && last_reflect.right_on_line) {
-            SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
-            evadiendo = true;
-        } else if (last_reflect.left_on_line) {
-            SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion / 3);
-            evadiendo = true;
-        } else if (last_reflect.right_on_line) {
-            SetDrive(motor, -Mission::kVelocidadAproximacion / 3, -Mission::kVelocidadAproximacion);
-            evadiendo = true;
+        if (puede_moverse) {
+            if (last_reflect.left_on_line && last_reflect.right_on_line) {
+                SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
+                evadiendo = true;
+            } else if (last_reflect.left_on_line) {
+                SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion / 3);
+                evadiendo = true;
+            } else if (last_reflect.right_on_line) {
+                SetDrive(motor, -Mission::kVelocidadAproximacion / 3, -Mission::kVelocidadAproximacion);
+                evadiendo = true;
+            }
         }
 
         // DIAGNÓSTICO TEMPORAL: kDarkThreshold nunca se calibró contra el
@@ -1214,9 +1225,11 @@ void MissionTask(void *pvTeam) {
             if ((uint32_t)(millis() - last_reflect_log_ms) > 500) {
                 last_reflect_log_ms = millis();
                 DEBUG_LINK.printf(
-                    "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d -> evadiendo=%d\n",
+                    "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d "
+                    "-> puede_moverse=%d evadiendo=%d\n",
                     last_reflect.left_raw, last_reflect.right_raw, kDarkThreshold,
-                    last_reflect.left_on_line, last_reflect.right_on_line, evadiendo);
+                    last_reflect.left_on_line, last_reflect.right_on_line,
+                    puede_moverse, evadiendo);
             }
         }
 
