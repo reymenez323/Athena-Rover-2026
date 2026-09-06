@@ -66,54 +66,58 @@ justo la clase de mezcla que aparece en la tabla de riesgos de arriba. Usar
 el mismo color de cable para dos cosas distintas es la forma más fácil de
 meter una pata en la oscuridad debajo del chasis.
 
-Ajustada al carrete real del equipo (**negro, rojo, amarillo, verde, azul,
-blanco** — 6 colores, no 9), la prioridad es, en este orden:
+Ajustada al carrete real del equipo (**negro, rojo, amarillo, verde,
+azul** — 5 colores, no 9; ya **no hay blanco** disponible) y a una decisión
+deliberada del equipo (ver el aviso de Rojo abajo), la prioridad es, en
+este orden:
 
-1. **Cada línea de alimentación tiene su propio color, sin compartir con
-   ninguna otra** — son las que revientan hardware.
-2. **SDA y SCL van en colores distintos entre sí**, porque son dos cables
-   que corren pegados hasta el mismo conector y cambiarlos es el descuido
-   más fácil de cometer con la mano.
-3. Con los 6 colores ya repartidos entre lo anterior, el resto de señales
-   (control de motores, salidas de los QTR, LED de equipo) reutiliza el
-   color de Azul o Blanco según le corresponda por tipo — **no pasa nada
-   porque nunca conviven en el mismo conector que el I2C**: los cables junto
-   al L298N o al QTR no se van a confundir por el ojo con los que salen del
-   PCA9685/TCS34725, que están en otra zona del chasis. Si se cruzaran, el
-   peor caso es que el robot se porte mal, no que se queme algo.
+1. **GND y la potencia de servos tienen color propio y exclusivo** — son
+   líneas que revientan hardware si se cruzan con cualquier otra cosa.
+2. **Rojo se comparte, a propósito, entre dos dominios de potencia**
+   (motores 7.4–12 V y lógica 3.3 V) — decisión explícita del equipo, no el
+   diseño por defecto de este esquema. Es la concesión más riesgosa de
+   todo el documento: ver el aviso grande más abajo antes de cablear nada
+   en rojo.
+3. Eso deja **dos colores libres para el I2C** — Amarillo y Azul,
+   uno para cada línea (SDA/SCL), recuperando la regla de "nunca el mismo
+   color en las dos líneas que corren pegadas al mismo conector".
+4. El resto de señales digitales/PWM de bajo amperaje (control de motores,
+   salidas de los QTR, LED de equipo, LED de iluminación de cada TCS34725)
+   reutiliza **Azul** — no pasa nada porque no conviven en el mismo
+   conector que el I2C: están en otra zona del chasis.
 
 | Color | Uso |
 |-------|-----|
 | **Negro** | GND — todas las masas, sin excepción |
-| **Rojo** | Potencia de motores — batería 7.4–12 V hacia los L298N. Nada más lleva rojo. |
-| **Amarillo** | Lógica 3.3 V — VIN de los QTRX y los TCS34725. Nunca a 5 V (revisar la tabla de riesgos: quema el sensor). |
-| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685. ⚠️ **Única excepción del código**: también lleva la señal LED de cada TCS34725 — ver la nota abajo. |
-| **Azul** | **I2C — SDA, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), y alguno de los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en zonas distintas del chasis. |
-| **Blanco** | **I2C — SCL, en ambos buses.** También: señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR) y el resto de canales del LED RGB de equipo — mismo razonamiento. |
+| **Rojo** | ⚠️ **Compartido a propósito** — potencia de motores (batería 7.4–12 V hacia los L298N) **Y** lógica 3.3 V (VIN de los QTRX y los TCS34725). Ver el aviso grande abajo. |
+| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685. Exclusivo: nada más lleva verde. |
+| **Amarillo** | **I2C — SDA, en ambos buses.** Nada más lleva amarillo: al quedar liberado de la lógica 3.3 V (que ahora es Rojo), se dedicó por completo a esto. |
+| **Azul** | **I2C — SCL, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
 
-En el tramo del PCA9685/TCS34725, donde SDA y SCL corren juntos, no hace
-falta marquilla: el color ya dice cuál es cuál. Si en algún otro punto
-tuvieras dos cables Azul o dos Blanco muy cerca uno del otro (por ejemplo,
-un ENA junto a un OUT de QTR), ahí sí marca la punta.
-
-> ⚠️ **Excepción documentada — Verde ya no es exclusivo de servos.** El
-> equipo cableó la señal LED del TCS34725 (ver más abajo) en verde, el mismo
-> color que el V+ de 5–6 V del PCA9685. A diferencia del resto de las
-> reutilizaciones de esta tabla (que son señales de bajo riesgo en zonas
-> separadas), **este caso sí conviven cerca**: el TCS34725 delantero está en
-> el mismo bus I2C que el PCA9685, así que es fácil tener un verde de cada
-> uno en el mismo tramo de cableado. **Marca la punta de todo cable verde**
-> (cinta o marquilla: "V+" para el de servos, "LED" para el del sensor) —
-> aquí sí importa, porque confundirlos significa meterle 5–6 V a un pin
-> lógico de 3.3 V del TCS34725, que es del tipo de error que sí quema algo.
+> 🛑 **AVISO — Rojo lleva 7.4–12 V Y 3.3 V a la vez: es el error que más
+> fácil se paga caro.** El resto de este documento evita por completo
+> mezclar dominios de voltaje bajo un mismo color — es la regla nº 1 de
+> todo el esquema — pero el equipo decidió hacer esta excepción con Rojo.
+> **Un solo cruce entre un tramo rojo de motores y un tramo rojo de lógica
+> mete 12 V a un pin de 3.3 V y quema el TCS34725 o el QTR al instante, sin
+> vuelta atrás.** Mitigación obligatoria, no opcional:
+> - **Marca la punta de TODO cable rojo** sin excepción: "MOTOR" en los que
+>   van a los L298N, "3V3" en los que van a QTR/TCS34725.
+> - Mantén los dos tramos en **zonas físicamente separadas** del chasis
+>   (motores de un lado, sensores del otro) — no los agrupes ni los sujetes
+>   juntos con la misma cincha.
+> - Antes de energizar por primera vez, **verifica con multímetro** que
+>   cada cable rojo que llega a un sensor mide 3.3 V y no 12 V, con la
+>   batería de motores conectada.
 
 Dos reglas simples que evitan la mayoría de los sustos:
 
-- **El rojo es solo para la batería de motores, sin excepción.** Es la línea
-  que más corriente mueve, así que un cruce ahí es el que más daño hace.
-  Aunque el LED RGB de equipo pueda encender en rojo, sus 3 cables de señal
-  van en **azul/blanco** (son PWM de bajo amperaje, no una línea de
-  potencia) — así se evita la tentación de "total, ya tengo rojo a mano".
+- **Rojo es la única línea que se comparte entre dominios de potencia, y
+  solo por decisión explícita del equipo — todas las demás (Negro, Verde,
+  Amarillo) siguen siendo exclusivas.** Aunque el LED RGB de equipo pueda
+  encender en rojo, sus 3 cables de señal van en **azul** (son PWM de bajo
+  amperaje, no una línea de potencia) — así se evita sumar una tercera cosa
+  al color que ya es el más delicado del esquema.
 - **Corta el negro y el color de señal de cada conector al mismo largo.** Así
   se identifican por tacto (o a simple vista) cuál masa va con cuál señal sin
   tener que seguir el cable completo.
@@ -237,12 +241,14 @@ en la placa.
 | LED sensor delantero | **18** |
 | LED sensor trasero | **21** |
 
-Van en cable **verde** — la única excepción del [código de colores](#código-de-colores-de-cableado):
-verde también es el color del V+ de 5–6 V de los servos, así que **marca la
-punta de cada cable verde** ("V+" o "LED") al conectarlo. Aquí sí importa
-más que en las demás reutilizaciones de la tabla: el TCS34725 delantero
-comparte bus I2C (y zona de cableado) con el PCA9685, y meterle 5–6 V al pin
-LED por error sí puede dañar el sensor.
+Van en cable **azul**, igual que el resto de señales digitales de control de
+este robot (ver el [código de colores](#código-de-colores-de-cableado)) — la
+misma línea de SCL, que también es azul, corre justo al lado en este tramo.
+No hay riesgo de quemar nada si se confunden (los dos son 3.3 V lógicos),
+pero sí de que el sensor deje de responder o el LED se quede encendido/
+apagado sin control, así que marca la punta de cada cable azul que llegue
+al TCS34725 delantero ("SCL", "LED") para no perder tiempo depurando algo
+que es solo un cable mal puesto.
 
 ---
 
@@ -371,10 +377,9 @@ GPIO **40**.
 > reemplaza el LED por uno de ánodo común.
 
 Cable de control: igual que el resto de señales digitales/PWM de bajo
-amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** o **Blanco**
-según el [código de colores](#código-de-colores-de-cableado) — no comparte
-zona de cableado con el I2C, así que no hay riesgo de confundirlo con
-SDA/SCL.
+amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** según el
+[código de colores](#código-de-colores-de-cableado) — no comparte zona de
+cableado con el I2C, así que no hay riesgo de confundirlo con SDA/SCL.
 
 ---
 
