@@ -26,7 +26,7 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 9. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
 10. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
 11. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-12. [Alimentación — esquema recomendado](#alimentación--esquema-recomendado)
+12. [Alimentación — esquema real del equipo (una sola batería, con BEC)](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
 13. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
@@ -429,16 +429,23 @@ GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED RGB
 
 ---
 
-## Alimentación — esquema recomendado
+## Alimentación — esquema real del equipo (una sola batería, con BEC)
+
+A diferencia de lo que recomendaba antes este documento (dos baterías
+separadas), el equipo alimenta motores y servos/lógica desde **la misma
+batería física** — un BEC/regulador reduce esa misma fuente a 5–6 V para la
+rama de los servos. El PCA9685 y la Raspberry Pi siguen viendo 5–6 V
+regulados, no el crudo de 7.4–12 V, así que el [código de
+colores](#código-de-colores-de-cableado) (Rojo = crudo de motores, Verde =
+salida del BEC) no cambia.
 
 ```
-Batería de motores (7.4–12 V)
-   ├──> L298N nº1  (12V)
-   └──> L298N nº2  (12V)
-
-Batería / BEC 5–6 V
-   ├──> PCA9685 V+  (servos)
-   └──> Raspberry Pi 4B (5 V, 3 A)
+Batería única (7.4–12 V)
+   ├──> L298N nº1  (12V crudo)
+   ├──> L298N nº2  (12V crudo)
+   └──> BEC 5–6 V
+           ├──> PCA9685 V+  (servos)
+           └──> Raspberry Pi 4B (5 V, 3 A)
 
 ESP32-S3
    └──> alimentado por el cable USB de la Raspberry Pi
@@ -446,10 +453,28 @@ ESP32-S3
 TODAS LAS MASAS UNIDAS EN UN SOLO PUNTO
 ```
 
-Se separan las alimentaciones a propósito: los picos de corriente de los
-motores hunden la tensión, y si la lógica cuelga de la misma fuente, el ESP32
-se reinicia justo cuando el robot arranca. Sucede siempre y cuesta horas de
-depuración.
+> ⚠️ **Esto reintroduce justo el riesgo que la separación evitaba: un pico
+> de corriente de los motores puede hundir la tensión de la batería lo
+> bastante como para que el BEC ya no tenga margen para sostener 5–6 V a la
+> salida** (todo BEC necesita cierta diferencia mínima entre su entrada y
+> su salida — *dropout* — para regular bien). Si eso pasa, la caída se
+> propaga: Raspberry Pi → USB → ESP32-S3, y el ESP32 se reinicia solo
+> (brownout) justo cuando el robot arranca a moverse — el mismo síntoma que
+> ya se vio en banco con el firmware autónomo (reinicios y errores de I2C
+> intermitentes sin relación aparente con los sensores).
+>
+> Mitigaciones, de más a menos efectiva:
+> 1. **Usar un BEC con margen de corriente de sobra** (al menos el doble de
+>    lo que piden servos + Raspberry Pi juntos en el peor caso) y **bajo
+>    dropout**, para que aguante los picos de los motores sin que la salida
+>    se hunda.
+> 2. **Agregar un capacitor electrolítico grande (1000–2200 µF o más) justo
+>    a la salida del BEC**, cerca del PCA9685 y de la Raspberry Pi — absorbe
+>    los picos rápidos de corriente sin esperar a que el BEC reaccione.
+> 3. Si los reinicios persisten en pruebas reales del robot en movimiento
+>    (no solo en banco, con el robot quieto), **volver a la batería separada
+>    que recomendaba este documento** es la solución definitiva: elimina el
+>    acoplamiento por completo en vez de mitigarlo.
 
 ---
 
