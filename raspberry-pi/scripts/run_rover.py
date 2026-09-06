@@ -17,6 +17,15 @@ puro inicio de la secuencia -- posición 0/central = nadie ha elegido todavía
 existiendo para bancos de prueba sin el switch instalado: si se pasa, se usa
 directamente y no se espera nada del ESP32.
 
+APAGADO SEGURO: cuando el switch vuelve al centro DESPUÉS de haber estado en
+un equipo real (la señal de "ya terminé"), este script pide un ``sudo
+shutdown`` -- no solo termina el proceso -- para no dejar que corten la
+energía del robot con la Raspberry Pi todavía con el sistema de archivos
+montado (la forma clásica de corromper la tarjeta SD). No se sale del bucle
+al completar la misión (``Phase.TERMINADO``) justamente para poder seguir
+esperando esa señal después de una ronda. Requiere permiso ``sudo`` sin
+contraseña para ese comando puntual -- ver ``deploy/README.md``.
+
 DISEÑO DEL BUCLE: es de un solo hilo a propósito (la captura de cámara sí corre
 aparte). Percepción, decisión y envío en el mismo hilo hacen que el orden de
 los eventos sea siempre el mismo y que un fallo sea reproducible. Con varios
@@ -67,6 +76,7 @@ import argparse
 import logging
 import math
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -90,6 +100,38 @@ from athena.protocol import (  # noqa: E402
     ToFTelemetry,
 )
 from athena.types import BBox, Detection, ObjectClass, Perception  # noqa: E402
+
+
+def _apagar_pi_de_forma_segura() -> None:
+    """Pide un apagado ORDENADO del sistema operativo, no solo del proceso.
+
+    Por qué existe: cortar la energía de la Raspberry Pi con el sistema de
+    archivos montado (en vez de un ``shutdown`` que lo desmonta primero) es
+    el mecanismo clásico de corrupción de tarjeta SD. Sin esto, la única
+    forma de terminar una ronda es apagar el proceso (Ctrl+C, o que
+    ``Phase.TERMINADO`` lo cierre solo) y confiar en que quien opera el
+    robot recuerde entrar por SSH a hacer ``sudo shutdown`` antes de
+    desenergizar -- exactamente lo que se quiere evitar al no depender de
+    monitor/SSH cada vez.
+
+    Requiere que el usuario del servicio tenga permiso ``sudo`` SIN
+    contraseña para este comando puntual (ver ``deploy/README.md``, sección
+    de apagado seguro) -- el proceso corre sin terminal interactiva, así que
+    un ``sudo`` que pida contraseña se quedaría colgado para siempre.
+    """
+    log.warning(
+        "Apagando la Raspberry Pi de forma segura (sudo shutdown). "
+        "Esperá a que el sistema termine de apagarse antes de desenergizar el robot."
+    )
+    try:
+        subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+    except Exception:
+        log.exception(
+            "No se pudo iniciar el apagado automático (¿falta el permiso sudo "
+            "sin contraseña? ver deploy/README.md). Apagá la Raspberry Pi a "
+            "mano con:  sudo shutdown -h now"
+        )
+
 
 log = logging.getLogger("rover")
 _parar = False
@@ -351,6 +393,8 @@ def main() -> int:
             link.send_led(equipo)          # el reglamento exige identificarse
             ultimo_led = time.monotonic()
             ultima_fuente_deteccion = None
+            ultimo_switch: TeamSwitchTelemetry | None = None
+            apagado_solicitado = False
 
             while not _parar:
                 # --- 1. Telemetría del ESP32 -------------------------------
@@ -361,11 +405,48 @@ def main() -> int:
                         ultimo_reflect = paquete
                     elif isinstance(paquete, ToFTelemetry):
                         ultimo_tof = paquete
+                    elif isinstance(paquete, TeamSwitchTelemetry):
+                        # El switch volviendo al CENTRO después de haber
+                        # estado en un equipo real es la señal de "ya
+                        # terminé, apagame": dispara un shutdown ordenado en
+                        # vez de esperar a que alguien entre por SSH a
+                        # hacerlo, o peor, que corten la energía en frío.
+                        #
+                        # No dispara al arrancar: _esperar_equipo_del_switch
+                        # ya garantiza que este bucle solo empieza con el
+                        # switch en una posición de equipo, así que hace
+                        # falta una lectura PREVIA que ya fuera un equipo
+                        # real -- en banco con --equipo (switch sin instalar,
+                        # reportando NONE todo el tiempo) esa condición nunca
+                        # se cumple y el apagado nunca se dispara solo.
+                        if (ultimo_switch is not None
+                                and ultimo_switch.team is not TeamColor.NONE
+                                and paquete.team is TeamColor.NONE):
+                            apagado_solicitado = True
+                        ultimo_switch = paquete
                     elif isinstance(paquete, HealthTelemetry) and paquete.faulted_bitmask:
                         # No se aborta la ronda por esto: se registra y se sigue
                         # compitiendo con lo que quede funcionando.
                         log.warning("El ESP32 reporta tareas colgadas: %s",
                                     ", ".join(paquete.faulted_tasks))
+
+                if apagado_solicitado:
+                    log.warning("Switch de equipo -> centro (posición 0).")
+                    if not args.simular:
+                        link.send_stop()
+                    _apagar_pi_de_forma_segura()
+                    break
+
+                if decisor.state.phase is Phase.TERMINADO:
+                    # Ronda completa: ya no hay nada que decidir ni
+                    # perseguir, así que se deja de gastar cámara y modelo en
+                    # esto (el cambio de fase ya se registró la única vez que
+                    # pasó, más abajo). Se sigue dando la vuelta al bucle
+                    # -- no se sale del proceso -- solo para poder seguir
+                    # drenando telemetría arriba y detectar el switch
+                    # volviendo al centro.
+                    time.sleep(0.05)
+                    continue
 
                 # --- 2. Percepción (cámara USB -> Edge Impulse) ------------
                 # read_full() (resolución de captura completa), no read(): el
@@ -517,9 +598,6 @@ def main() -> int:
                         break
 
                 frames += 1
-                if decisor.state.phase is Phase.TERMINADO:
-                    log.info("Misión completada.")
-                    break
 
     except Exception:
         log.exception("Fallo en el bucle principal")
