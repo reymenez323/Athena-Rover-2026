@@ -141,9 +141,9 @@ def main() -> int:
                     frames_con_objetivo += 1
                     confianzas.append(objetivo.confidence)
                     log.debug(
-                        "%s conf=%.2f aspecto=%.2f (esperado %.2f) box=%s",
-                        objetivo.label, objetivo.confidence, objetivo.aspect_ratio,
-                        detector.aspecto_esperado, objetivo.box,
+                        "%s (%s) conf=%.2f aspecto=%.2f box=%s",
+                        objetivo.label, objetivo.orientation, objetivo.confidence,
+                        objetivo.aspect_ratio, objetivo.box,
                     )
 
                 if cv2 is not None:

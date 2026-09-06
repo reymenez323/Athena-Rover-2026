@@ -138,9 +138,10 @@ python3 scripts/prueba_deteccion_color.py --equipo rojo --ver
 python3 scripts/prueba_deteccion_color.py --equipo rojo --v-min 40   # luz baja
 ```
 
-Todavía no está integrado a `run_rover.py`/`decision.py` -- es una
-herramienta de experimentación, no una segunda fuente de percepción activa
-en competencia.
+Ya está integrado en `run_rover.py`: si el modelo no ve la bandera en un
+cuadro, se prueba con este detector antes de darse por vencido. El modelo
+manda cuando los dos coinciden -- ver "REPARTO DE SENSORES" en el docstring
+de `run_rover.py`.
 
 ## El puerto serial
 

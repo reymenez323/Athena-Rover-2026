@@ -62,6 +62,23 @@ def test_rectangulo_azul_con_el_aspecto_correcto_se_detecta():
     assert objetivo is not None
 
 
+def test_bandera_caida_de_lado_tambien_se_detecta():
+    # Misma proporción 3:1 pero invertida (ancho=90, alto=30): el cilindro
+    # tumbado, visto de lado -- simula que se cayó a mitad de ronda.
+    frame = _frame_con_rectangulo(BGR_ROJO, ancho=90, alto=30)
+    detecciones = _detector().detect(frame)
+    objetivo = ColorShapeDetector.best(detecciones, ETIQUETA_ROJO)
+    assert objetivo is not None
+    assert objetivo.orientation == "caida"
+
+
+def test_bandera_de_pie_se_marca_con_la_orientacion_correcta():
+    frame = _frame_con_rectangulo(BGR_ROJO, ancho=30, alto=90)
+    objetivo = ColorShapeDetector.best(_detector().detect(frame), ETIQUETA_ROJO)
+    assert objetivo is not None
+    assert objetivo.orientation == "de_pie"
+
+
 def test_no_confunde_un_color_con_el_otro():
     frame = _frame_con_rectangulo(BGR_ROJO, ancho=30, alto=90)
     detecciones = _detector().detect(frame)
