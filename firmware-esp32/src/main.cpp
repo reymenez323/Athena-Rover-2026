@@ -1506,12 +1506,14 @@ void SupervisorTask(void *) {
     for (;;) {
         const uint8_t faulted = WatchdogCheck();
 
-        if (faulted != 0) {
-            HealthReport report;
-            report.timestamp_ms = millis();
-            report.faulted_tasks_bitmask = faulted;
-            xQueueOverwrite(g_healthQueue, &report);
-        }
+        // Se manda cada vuelta, con el bitmask en 0 cuando todo está sano:
+        // así el silencio total en TLM_HEALTH es una señal real de que el
+        // ESP32 dejó de hablar (o el propio SupervisorTask se colgó), no un
+        // caso ambiguo con "todo va bien".
+        HealthReport report;
+        report.timestamp_ms = millis();
+        report.faulted_tasks_bitmask = faulted;
+        xQueueOverwrite(g_healthQueue, &report);
 
         // Se registra por consola solo cuando el conjunto de fallos CAMBIA,
         // para no inundar el log con la misma línea 5 veces por segundo.

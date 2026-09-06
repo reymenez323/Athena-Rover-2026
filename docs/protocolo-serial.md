@@ -91,6 +91,11 @@ orden es el del `enum class TaskId` del firmware:
 `0` serial_comm · `1` motor_control · `2` gripper_control · `3` color_sensor ·
 `4` reflectance · `5` led_status · `6` tof_sensor
 
+Se manda cada ciclo del supervisor (200 ms), con el bitmask en `0` cuando todo
+está sano — no solo cuando algo falla. Así el silencio total en `TLM_HEALTH`
+es en sí mismo una señal de alarma (el ESP32 dejó de hablar, o el propio
+supervisor se colgó), en vez de quedar indistinguible de "todo va bien".
+
 El ESP32 **reporta, no se reinicia**. En plena ronda un reinicio significa
 motores parados, pinza suelta (se cae la bandera) y varios segundos de
 arranque: perder la ronda. La Pi recibe el aviso, lo registra y sigue
