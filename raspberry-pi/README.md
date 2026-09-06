@@ -42,7 +42,8 @@ raspberry-pi/
 │   └── types.py            tipos comunes de percepción
 ├── scripts/
 │   ├── run_rover.py            EL PROGRAMA DE COMPETENCIA
-│   └── run_flag_tracker_ei.py  herramienta para calibrar el seguimiento a ojo
+│   ├── run_flag_tracker_ei.py  herramienta para calibrar el seguimiento a ojo
+│   └── prueba_enlace.py        prueba de banco del enlace serial (sin cámara)
 ├── models/                 athena_ei_banderas.eim (el modelo entrenado)
 ├── config/                 rover.json de ESTA Pi (no se versiona)
 ├── deploy/                 arranque automático con systemd
