@@ -19,7 +19,13 @@ EnvironmentFile=/home/TU_USUARIO_AQUI/Athena-Rover-2026/raspberry-pi/deploy/equi
 # primer intento. Si de todas formas no están listos, run_rover.py falla y
 # Restart=on-failure lo vuelve a intentar solo.
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/bin/python3 scripts/run_rover.py --equipo ${EQUIPO} --config config/rover.json
+
+# Sin EQUIPO definido en equipo.env (el caso normal), --equipo no se pasa y
+# run_rover.py espera al switch físico de 3 posiciones del chasis antes de
+# arrancar la ronda -- ver hardware/conexiones-esp32-s3.md y equipo.env.example.
+# ${EQUIPO:+--equipo $EQUIPO} se expande a nada si EQUIPO no está definida, o a
+# "--equipo rojo"/"--equipo azul" si se descomentó en equipo.env (banco sin switch).
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 scripts/run_rover.py ${EQUIPO:+--equipo $EQUIPO} --config config/rover.json'
 
 Restart=on-failure
 RestartSec=2

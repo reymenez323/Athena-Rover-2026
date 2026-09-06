@@ -63,6 +63,16 @@ Pi lo manda **solo cuando el estado cambia**, no en cada cuadro; el firmware lo
 guarda en una cola de un elemento sobrescribible, así que si el enlace se cae,
 el LED vuelve solo al color de equipo fijo en vez de quedarse destellando.
 
+**`CMD_LED` ya no es la única forma de fijar el equipo.** El robot tiene un
+switch físico de 3 posiciones (ver `hardware/conexiones-esp32-s3.md`) que el
+ESP32 lee por su cuenta y reporta como `TLM_TEAM_SWITCH` — si ese switch está
+en la posición 1 o 2 (no en el centro/reposo), manda sobre cualquier `CMD_LED`
+que llegue de la Raspberry Pi. `CMD_LED` sigue existiendo para bancos de
+prueba sin el switch instalado (por ejemplo,
+[`pruebas-platformio/02-cuadro-color-rgb/`](../pruebas-platformio/02-cuadro-color-rgb/)):
+cuando el switch está en la posición central, el ESP32 respeta el último
+`CMD_LED` recibido.
+
 ## ESP32 → Raspberry Pi (telemetría)
 
 | Código | Nombre | Len | Payload |
@@ -71,6 +81,7 @@ el LED vuelve solo al color de equipo fijo en vez de quedarse destellando.
 | `0x11` | `TLM_REFLECT` | 9 | `[0..3]` timestamp_ms `u32` · `[4..5]` izq. crudo `u16` · `[6..7]` der. crudo `u16` · `[8]` flags: bit0 izq. sobre línea, bit1 der. sobre línea |
 | `0x12` | `TLM_HEALTH` | 5 | `[0..3]` timestamp_ms `u32` · `[4]` bitmask de tareas colgadas |
 | `0x13` | `TLM_TOF` | 7 | `[0..3]` timestamp_ms `u32` · `[4..5]` distancia_mm `u16` · `[6]` flags: bit0 válido |
+| `0x14` | `TLM_TEAM_SWITCH` | 5 | `[0..3]` timestamp_ms `u32` · `[4]` equipo (0=NONE, 1=RED, 2=BLUE), leído del switch físico de 3 posiciones |
 
 ### Valores de `ColorLabel` (en `TLM_COLOR`)
 
@@ -101,6 +112,28 @@ motores parados, pinza suelta (se cae la bandera) y varios segundos de
 arranque: perder la ronda. La Pi recibe el aviso, lo registra y sigue
 compitiendo con lo que quede vivo.
 
+### `TLM_TEAM_SWITCH`: el switch físico de equipo, no un archivo de configuración
+
+El robot decide su equipo con un switch de 3 posiciones (ON-OFF-ON) montado
+en el chasis — ver `hardware/conexiones-esp32-s3.md` para el cableado
+completo. El ESP32 lo lee en cada vuelta de `LedTask` (250 ms) y lo manda
+como `TLM_TEAM_SWITCH`, con el mismo valor 0/1/2 que ya usa `CMD_LED`:
+
+| Valor | Posición del switch | Significado |
+|:---:|---|---|
+| 0 | Central (reposo) | Nadie ha elegido equipo todavía |
+| 1 | Tiro "AZUL" | Equipo azul — buscar la bandera roja |
+| 2 | Tiro "ROJO" | Equipo rojo — buscar la bandera azul |
+
+`run_rover.py` **espera** a que llegue un valor distinto de `0` antes de
+arrancar la ronda (a menos que se le pase `--equipo` explícito, pensado para
+banco sin el switch instalado) — ver `_esperar_equipo_del_switch()` en
+[`raspberry-pi/scripts/run_rover.py`](../raspberry-pi/scripts/run_rover.py).
+El ESP32, por su lado, tiene su propio freno independiente:
+mientras el switch reporte `0`, `MotorTask` se niega a mover el robot sin
+importar qué mande la Raspberry Pi — es un segundo failsafe, igual de
+importante que el que ya existe si se cae el enlace serial.
+
 ## Qué sensor resuelve qué
 
 Esto es lo que da sentido a la tabla de arriba. Cada reto de la demostración
@@ -113,6 +146,7 @@ se apoya en un sensor concreto, y ninguno hace el trabajo de otro:
 | Saber cuándo cerrar la pinza sobre la bandera | **ToF delantero (VL53L1X)** | `TLM_TOF` → medición física real, más confiable de cerca que estimar por tamaño en la imagen |
 | Detectar la bandera del oponente y señalizarla | **Cámara USB + modelo de Edge Impulse** | Solo la Pi la ve → `CMD_FLAG_SIGNAL` → el LED del ESP32 destella |
 | Cargar y depositar la llave | **Un servo de gripper** | `CMD_GRIPPER` con `CLOSE_LLAVE` / `OPEN` |
+| Saber a qué equipo pertenece el robot, sin depender de software | **Switch físico de 3 posiciones** | `TLM_TEAM_SWITCH` → `run_rover.py` espera esta señal antes de empezar; el ESP32 no mueve motores mientras reporte posición central |
 
 ## Robustez del enlace
 

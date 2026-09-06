@@ -24,10 +24,11 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 7. [ToF — VL53L1X (distancia frente al gripper)](#tof--vl53l1x-distancia-frente-al-gripper)
 8. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
 9. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
-10. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
-11. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-12. [Alimentación — esquema real del equipo (una sola batería, con BEC)](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
-13. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
+10. [Switch de 3 posiciones — selección de equipo](#switch-de-3-posiciones--selección-de-equipo)
+11. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
+12. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
+13. [Alimentación — esquema real del equipo (una sola batería, con BEC)](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
+14. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
 
@@ -240,21 +241,37 @@ en la placa.
 
 > Confirmado: el equipo usa un clon del diseño de referencia de Adafruit, así
 > que el pin **LED** es activo en alto y trae su propio pull-up hacia VIN —
-> si lo dejas sin conectar, los LED quedan encendidos siempre. Conectarlo a
-> un GPIO da control por software (apagarlos cuando no hacen falta, o evitar
-> que el sensor delantero le meta luz al trasero).
+> si lo dejas sin conectar, los LED quedan encendidos siempre.
 
-| Señal | GPIO ESP32-S3 |
-|-------|:-------------:|
+**Solo el sensor DELANTERO controla su LED por GPIO.** El del TRASERO se
+cablea **directo a 3.3V** (no a un GPIO): en la práctica, todo el código del
+repo lo pone en `HIGH` una sola vez al arrancar y nunca lo vuelve a tocar
+(ni para apagarlo ni para evitar que el LED delantero le meta luz al
+trasero — esa mitigación nunca se implementó), así que cablearlo fijo
+reproduce EXACTAMENTE el mismo comportamiento y libera GPIO 21 para el
+[switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo).
+Si algún día se implementa esa mitigación, hace falta volver a pasar este
+LED por un GPIO (cualquiera libre en ese momento).
+
+| Señal | GPIO ESP32-S3 / Conexión |
+|-------|:------------------------:|
 | LED sensor delantero | **18** |
-| LED sensor trasero | **21** |
+| LED sensor trasero | **3.3V directo** (ya no es un GPIO) |
 
-Van en cable **azul**, igual que el resto de señales digitales de control de
-este robot (ver el [código de colores](#código-de-colores-de-cableado)). En
-este tramo del TCS34725 delantero, cada cable ya tiene un color distinto
-(VIN rojo, GND negro, SDA amarillo, SCL verde, LED azul), así que no hace
-falta marquilla adicional aquí — no hay dos cables del mismo color
-conviviendo en el mismo conector.
+El LED delantero va en cable **azul**, igual que el resto de señales
+digitales de control de este robot (ver el
+[código de colores](#código-de-colores-de-cableado)). En este tramo, cada
+cable ya tiene un color distinto (VIN rojo, GND negro, SDA amarillo, SCL
+verde, LED azul), así que no hace falta marquilla adicional — no hay dos
+cables del mismo color conviviendo en el mismo conector.
+
+El LED trasero, al ir directo a 3.3V, se cablea en **rojo** (como cualquier
+otra alimentación de 3.3V de este robot — ver el
+[código de colores](#código-de-colores-de-cableado)) y no en azul: ya no es
+una señal de control, es una línea de potencia como el VIN del propio
+sensor. Márcalo igual que el resto de tramos rojos ("3V3") por la misma
+razón que el resto del esquema: Rojo convive con otros dos dominios de
+voltaje en este robot.
 
 ---
 
@@ -367,8 +384,10 @@ R y G usan dos de los GPIO que quedaban libres para ampliaciones en este
 documento (38 y 39). El canal B vivía en el tercero (GPIO 3), pero se movió a
 GPIO 41 para cederle el 3 al **XSHUT del VL53L1X** (ver la sección de
 [ToF](#tof--vl53l1x-distancia-frente-al-gripper)), que sí se beneficia de
-estar físicamente junto al bus I2C0. Sigue libre para futuras ampliaciones:
-GPIO **40**.
+estar físicamente junto al bus I2C0. El GPIO que quedaba libre (**40**) ya no
+lo está: ahora es uno de los 2 pines del
+[switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo)
+de más abajo — ver esa sección para por qué no quedó ningún GPIO libre.
 
 | Canal | GPIO ESP32-S3 | Nota |
 |-------|:-------------:|------|
@@ -386,6 +405,67 @@ Cable de control: igual que el resto de señales digitales/PWM de bajo
 amperaje de este robot (ENA/ENB, OUT de los QTR), usa **Azul** según el
 [código de colores](#código-de-colores-de-cableado) — no comparte zona de
 cableado con el I2C, así que no hay riesgo de confundirlo con SDA/SCL.
+
+---
+
+## Switch de 3 posiciones — selección de equipo
+
+Un switch **SPDT ON-OFF-ON** (3 posiciones, el centro es un verdadero
+"apagado"/reposo, no solo un punto intermedio) le dice al robot, al puro
+inicio de la secuencia, si es el equipo azul o el rojo — antes esto era
+`--equipo rojo/azul` por línea de comandos en la Raspberry Pi (o un puente de
+un solo pin en `firmware-esp32-standalone/`), sin forma de saberlo con solo
+mirar el robot apagado ni de garantizar que no arrancara movido con el
+equipo equivocado.
+
+**Solo quedaba 1 GPIO libre en todo el robot (40)** — ver el
+[resumen de pines](#resumen-mapa-completo-de-pines-usados) de antes de este
+cambio. El segundo pin que hacía falta salió de liberar el LED trasero del
+TCS34725 (ver la sección de [LED de iluminación](#led-de-iluminación-del-propio-tcs34725)
+más arriba), no de tocar ningún pin de arranque/strapping — GPIO 0 y GPIO 45/46
+seguían **prohibidos** aunque técnicamente estuvieran sin usar: un switch en
+la posición equivocada justo al energizar podría dejar al ESP32-S3 sin
+arrancar el firmware, o (peor, porque el switch normalmente SÍ está en una
+posición de equipo durante toda la ronda) meterlo en modo bootloader si un
+brownout de motores lo reinicia a mitad de partida. Ver el aviso de
+brownout en la sección de [alimentación](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
+más abajo — es exactamente el escenario que se evitó no tocando esos pines.
+
+| Terminal del switch | Conexión | Nota |
+|---|---|---|
+| Común (pin del medio) | **GND** | |
+| Tiro "AZUL" | **GPIO 21** | Cerrado a GND = equipo azul (buscar bandera roja) |
+| Tiro "ROJO" | **GPIO 40** | Cerrado a GND = equipo rojo (buscar bandera azul) |
+
+Los 2 GPIO se leen con **pull-up interno** (`INPUT_PULLUP`, sin resistencias
+externas): tiro abierto = HIGH, tiro cerrado = LOW.
+
+| Posición física | GPIO 21 (AZUL) | GPIO 40 (ROJO) | Significado |
+|:---:|:---:|:---:|---|
+| **0** (centro) | HIGH | HIGH | Nadie ha elegido equipo. El robot no se mueve. |
+| **1** | LOW | HIGH | Equipo **AZUL** — misión: buscar la bandera **roja** |
+| **2** | HIGH | LOW | Equipo **ROJO** — misión: buscar la bandera **azul** |
+
+> ⚠️ **Procedimiento de encendido, en este orden — no al revés:** primero el
+> switch de 3 posiciones en **0** (centro), y RECIÉN DESPUÉS el switch de la
+> batería. El robot energiza todo (motores, sensores, Raspberry Pi) pero se
+> queda quieto: el firmware fuerza los motores a detenidos mientras el
+> switch de equipo siga en 0 (`firmware-esp32/`, ver `g_switchTeam` en
+> `MotorTask`; `firmware-esp32-standalone/` directamente espera en `setup()`
+> antes de arrancar ninguna tarea). Recién cuando alguien mueve el switch a
+> 1 o 2 el robot sabe qué equipo es y puede empezar a moverse. Esto es
+> justo lo que resuelve la posición central de verdad que no tenía el viejo
+> selector de un solo pin.
+
+**Etiqueta físicamente las 3 posiciones en el chasis** ("0", "AZUL", "ROJO")
+junto al switch — con 3 colores de cable distintos llegando a un conector
+tan pequeño, confiar en la memoria de cuál tiro es cuál es la forma más
+fácil de anunciarse como el equipo equivocado frente a los jueces.
+
+Cable de control: **Azul**, igual que el resto de señales digitales de bajo
+amperaje de este robot (ver el
+[código de colores](#código-de-colores-de-cableado)) — el común a GND va en
+**Negro**, como toda masa.
 
 ---
 
@@ -417,10 +497,10 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 2 | QTR derecho (ADC) | 16 | L298N‑I ENB |
 | 3 | XSHUT del VL53L1X (ToF) | 17 | L298N‑D ENB |
 | 4 | L298N‑I IN1 | 18 | LED TCS34725 delantero |
-| 5 | L298N‑I IN2 | 21 | LED TCS34725 trasero |
+| 5 | L298N‑I IN2 | 21 | Switch equipo — tiro AZUL |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | *(libre)* |
+| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro ROJO |
 | 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |
@@ -428,10 +508,16 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**25 pines usados.** Queda libre para ampliaciones: GPIO **40**. El XSHUT del
-VL53L1X (ver [ToF](#tof--vl53l1x-distancia-frente-al-gripper)) se movió al
-GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED RGB
-(ver [LED RGB](#led-rgb-indicador-de-equipo)), que ahora vive en el GPIO 41.
+**26 pines usados. No queda ningún GPIO libre para ampliaciones.** El XSHUT
+del VL53L1X (ver [ToF](#tof--vl53l1x-distancia-frente-al-gripper)) se movió
+al GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED
+RGB (ver [LED RGB](#led-rgb-indicador-de-equipo)), que ahora vive en el GPIO
+41. El último GPIO libre (40) y el que liberó el LED trasero del TCS34725
+(21) se usaron para el
+[switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo) —
+GPIO 0 y GPIO 45/46, aunque también estaban técnicamente libres, se
+descartaron por ser pines de strapping de arranque (ver la sección del
+switch para el porqué).
 
 ---
 
@@ -502,4 +588,13 @@ TODAS LAS MASAS UNIDAS EN UN SOLO PUNTO
    forzarlo contra un tope mientras se calibran los ángulos.
 5. **Añadir los QTR.** Verificar en la telemetría que el valor sube al poner
    cinta negra debajo.
-6. **Los motores al final**, con el robot en un soporte y las ruedas al aire.
+6. **Añadir el switch de equipo** (GPIO 21/40, ver la
+   [sección del switch](#switch-de-3-posiciones--selección-de-equipo)).
+   Con el robot en el soporte, mover el switch a cada posición y confirmar
+   con la telemetría `TLM_TEAM_SWITCH` (o el log de consola, en
+   `firmware-esp32-standalone/`) que reporta 0/1/2 correctamente antes de
+   pasar al siguiente paso — es más fácil depurarlo con las ruedas quietas.
+7. **Los motores al final**, con el robot en un soporte y las ruedas al aire.
+   Confirmar primero que, con el switch de equipo en 0, los motores NO
+   responden a ningún comando — es la comprobación del segundo failsafe
+   antes de dejar que el robot pueda moverse de verdad.

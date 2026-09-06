@@ -19,6 +19,7 @@ lo que hay que ajustar al calibrar.
 | QTRX-HD-01A | 2 | Reflectancia delantera, izquierda y derecha |
 | LED RGB | 1 | Identificación de equipo (lo exige el reglamento) **y** señalización de la bandera contraria |
 | VL53L1X | 1 | ToF delante del gripper: distancia real a la bandera cilíndrica |
+| Switch 3 posiciones (ON-OFF-ON) | 1 | Elige el equipo al inicio: 0=nadie ha elegido, 1=azul, 2=rojo |
 
 **Las conexiones completas están en [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md).**
 Léelo antes de cablear: incluye los cinco errores que queman hardware.
@@ -42,7 +43,7 @@ pio device monitor   # ver los logs
 | Reflectance | 3 | 0 | 20 ms | Los 2 QTRX: borde negro vs. fondo gris |
 | ColorSensors | 2 | 0 | 100 ms | Los 2 TCS34725: zonas de color del piso |
 | TofSensor | 2 | 0 | 50 ms | El VL53L1X: distancia a la bandera |
-| TeamLed | 1 | 0 | 250 ms | LED de equipo + señal de bandera a la vista |
+| TeamLed | 1 | 0 | 250 ms | LED de equipo + señal de bandera a la vista + lectura del switch de equipo |
 
 Las tareas de control crítico van fijadas al **núcleo 1**; las de sensado y
 estado al **núcleo 0**. Así un sensor lento no le quita tiempo de CPU al lazo
@@ -59,9 +60,10 @@ RPi ──USB──> SerialTask ──> motorCmdQueue      (1, overwrite) ──
                         ──> ledCmdQueue        (1, overwrite) ──> LedTask
                         ──> flagSignalCmdQueue (1, overwrite) ──> LedTask
 
-ColorSensorTask ──> colorQueue   (4, FIFO)      ──┐
-ReflectanceTask ──> reflectQueue (4, FIFO)      ──┼─> SerialTask ──USB──> RPi
-SupervisorTask  ──> healthQueue  (1, overwrite) ──┘
+ColorSensorTask ──> colorQueue      (4, FIFO)      ──┐
+ReflectanceTask ──> reflectQueue    (4, FIFO)      ──┤
+SupervisorTask  ──> healthQueue     (1, overwrite) ──┼─> SerialTask ──USB──> RPi
+LedTask         ──> teamSwitchQueue (1, overwrite) ──┘
 ```
 
 Las colas *overwrite* (largo 1) son para datos donde solo importa el valor más
@@ -80,8 +82,11 @@ productor lento nunca cuelga al consumidor.
    no contesta.
 2. `Wire.setTimeOut(25)`: si un chip I2C se cuelga tirando SDA a masa, la
    transacción falla rápido en vez de congelar la tarea.
-3. **`MotorTask` tiene failsafe propio**: si pasa 500 ms sin comando válido de
-   la Raspberry Pi, frena por su cuenta. No depende de que nadie se lo diga.
+3. **`MotorTask` tiene 2 failsafes propios**, ninguno dependiente de que nadie
+   se lo diga: si pasa 500 ms sin comando válido de la Raspberry Pi, frena por
+   su cuenta; y mientras el switch físico de equipo siga en la posición
+   central (nadie ha elegido equipo todavía), se niega a moverse pase lo que
+   mande la Pi.
 4. Cada tarea marca un *heartbeat*. `SupervisorTask` detecta a la que dejó de
    marcar y lo reporta a la Pi — **sin reiniciar el ESP32**. Así la Pi puede
    dejar de confiar en ese sensor y seguir compitiendo.

@@ -21,6 +21,8 @@
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
 //    · LED RGB (1x)        -> identificación de equipo (lo exige el reglamento);
 //                             antes eran 2 LED discretos rojo/azul, ya no existen
+//    · Switch de 3 posiciones (ON-OFF-ON) -> quién es "nuestro equipo":
+//                             0=nadie ha elegido, 1=azul, 2=rojo (ver TeamSwitch)
 //    · Enlace con la Raspberry Pi por USB (CDC nativo)
 //
 //  ÍNDICE
@@ -91,8 +93,27 @@ namespace Pins {
     // -------- LED de iluminación de cada TCS34725 ---------------------------
     // Pin "LED" de la placa del sensor: enciende sus 2 LED blancos para no
     // depender de la luz ambiente del salón al clasificar el color del piso.
+    // Solo el DELANTERO se controla por GPIO. El TRASERO se cableó directo a
+    // 3.3V (ver hardware/conexiones-esp32-s3.md): en la práctica nunca se
+    // apagaba por software (ver el commit que liberó Pins::TEAM_SWITCH_BLUE),
+    // así que cablearlo fijo da el mismo comportamiento y libera ese GPIO
+    // para el switch de equipo.
     constexpr uint8_t TCS_LED_FRONT = 18;
-    constexpr uint8_t TCS_LED_BACK  = 21;
+
+    // -------- Switch de 3 posiciones (ON-OFF-ON): selección de equipo -------
+    // El común del switch va a GND; cada tiro cierra a GND uno de estos 2
+    // GPIO. Se leen con pull-up interno (INPUT_PULLUP): HIGH = tiro abierto,
+    // LOW = tiro cerrado. En la posición central (0, idle) NINGÚN tiro está
+    // cerrado, así que los 2 GPIO leen HIGH — ver el namespace TeamSwitch.
+    //
+    // GPIO 21 se liberó del LED de iluminación del TCS34725 trasero (ver
+    // arriba). GPIO 40 ya se usaba con el mismo propósito, pero como un solo
+    // puente a GND de 2 estados, en firmware-esp32-standalone/ (Pins::
+    // TEAM_SELECT) — aquí se suma el segundo tiro para tener una posición de
+    // reposo real (0 = nadie ha elegido equipo todavía) en vez de arrancar
+    // siempre decidido a AZUL u ROJO.
+    constexpr uint8_t TEAM_SWITCH_BLUE = 21;  // tiro "AZUL": cerrado a GND = equipo azul
+    constexpr uint8_t TEAM_SWITCH_RED  = 40;  // tiro "ROJO": cerrado a GND = equipo rojo
 
     // -------- VL53L1X (ToF), delante del gripper ---------------------------
     // Va en el bus I2C nº0 (mismo que el PCA9685 y el TCS34725 delantero). El
@@ -329,6 +350,11 @@ struct TofReading {
     bool     valid        = false;
 };
 
+struct TeamSwitchReading {
+    uint32_t  timestamp_ms = 0;
+    TeamColor team         = TeamColor::NONE;
+};
+
 struct HealthReport {
     uint32_t timestamp_ms          = 0;
     uint8_t  faulted_tasks_bitmask = 0;  // bit i = TaskId i encontrada colgada
@@ -374,6 +400,10 @@ struct HealthReport {
 //   0x13 TLM_TOF      len=7   [0..3]=timestamp_ms u32 LE
 //                             [4..5]=distance_mm u16 LE
 //                             [6]=flags: bit0=valid
+//   0x14 TLM_TEAM_SWITCH len=5 [0..3]=timestamp_ms u32 LE
+//                             [4]=team(0=NONE,1=RED,2=BLUE), leído del switch
+//                             físico de 3 posiciones (Pins::TEAM_SWITCH_*),
+//                             NONE = posición central (nadie ha elegido)
 //
 //  El lado Python vive en raspberry-pi/src/athena/protocol.py y DEBE
 //  mantenerse sincronizado con este bloque. El test
@@ -393,6 +423,7 @@ namespace Proto {
         TLM_REFLECT = 0x11,
         TLM_HEALTH  = 0x12,
         TLM_TOF     = 0x13,
+        TLM_TEAM_SWITCH = 0x14,
     };
 
     constexpr uint8_t LEN_CMD_MOTOR       = 3;
@@ -403,6 +434,7 @@ namespace Proto {
     constexpr uint8_t LEN_TLM_REFLECT = 9;
     constexpr uint8_t LEN_TLM_HEALTH  = 5;
     constexpr uint8_t LEN_TLM_TOF     = 7;
+    constexpr uint8_t LEN_TLM_TEAM_SWITCH = 5;
 
     // Tipos que el ESP32 puede RECIBIR. Solo comandos: la telemetria va en la
     // otra direccion. Validar el byte de tipo contra esta lista es lo que le
@@ -445,6 +477,7 @@ namespace Proto {
 //   ReflectanceTask --> reflectQueue (len 4, FIFO)      --> SerialTask --USB--> RPi
 //   TofSensorTask   --> tofQueue     (len 4, FIFO)      --> SerialTask --USB--> RPi
 //   SupervisorTask  --> healthQueue  (len 1, overwrite) --> SerialTask --USB--> RPi
+//   LedTask         --> teamSwitchQueue (len 1, overwrite) --> SerialTask --USB--> RPi
 //
 //  Las colas "overwrite" (largo 1) son para datos donde solo importa el valor
 //  más reciente: un comando de motores viejo no debe ejecutarse nunca. Las
@@ -463,6 +496,18 @@ static QueueHandle_t g_colorQueue         = nullptr;
 static QueueHandle_t g_reflectQueue       = nullptr;
 static QueueHandle_t g_tofQueue           = nullptr;
 static QueueHandle_t g_healthQueue        = nullptr;
+static QueueHandle_t g_teamSwitchQueue    = nullptr;
+
+// Última lectura del switch físico de equipo, publicada por LedTask en cada
+// vuelta. MotorTask la lee para negarse a mover el robot mientras nadie haya
+// elegido equipo (posición 0/central) — igual que ya se niega a moverse si
+// el enlace con la Raspberry Pi se cae (COMMS_FAILSAFE_TIMEOUT_MS): es un
+// segundo freno de seguridad, independiente del primero, y no depende de que
+// el software de la Raspberry Pi haga lo correcto. Un uint8_t/enum de un
+// byte se lee y escribe atómicamente en el ESP32-S3, así que no hace falta
+// mutex para esto (no es el "estado global" que evita el resto del diseño:
+// es una sola bandera de solo lectura para todos menos LedTask).
+static volatile TeamColor g_switchTeam = TeamColor::NONE;
 
 // ---------------------------------------------------------------------------
 //  Mutex del bus I2C nº0 (Wire) — PCA9685 + TCS34725 delantero + VL53L1X.
@@ -849,8 +894,13 @@ void MotorTask(void *) {
         // Failsafe propio: no depende de que otra tarea lo detecte por nosotros.
         const bool comms_stale =
             (uint32_t)(millis() - last_cmd_ms) > COMMS_FAILSAFE_TIMEOUT_MS;
+        // Segundo failsafe, independiente del primero: mientras el switch
+        // físico de equipo siga en la posición central (nadie lo ha movido
+        // todavía), el robot se queda quieto pase lo que mande la Raspberry
+        // Pi. Ver g_switchTeam.
+        const bool team_undecided = (g_switchTeam == TeamColor::NONE);
 
-        if (comms_stale || current.mode == MotorMode::STOP) {
+        if (comms_stale || team_undecided || current.mode == MotorMode::STOP) {
             MotorsStop();
         } else {
             MotorApply(kMotorFL, current.left);
@@ -1088,14 +1138,14 @@ void TofSensorTask(void *) {
 // ---------------------------------------------------------------------------
 
 void ColorSensorTask(void *) {
-    // LED de iluminación de cada sensor, encendidos de forma permanente. Es
-    // lo más simple y estable, igual que los emisores IR de los QTR: sin
-    // ellos, la clasificación de color dependería de la luz del salón de
-    // competencia, que cambia y no se puede controlar.
+    // LED de iluminación de cada sensor, encendido de forma permanente. Es lo
+    // más simple y estable, igual que los emisores IR de los QTR: sin él, la
+    // clasificación de color dependería de la luz del salón de competencia,
+    // que cambia y no se puede controlar. El del TRASERO ya no pasa por un
+    // GPIO (ver Pins::TCS_LED_FRONT): queda cableado directo a 3.3V, con el
+    // mismo efecto (siempre encendido).
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
-    pinMode(Pins::TCS_LED_BACK, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
-    digitalWrite(Pins::TCS_LED_BACK, HIGH);
 
     // El DELANTERO vive en el bus 0, compartido: va bajo mutex. El TRASERO
     // está en Wire1, que no comparte con nadie, así que no lo necesita.
@@ -1255,6 +1305,33 @@ namespace RgbLed {
     }
 }
 
+// ---------------------------------------------------------------------------
+//  Switch de 3 posiciones (ON-OFF-ON): quién es "nuestro equipo" al arrancar.
+// ---------------------------------------------------------------------------
+//  Ver Pins::TEAM_SWITCH_BLUE / TEAM_SWITCH_RED y hardware/conexiones-esp32-
+//  s3.md. Se lee en cada vuelta de LedTask (250 ms) en vez de una sola vez en
+//  setup(): así, si alguien mueve el switch después de energizar el robot
+//  (el procedimiento normal: encender con el switch en 0 y recién ahí elegir
+//  equipo), el cambio se recoge sin tener que reiniciar el ESP32.
+namespace TeamSwitch {
+    void Setup() {
+        pinMode(Pins::TEAM_SWITCH_BLUE, INPUT_PULLUP);
+        pinMode(Pins::TEAM_SWITCH_RED,  INPUT_PULLUP);
+    }
+
+    // LOW = tiro cerrado a GND = esa posición está seleccionada. Si algún día
+    // el switch fallara y los 2 tiros leyeran cerrados a la vez (no debería
+    // pasar con un ON-OFF-ON sano), se trata igual que la posición central:
+    // más seguro reportar "nadie ha elegido" que adivinar un color.
+    TeamColor Read() {
+        const bool blue_closed = digitalRead(Pins::TEAM_SWITCH_BLUE) == LOW;
+        const bool red_closed  = digitalRead(Pins::TEAM_SWITCH_RED)  == LOW;
+        if (blue_closed && !red_closed) return TeamColor::BLUE;
+        if (red_closed  && !blue_closed) return TeamColor::RED;
+        return TeamColor::NONE;
+    }
+}
+
 // Cuántas vueltas de LedTask dura cada mitad del destello (encendido/apagado)
 // cuando se está señalizando la bandera contraria. A TaskPeriodMs::LED_STATUS
 // (250 ms) esto da un destello de ~2 Hz: rápido de notar a simple vista desde
@@ -1264,8 +1341,9 @@ constexpr uint32_t kFlagBlinkHalfPeriodTicks = 1;
 void LedTask(void *) {
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
+    TeamSwitch::Setup();
 
-    TeamColor team = TeamColor::NONE;
+    TeamColor commanded_team = TeamColor::NONE;   // último CMD_LED recibido
     bool flag_detected = false;
     uint32_t blink_tick = 0;
 
@@ -1274,7 +1352,23 @@ void LedTask(void *) {
 
     for (;;) {
         LedCommand cmd;
-        if (xQueueReceive(g_ledCmdQueue, &cmd, 0) == pdTRUE) team = cmd.team;
+        if (xQueueReceive(g_ledCmdQueue, &cmd, 0) == pdTRUE) commanded_team = cmd.team;
+
+        // El switch físico es la fuente de verdad: si alguien lo movió de la
+        // posición central, manda sobre lo que haya dicho la Raspberry Pi por
+        // CMD_LED. Si sigue en el centro (NONE, el reposo normal al
+        // encender), se respeta el último CMD_LED — así el LED sigue
+        // funcionando en banco sin el switch instalado (por ejemplo en
+        // pruebas-platformio/02-cuadro-color-rgb/).
+        const TeamColor switch_team = TeamSwitch::Read();
+        g_switchTeam = switch_team;   // MotorTask la lee para no moverse en NONE
+
+        TeamSwitchReading switch_reading;
+        switch_reading.timestamp_ms = millis();
+        switch_reading.team = switch_team;
+        xQueueOverwrite(g_teamSwitchQueue, &switch_reading);
+
+        const TeamColor team = (switch_team != TeamColor::NONE) ? switch_team : commanded_team;
 
         // Cola "overwrite": solo importa si la cámara ve la bandera AHORA, no
         // un fotograma viejo. Si la Raspberry Pi deja de mandar esta señal
@@ -1465,6 +1559,13 @@ void SerialTask(void *) {
             SerialSendPacket(Proto::TLM_HEALTH, payload, Proto::LEN_TLM_HEALTH);
         }
 
+        TeamSwitchReading switch_reading;
+        while (xQueueReceive(g_teamSwitchQueue, &switch_reading, 0) == pdTRUE) {
+            Proto::WriteU32LE(&payload[0], switch_reading.timestamp_ms);
+            payload[4] = (uint8_t)switch_reading.team;
+            SerialSendPacket(Proto::TLM_TEAM_SWITCH, payload, Proto::LEN_TLM_TEAM_SWITCH);
+        }
+
         Heartbeat(TaskId::SERIAL_COMM);
         vTaskDelayUntil(&last_wake, period);
     }
@@ -1541,9 +1642,10 @@ static bool CreateQueues() {
     g_reflectQueue       = xQueueCreate(4, sizeof(ReflectanceReading));
     g_tofQueue           = xQueueCreate(4, sizeof(TofReading));
     g_healthQueue        = xQueueCreate(1, sizeof(HealthReport));
+    g_teamSwitchQueue    = xQueueCreate(1, sizeof(TeamSwitchReading));
 
     return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue && g_flagSignalCmdQueue &&
-           g_colorQueue && g_reflectQueue && g_tofQueue && g_healthQueue;
+           g_colorQueue && g_reflectQueue && g_tofQueue && g_healthQueue && g_teamSwitchQueue;
 }
 
 // Por qué se reinició el ESP32 la última vez. Distinguir un BROWNOUT (batería

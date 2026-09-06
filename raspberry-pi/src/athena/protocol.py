@@ -39,6 +39,7 @@ class PacketType(IntEnum):
     TLM_REFLECT = 0x11
     TLM_HEALTH = 0x12
     TLM_TOF = 0x13
+    TLM_TEAM_SWITCH = 0x14
 
 
 LEN_CMD_MOTOR = 3
@@ -49,6 +50,7 @@ LEN_TLM_COLOR = 7
 LEN_TLM_REFLECT = 9
 LEN_TLM_HEALTH = 5
 LEN_TLM_TOF = 7
+LEN_TLM_TEAM_SWITCH = 5
 
 
 class MotorMode(IntEnum):
@@ -95,7 +97,13 @@ class ColorLabel(IntEnum):
 # permite al parser resincronizar cuando llega basura por el cable (ver
 # PacketDecoder._step).
 RECEIVABLE_TYPES = frozenset(
-    {PacketType.TLM_COLOR, PacketType.TLM_REFLECT, PacketType.TLM_HEALTH, PacketType.TLM_TOF}
+    {
+        PacketType.TLM_COLOR,
+        PacketType.TLM_REFLECT,
+        PacketType.TLM_HEALTH,
+        PacketType.TLM_TOF,
+        PacketType.TLM_TEAM_SWITCH,
+    }
 )
 
 
@@ -165,7 +173,24 @@ class HealthTelemetry:
         )
 
 
-Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry | ToFTelemetry
+@dataclass(frozen=True)
+class TeamSwitchTelemetry:
+    """Lectura del switch físico de 3 posiciones (ON-OFF-ON) del ESP32.
+
+    ``team`` reutiliza el mismo enum ``TeamColor`` que ``CMD_LED`` (y el mismo
+    valor 0/1/2 por cable): ``NONE`` es la posición central, el reposo real
+    del switch, no solo "todavía no me dijeron nada". Mientras el ESP32
+    reporte ``NONE`` aquí, ``MotorTask`` se niega a mover el robot (ver
+    ``firmware-esp32/src/main.cpp``, ``g_switchTeam``) sin importar lo que
+    mande esta Raspberry Pi -- es un segundo failsafe, independiente del que
+    ya existe por enlace caído.
+    """
+
+    timestamp_ms: int
+    team: TeamColor
+
+
+Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry | ToFTelemetry | TeamSwitchTelemetry
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +352,14 @@ def _decode_payload(packet_type: int, payload: bytes) -> Telemetry | None:
             distance_mm=distance,
             valid=bool(flags & 0x01),
         )
+
+    if packet_type == PacketType.TLM_TEAM_SWITCH and len(payload) == LEN_TLM_TEAM_SWITCH:
+        timestamp, team = struct.unpack("<IB", payload)
+        try:
+            team_enum = TeamColor(team)
+        except ValueError:
+            team_enum = TeamColor.NONE
+        return TeamSwitchTelemetry(timestamp_ms=timestamp, team=team_enum)
 
     return None   # tipo desconocido o largo raro: se ignora sin romper nada
 

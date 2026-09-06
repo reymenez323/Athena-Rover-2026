@@ -99,16 +99,21 @@ Cuatro cosas de esa lista que valen una explicación:
 ## Uso
 
 ```bash
-# Ver que todo funciona, sin mover motores
+# Ver que todo funciona, sin mover motores (--equipo evita esperar el switch físico)
 python3 scripts/run_rover.py --equipo rojo --simular --ver
 
-# En competencia
-python3 scripts/run_rover.py --equipo rojo
+# En competencia: sin --equipo, espera a que el switch físico de 3 posiciones
+# del chasis (ver hardware/conexiones-esp32-s3.md) salga de la posición
+# central antes de arrancar la ronda.
+python3 scripts/run_rover.py
 ```
 
 Con `--simular` los motores no se mueven, pero **la señal de bandera sí se
 manda**: es una luz, no un movimiento, así que se puede verificar el LED sobre
 la mesa sin que el robot ruede.
+
+`--equipo rojo/azul` sigue existiendo para bancos de prueba sin el switch
+instalado: si se pasa, fuerza el equipo y **no** espera nada del ESP32.
 
 Para ajustar a ojo la zona muerta y la ganancia de giro sin correr la misión
 completa cada vez:

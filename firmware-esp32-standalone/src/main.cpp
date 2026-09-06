@@ -43,18 +43,22 @@
 //  El LED YA NO indica equipo ni "veo la bandera": esta variante lo dedica
 //  por completo a decir en qué línea está parado el robot.
 //
-//  TEAM_SELECT: sin Raspberry Pi que le diga "--equipo rojo/azul" por
-//  línea de comandos, el equipo se elige con un puente físico a GND en el
-//  GPIO Pins::TEAM_SELECT (ver más abajo) — leído UNA vez al arrancar.
+//  SWITCH DE EQUIPO: sin Raspberry Pi que le diga "--equipo rojo/azul" por
+//  línea de comandos, el equipo se elige con un switch físico de 3
+//  posiciones (ON-OFF-ON) en Pins::TEAM_SWITCH_BLUE/RED (ver más abajo).
+//  A diferencia del viejo puente de un solo pin, setup() se QUEDA ESPERANDO
+//  en la posición central (0, nadie ha elegido) antes de arrancar
+//  MissionTask — el procedimiento normal es encender el robot con el switch
+//  en 0 y recién ahí elegir equipo, sin que el robot se mueva mientras tanto.
 //
-//  HARDWARE (idéntico a firmware-esp32/, más el puente TEAM_SELECT):
+//  HARDWARE (idéntico a firmware-esp32/, más el switch de equipo):
 //    · 2x L298N            -> 4 motores (cada driver mueve 2)
 //    · 1x PCA9685 (I2C)    -> 1 servo del gripper (la pinza que abre/cierra)
 //    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
 //    · 1x VL53L1X (I2C)    -> telémetro delante del gripper
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
 //    · LED RGB (1x)        -> indicador puro de la línea/zona de piso
-//    · Puente TEAM_SELECT  -> GND = ROJO, sin conectar (pull-up) = AZUL
+//    · Switch 3 posiciones -> 0=nadie ha elegido, 1=azul, 2=rojo
 //
 //  ÍNDICE
 //    [1] Configuración: pines, prioridades, stacks, periodos
@@ -118,9 +122,10 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
-    // -------- LED de iluminación de cada TCS34725 ---------------------------
+    // -------- LED de iluminación del TCS34725 DELANTERO ---------------------
+    // El trasero se cableó directo a 3.3V (ver hardware/conexiones-esp32-
+    // s3.md) -- GPIO21 quedó libre para el switch de equipo, más abajo.
     constexpr uint8_t TCS_LED_FRONT = 18;
-    constexpr uint8_t TCS_LED_BACK  = 21;
 
     // -------- VL53L1X (ToF), delante del gripper ---------------------------
     // Comparte el bus I2C nº0 con el TCS34725 delantero (mismo 0x29 de
@@ -138,15 +143,16 @@ namespace Pins {
     constexpr uint8_t LED_RGB_G = 38;
     constexpr uint8_t LED_RGB_B = 41;
 
-    // -------- Selector de equipo, SOLO en esta variante autónoma -----------
-    // GPIO40 quedó libre en el robot (ver historial de firmware-esp32/: el
-    // XSHUT del VL53L1X se corrió de aquí al 3, y el canal azul del LED al
-    // 41). INPUT_PULLUP: puente a GND = ROJO, sin puente = ROJO también NO
-    // — hace falta un nivel por defecto explícito, y se eligió que "sin
-    // puente" (HIGH, el pull-up interno) sea AZUL. Leído una sola vez en
-    // setup(): cambiarlo exige reiniciar el ESP32, que es exactamente lo que
-    // ya se hace entre rondas para reflashear o solo repotenciar.
-    constexpr uint8_t TEAM_SELECT = 40;
+    // -------- Switch de 3 posiciones (ON-OFF-ON): selección de equipo ------
+    // Reemplaza al viejo puente TEAM_SELECT de un solo pin (GND=ROJO,
+    // abierto=AZUL, sin reposo real): ahora hay una posición central de
+    // verdad (0 = nadie ha elegido todavía), igual que en firmware-esp32/.
+    // El común del switch va a GND; cada tiro cierra a GND uno de estos 2
+    // GPIO, leídos con pull-up interno (INPUT_PULLUP): HIGH = tiro abierto,
+    // LOW = tiro cerrado. GPIO21 se liberó del LED trasero del TCS34725 (ver
+    // arriba); GPIO40 es el mismo pin que ya usaba TEAM_SELECT.
+    constexpr uint8_t TEAM_SWITCH_BLUE = 21;  // tiro "AZUL" cerrado a GND = equipo azul
+    constexpr uint8_t TEAM_SWITCH_RED  = 40;  // tiro "ROJO" cerrado a GND = equipo rojo
 }
 
 namespace I2CAddr {
@@ -808,9 +814,7 @@ void TofSensorTask(void *) {
 
 void ColorSensorTask(void *) {
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
-    pinMode(Pins::TCS_LED_BACK, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
-    digitalWrite(Pins::TCS_LED_BACK, HIGH);
 
     // El sensor DELANTERO vive en Wire (bus I2C nº0), el mismo que el
     // PCA9685 y el VL53L1X: sus llamadas van protegidas por g_i2c0Mutex
@@ -1344,7 +1348,7 @@ constexpr uint32_t SERIAL_BAUD_RATE = 115200;
 // Vive fuera de setup() porque MissionTask la recibe por puntero al crear
 // la tarea (xTaskCreatePinnedToCore no admite pasar un TeamColor por valor
 // directamente): tiene que sobrevivir a setup() retornando.
-static TeamColor g_myTeam = TeamColor::BLUE;   // sobrescrito abajo por TEAM_SELECT
+static TeamColor g_myTeam = TeamColor::BLUE;   // sobrescrito abajo por el switch de equipo
 
 // Traduce el motivo del último reinicio a algo legible. Existe porque el
 // USB nativo se reenumera solo con cada reset del ESP32-S3: un monitor
@@ -1387,14 +1391,38 @@ void setup() {
     DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
                        ResetReasonToString(esp_reset_reason()));
 
-    // -- Selector de equipo: puente físico a GND en Pins::TEAM_SELECT -------
-    // Se lee UNA sola vez aquí, antes de crear ninguna tarea: MissionTask
-    // recibe el resultado por puntero y no vuelve a tocar este pin.
-    pinMode(Pins::TEAM_SELECT, INPUT_PULLUP);
-    delay(5);   // deja asentar la lectura tras habilitar el pull-up
-    g_myTeam = (digitalRead(Pins::TEAM_SELECT) == LOW) ? TeamColor::RED : TeamColor::BLUE;
-    DEBUG_LINK.printf("[Setup] TEAM_SELECT=%d -> equipo %s\n",
-                       digitalRead(Pins::TEAM_SELECT),
+    // -- Selector de equipo: switch físico de 3 posiciones -------------------
+    // Se queda ESPERANDO AQUÍ, antes de crear ninguna tarea (así que nada
+    // puede mover motores todavía), hasta que el switch salga de la posición
+    // central. Es el procedimiento normal: encender el robot con el switch
+    // en 0 y recién ahí elegir equipo -- MissionTask recibe el resultado por
+    // puntero y no vuelve a tocar estos pines.
+    pinMode(Pins::TEAM_SWITCH_BLUE, INPUT_PULLUP);
+    pinMode(Pins::TEAM_SWITCH_RED,  INPUT_PULLUP);
+    delay(5);   // deja asentar la lectura tras habilitar los pull-up
+
+    RgbLed::Setup();
+    DEBUG_LINK.println("[Setup] Esperando el switch de equipo (posicion 0 = esperando)...");
+    uint32_t blink_ms = millis();
+    bool blink_on = false;
+    for (;;) {
+        const bool blue_closed = digitalRead(Pins::TEAM_SWITCH_BLUE) == LOW;
+        const bool red_closed  = digitalRead(Pins::TEAM_SWITCH_RED)  == LOW;
+        if (blue_closed && !red_closed) { g_myTeam = TeamColor::BLUE; break; }
+        if (red_closed  && !blue_closed) { g_myTeam = TeamColor::RED;  break; }
+
+        // Blanco tenue parpadeando: "esperando instrucción" -- ni un color de
+        // equipo (todavía no hay ninguno elegido) ni apagado del todo (para
+        // distinguirlo de un ESP32 que no ha arrancado).
+        if ((uint32_t)(millis() - blink_ms) > 300) {
+            blink_ms = millis();
+            blink_on = !blink_on;
+            RgbLed::SetRaw(blink_on ? 40 : 0, blink_on ? 40 : 0, blink_on ? 40 : 0);
+        }
+        delay(20);
+    }
+    RgbLed::SetRaw(0, 0, 0);
+    DEBUG_LINK.printf("[Setup] Switch de equipo -> %s\n",
                        g_myTeam == TeamColor::RED ? "ROJO" : "AZUL");
 
     // Los dos buses I2C se abren aquí, ANTES de lanzar las tareas, igual que

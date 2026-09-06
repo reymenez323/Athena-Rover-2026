@@ -21,6 +21,11 @@ reintenta su hardware en segundo plano en vez de bloquear — así que esta
 prueba se puede correr con el chasis a medio cablear. Los sensores que falten
 se van a ver como telemetría inválida, no como silencio.
 
+``--motores`` es la excepción: si el switch físico de equipo (ver
+``hardware/conexiones-esp32-s3.md``) está en la posición central, MotorTask
+ignora el comando por diseño — es el segundo failsafe del robot, no un
+fallo de este script. Mové el switch a AZUL o ROJO antes de usar ``--motores``.
+
 POR QUÉ ES DE UN SOLO HILO: el enlace se drena continuamente en el bucle
 principal, sin hilos ni ``input()`` a mitad de la prueba. Si el programa se
 quedara esperando una tecla mientras el ESP32 sigue mandando ~1 KB/s, el
@@ -48,6 +53,7 @@ from athena.protocol import (  # noqa: E402
     HealthTelemetry,
     ReflectTelemetry,
     TeamColor,
+    TeamSwitchTelemetry,
     Telemetry,
     ToFTelemetry,
 )
@@ -59,6 +65,7 @@ NOMBRE_TELEMETRIA = {
     ReflectTelemetry: "TLM_REFLECT (reflectancia QTR)",
     ToFTelemetry: "TLM_TOF     (distancia VL53L1X)",
     HealthTelemetry: "TLM_HEALTH  (salud de tareas)",
+    TeamSwitchTelemetry: "TLM_TEAM_SWITCH (switch fisico de equipo)",
 }
 
 # Ritmo al que cada tarea del firmware produce su telemetría (ver
@@ -69,6 +76,7 @@ HZ_ESPERADO = {
     ReflectTelemetry: 50.0,
     ToFTelemetry: 20.0,
     HealthTelemetry: 5.0,
+    TeamSwitchTelemetry: 4.0,   # LedTask, TaskPeriodMs::LED_STATUS = 250 ms
 }
 
 
@@ -139,6 +147,8 @@ def _describir(paquete: Telemetry) -> str:
     if isinstance(paquete, HealthTelemetry):
         caidas = paquete.faulted_tasks
         return f"tareas colgadas: {', '.join(caidas) if caidas else 'ninguna'}"
+    if isinstance(paquete, TeamSwitchTelemetry):
+        return f"{paquete.team.name} ({'posicion central, robot bloqueado' if paquete.team is TeamColor.NONE else 'equipo elegido'})"
     return str(paquete)
 
 
@@ -309,6 +319,11 @@ def main() -> int:
                   lambda: link.send_gripper(GripperAction.OPEN))
 
         if args.motores:
+            switch = stats.ultima.get(TeamSwitchTelemetry)
+            if isinstance(switch, TeamSwitchTelemetry) and switch.team is TeamColor.NONE:
+                print("  ⚠️  El switch fisico de equipo esta en la posicion central: "
+                      "MotorTask va a ignorar este comando y el robot NO se va a mover. "
+                      "Mové el switch a AZUL o ROJO antes de repetir esta prueba.")
             # Se reenvía cada vuelta: MotorTask frena solo si pasa 500 ms sin
             # un comando válido (COMMS_FAILSAFE_TIMEOUT_MS), así que un único
             # envío daría un pulso de medio segundo y nada más.

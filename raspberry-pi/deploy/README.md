@@ -36,7 +36,10 @@ Edita `deploy/athena-rover.service` y reemplaza **las 3 apariciones** de
 
 ```bash
 cp deploy/equipo.env.example deploy/equipo.env
-nano deploy/equipo.env          # confirma o cambia EQUIPO=rojo / EQUIPO=azul
+# Normalmente NO hace falta tocar este archivo: el robot elige equipo con el
+# switch físico de 3 posiciones del chasis (ver hardware/conexiones-esp32-
+# s3.md). Solo descomentá EQUIPO=rojo/azul ahí si querés forzarlo sin el
+# switch instalado (banco de pruebas).
 
 cp config/rover.example.json config/rover.json
 nano config/rover.json          # pon el puerto que confirmaste arriba con ls
@@ -67,8 +70,17 @@ journalctl -u athena-rover.service -f      # log en vivo, Ctrl+C para salir
 
 ## 3. Cambiar de equipo antes de una ronda
 
+**Normal: mové el switch físico de 3 posiciones del chasis** a AZUL o ROJO.
+Se lee una sola vez, al puro inicio de la secuencia (`run_rover.py` espera
+en la posición central antes de arrancar la ronda) — así que hacé esto ANTES
+de que arranque el servicio, no a mitad de una ronda ya en curso. No hace
+falta editar nada ni reiniciar el servicio a mano — ver
+`hardware/conexiones-esp32-s3.md`.
+
+Solo si estás en banco sin el switch instalado:
+
 ```bash
-nano deploy/equipo.env          # EQUIPO=rojo  o  EQUIPO=azul
+nano deploy/equipo.env          # descomentá EQUIPO=rojo  o  EQUIPO=azul
 sudo systemctl restart athena-rover.service
 ```
 
