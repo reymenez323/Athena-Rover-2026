@@ -1083,9 +1083,9 @@ constexpr bool kMotionEnabled = true;
 
 // Velocidades y umbrales — mismo rol que ControlConfig en decision.py,
 // pero constexpr porque aquí no hay archivo de configuración que cargar.
-constexpr int kVelocidadCrucero     = 45;   // % de PWM al avanzar recto
-constexpr int kVelocidadBusqueda    = 35;   // % al girar buscando
-constexpr int kVelocidadAproximacion = 30;  // % al acercarse / evadir
+constexpr int kVelocidadCrucero     = 70;   // % de PWM al avanzar recto
+constexpr int kVelocidadBusqueda    = 65;   // % al girar buscando
+constexpr int kVelocidadAproximacion = 60;  // % al acercarse / evadir
 
 constexpr uint16_t kDistanciaAgarreMm = 150;  // debajo de esto: cerrar la pinza
 constexpr uint8_t  kTofDebounceHits   = 3;    // lecturas seguidas antes de agarrar

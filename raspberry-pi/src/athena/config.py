@@ -98,9 +98,9 @@ class GeometryConfig:
 class ControlConfig:
     """Ganancias del control visual. Conservadoras a propósito."""
 
-    velocidad_crucero: int = 45      # % de PWM al avanzar en línea recta
-    velocidad_busqueda: int = 35     # % al girar buscando
-    velocidad_aproximacion: int = 30  # % al acercarse a un objetivo
+    velocidad_crucero: int = 70      # % de PWM al avanzar en línea recta
+    velocidad_busqueda: int = 65     # % al girar buscando
+    velocidad_aproximacion: int = 60  # % al acercarse a un objetivo
     kp_angulo: float = 0.9           # cuánto corrige por grado de error
     correccion_max: int = 40         # tope de la corrección diferencial
     angulo_muerto_deg: float = 3.0   # por debajo de esto, se considera centrado
