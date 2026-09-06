@@ -431,14 +431,26 @@ brownout de motores lo reinicia a mitad de partida. Ver el aviso de
 brownout en la sección de [alimentación](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
 más abajo — es exactamente el escenario que se evitó no tocando esos pines.
 
-| Terminal del switch | Conexión | Nota |
-|---|---|---|
-| Común (pin del medio) | **GND** | |
-| Tiro "AZUL" | **GPIO 21** | Cerrado a GND = equipo azul (buscar bandera roja) |
-| Tiro "ROJO" | **GPIO 40** | Cerrado a GND = equipo rojo (buscar bandera azul) |
+| Terminal del switch | Conexión | Cable | Nota |
+|---|---|:---:|---|
+| Común (pin del medio) | **GND** | **Negro** | |
+| Tiro "AZUL" | **GPIO 21** | **Azul** | Cerrado a GND = equipo azul (buscar bandera roja) |
+| Tiro "ROJO" | **GPIO 40** | **Azul** | Cerrado a GND = equipo rojo (buscar bandera azul) |
 
 Los 2 GPIO se leen con **pull-up interno** (`INPUT_PULLUP`, sin resistencias
-externas): tiro abierto = HIGH, tiro cerrado = LOW.
+externas): el ESP32-S3 los sostiene en 3.3 V por su cuenta, y el switch
+solo los lleva a GND al cerrar hacia ese lado — tiro abierto = HIGH, tiro
+cerrado = LOW. No hace falta alimentar el switch desde 3.3 V directamente
+ni poner resistencias externas.
+
+> Los dos tiros van en **Azul** a propósito, no en "Azul para uno y Rojo
+> para el otro" (que sería lo intuitivo por el nombre del equipo): en este
+> esquema **Rojo es exclusivamente para potencia** (motores + 3.3 V lógica
+> + servos — ver el [código de colores](#código-de-colores-de-cableado)) y
+> nunca debe llegar a un GPIO. Ambos tiros del switch son señales lógicas
+> de bajo amperaje, igual que el resto de lo que ya va en Azul (IN1–IN4,
+> canales del LED RGB, etc.) — el nombre del tiro ("AZUL"/"ROJO") describe
+> el equipo, no el color físico del cable.
 
 | Posición física | GPIO 21 (AZUL) | GPIO 40 (ROJO) | Significado |
 |:---:|:---:|:---:|---|
