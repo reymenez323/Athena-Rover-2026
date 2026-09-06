@@ -71,16 +71,18 @@ azul** — 5 colores, no 9; ya **no hay blanco** disponible) y a una decisión
 deliberada del equipo (ver el aviso de Rojo abajo), la prioridad es, en
 este orden:
 
-1. **GND y la potencia de servos tienen color propio y exclusivo** — son
-   líneas que revientan hardware si se cruzan con cualquier otra cosa.
-2. **Rojo se comparte, a propósito, entre dos dominios de potencia**
-   (motores 7.4–12 V y lógica 3.3 V) — decisión explícita del equipo, no el
+1. **GND tiene color propio y exclusivo** — es la única línea de potencia
+   que sigue sin compartir con nada.
+2. **Rojo se comparte, a propósito, entre LOS TRES dominios de potencia
+   positiva del robot** (motores 7.4–12 V crudo, lógica 3.3 V, y servos
+   5–6 V regulados por el BEC) — decisión explícita del equipo, no el
    diseño por defecto de este esquema. Es la concesión más riesgosa de
    todo el documento: ver el aviso grande más abajo antes de cablear nada
    en rojo.
-3. Eso deja **dos colores libres para el I2C** — Amarillo y Azul,
-   uno para cada línea (SDA/SCL), recuperando la regla de "nunca el mismo
-   color en las dos líneas que corren pegadas al mismo conector".
+3. Eso deja **dos colores completos para el I2C** — Amarillo y Verde,
+   uno para cada línea (SDA/SCL), manteniendo la regla de "nunca el mismo
+   color en las dos líneas que corren pegadas al mismo conector" a pesar
+   de que Rojo se comió tres dominios de golpe.
 4. El resto de señales digitales/PWM de bajo amperaje (control de motores,
    salidas de los QTR, LED de equipo, LED de iluminación de cada TCS34725)
    reutiliza **Azul** — no pasa nada porque no conviven en el mismo
@@ -89,35 +91,41 @@ este orden:
 | Color | Uso |
 |-------|-----|
 | **Negro** | GND — todas las masas, sin excepción |
-| **Rojo** | ⚠️ **Compartido a propósito** — potencia de motores (batería 7.4–12 V hacia los L298N) **Y** lógica 3.3 V (VIN de los QTRX y los TCS34725). Ver el aviso grande abajo. |
-| **Verde** | Potencia de servos — BEC/batería 5–6 V hacia el **V+** del PCA9685. Exclusivo: nada más lleva verde. |
-| **Amarillo** | **I2C — SDA, en ambos buses.** Nada más lleva amarillo: al quedar liberado de la lógica 3.3 V (que ahora es Rojo), se dedicó por completo a esto. |
-| **Azul** | **I2C — SCL, en ambos buses.** También: PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
+| **Rojo** | 🛑 **Compartido a propósito entre TRES dominios** — potencia de motores (batería 7.4–12 V cruda hacia los L298N), lógica 3.3 V (VIN de los QTRX y los TCS34725) **y** servos (salida 5–6 V del BEC hacia el V+ del PCA9685). Ver el aviso grande abajo: es el color más peligroso de todo el documento. |
+| **Amarillo** | **I2C — SDA, en ambos buses.** Exclusivo. |
+| **Verde** | **I2C — SCL, en ambos buses.** Exclusivo: al quedar liberado de la potencia de servos (ahora en Rojo), se dedicó por completo a esto. |
+| **Azul** | PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N, CTRL de los QTR), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
 
-> 🛑 **AVISO — Rojo lleva 7.4–12 V Y 3.3 V a la vez: es el error que más
-> fácil se paga caro.** El resto de este documento evita por completo
-> mezclar dominios de voltaje bajo un mismo color — es la regla nº 1 de
-> todo el esquema — pero el equipo decidió hacer esta excepción con Rojo.
-> **Un solo cruce entre un tramo rojo de motores y un tramo rojo de lógica
-> mete 12 V a un pin de 3.3 V y quema el TCS34725 o el QTR al instante, sin
-> vuelta atrás.** Mitigación obligatoria, no opcional:
-> - **Marca la punta de TODO cable rojo** sin excepción: "MOTOR" en los que
->   van a los L298N, "3V3" en los que van a QTR/TCS34725.
-> - Mantén los dos tramos en **zonas físicamente separadas** del chasis
->   (motores de un lado, sensores del otro) — no los agrupes ni los sujetes
->   juntos con la misma cincha.
-> - Antes de energizar por primera vez, **verifica con multímetro** que
->   cada cable rojo que llega a un sensor mide 3.3 V y no 12 V, con la
->   batería de motores conectada.
+> 🛑 **AVISO — Rojo lleva 7.4–12 V, 5–6 V Y 3.3 V a la vez: es el color
+> donde más fácil se quema algo.** El resto de este documento evita por
+> completo mezclar dominios de voltaje bajo un mismo color — es la regla
+> nº 1 de todo el esquema — pero el equipo decidió concentrar los TRES
+> dominios positivos en Rojo, dejando el resto del carrete libre para
+> masa e I2C/señales. **Un solo cruce entre dos tramos rojos de dominios
+> distintos mete el voltaje equivocado en un pin que no lo tolera** — de
+> los tres cruces posibles, el más destructivo es 12 V motor → 3.3 V
+> lógica (quema el TCS34725/QTR al instante), pero 12 V motor → 5–6 V
+> servo también daña casi cualquier servo estándar. Mitigación
+> obligatoria, no opcional:
+> - **Marca la punta de TODO cable rojo, sin excepción, con cuál de los
+>   tres dominios lleva**: "MOTOR" (12 V crudo), "3V3" (lógica QTR/TCS) o
+>   "SERVO" (5–6 V del BEC). Tres etiquetas, nunca dos cables rojos sin
+>   marcar cerca uno del otro.
+> - Mantén los tres tramos en **zonas físicamente separadas** del chasis
+>   (motores de un lado, sensores de otro, servos/gripper del tercero) —
+>   no los agrupes ni los sujetes juntos con la misma cincha.
+> - Antes de energizar por primera vez, **verifica con multímetro** cada
+>   cable rojo en su destino final: 3.3 V en QTR/TCS34725, 5–6 V en el V+
+>   del PCA9685, con la batería conectada y los motores en reposo.
 
 Dos reglas simples que evitan la mayoría de los sustos:
 
 - **Rojo es la única línea que se comparte entre dominios de potencia, y
-  solo por decisión explícita del equipo — todas las demás (Negro, Verde,
-  Amarillo) siguen siendo exclusivas.** Aunque el LED RGB de equipo pueda
-  encender en rojo, sus 3 cables de señal van en **azul** (son PWM de bajo
-  amperaje, no una línea de potencia) — así se evita sumar una tercera cosa
-  al color que ya es el más delicado del esquema.
+  solo por decisión explícita del equipo — todas las demás (Negro,
+  Amarillo, Verde) siguen siendo exclusivas.** Aunque el LED RGB de equipo
+  pueda encender en rojo, sus 3 cables de señal van en **azul** (son PWM
+  de bajo amperaje, no una línea de potencia) — así se evita sumar una
+  cuarta cosa al color que ya es el más delicado del esquema.
 - **Corta el negro y el color de señal de cada conector al mismo largo.** Así
   se identifican por tacto (o a simple vista) cuál masa va con cuál señal sin
   tener que seguir el cable completo.
@@ -242,13 +250,11 @@ en la placa.
 | LED sensor trasero | **21** |
 
 Van en cable **azul**, igual que el resto de señales digitales de control de
-este robot (ver el [código de colores](#código-de-colores-de-cableado)) — la
-misma línea de SCL, que también es azul, corre justo al lado en este tramo.
-No hay riesgo de quemar nada si se confunden (los dos son 3.3 V lógicos),
-pero sí de que el sensor deje de responder o el LED se quede encendido/
-apagado sin control, así que marca la punta de cada cable azul que llegue
-al TCS34725 delantero ("SCL", "LED") para no perder tiempo depurando algo
-que es solo un cable mal puesto.
+este robot (ver el [código de colores](#código-de-colores-de-cableado)). En
+este tramo del TCS34725 delantero, cada cable ya tiene un color distinto
+(VIN rojo, GND negro, SDA amarillo, SCL verde, LED azul), así que no hace
+falta marquilla adicional aquí — no hay dos cables del mismo color
+conviviendo en el mismo conector.
 
 ---
 
@@ -434,10 +440,12 @@ GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED RGB
 A diferencia de lo que recomendaba antes este documento (dos baterías
 separadas), el equipo alimenta motores y servos/lógica desde **la misma
 batería física** — un BEC/regulador reduce esa misma fuente a 5–6 V para la
-rama de los servos. El PCA9685 y la Raspberry Pi siguen viendo 5–6 V
-regulados, no el crudo de 7.4–12 V, así que el [código de
-colores](#código-de-colores-de-cableado) (Rojo = crudo de motores, Verde =
-salida del BEC) no cambia.
+rama de los servos. Eléctricamente siguen siendo dos rieles distintos (el
+PCA9685 y la Raspberry Pi ven 5–6 V regulados, no el crudo de 7.4–12 V),
+pero en el [código de colores](#código-de-colores-de-cableado) **los dos
+rieles ahora comparten Rojo** — decisión del equipo, no una consecuencia
+automática de compartir batería — así que la distinción entre ellos vive
+solo en la marquilla de cada punta ("MOTOR" vs "SERVO"), no en el color.
 
 ```
 Batería única (7.4–12 V)
