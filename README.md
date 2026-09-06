@@ -29,6 +29,7 @@ la otra no puede:
         │      bandera rival?      │ serial │ 2 sensores de reflectancia  │
         │ Máquina de estados de    │ binario│ 1 ToF delantero             │
         │   la misión              │        │ LED RGB de equipo           │
+        │                          │        │ Switch de equipo (3 pos.)   │
         └──────────────────────────┘        └─────────────────────────────┘
 ```
 
@@ -137,6 +138,9 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 - [x] Máquina de estados de la misión, con las reglas de descalificación probadas
 - [x] Firmware autónomo para demostrar sin Raspberry Pi, con la misión completa habilitada
 - [x] Umbrales de color recalibrados contra 970 muestras reales
+- [x] Switch físico de 3 posiciones para elegir equipo al inicio, con doble
+      failsafe (el ESP32 no mueve motores hasta que se elija, y `run_rover.py`
+      espera lo mismo antes de arrancar la ronda)
 
 **Pendiente antes de competir:**
 

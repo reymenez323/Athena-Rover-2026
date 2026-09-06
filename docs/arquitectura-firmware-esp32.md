@@ -50,6 +50,15 @@ responsable de detectar su propio fallo. Poniendo el temporizador dentro de
 `MotorTask`, el robot frena aunque el problema esté en la tarea de
 comunicación, en el cable USB, o en la Raspberry Pi.
 
+Por la misma razón, `MotorTask` tiene un **segundo** failsafe independiente
+del enlace serial: mientras el switch físico de equipo (ver
+`hardware/conexiones-esp32-s3.md`) siga en la posición central, se niega a
+mover el robot sin importar qué mande la Raspberry Pi. Es deliberadamente
+redundante con el hecho de que `run_rover.py` ya espera esa misma señal antes
+de arrancar — un bug en el software de la Pi (o correrla sin esperar el
+switch) no debería poder mover un robot al que nadie le asignó equipo
+todavía.
+
 ## Por qué el protocolo se serializa byte a byte
 
 La primera versión mandaba `structs` con `memcpy` y `sizeof`. Es lo cómodo y es

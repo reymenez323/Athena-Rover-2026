@@ -3,9 +3,19 @@
 
 Uso::
 
-    python3 scripts/run_rover.py --equipo rojo
+    python3 scripts/run_rover.py                         # espera el switch físico de equipo
+    python3 scripts/run_rover.py --equipo rojo           # fuerza el equipo, sin esperar el switch
     python3 scripts/run_rover.py --equipo azul --ver     # con ventana de depuración
     python3 scripts/run_rover.py --equipo rojo --simular # sin mover motores
+
+SELECCIÓN DE EQUIPO: el robot tiene un switch físico de 3 posiciones
+(ON-OFF-ON, ver ``hardware/conexiones-esp32-s3.md``) que decide el equipo al
+puro inicio de la secuencia -- posición 0/central = nadie ha elegido todavía
+(el robot no se mueve; ``MotorTask`` en el ESP32 lo impone por su cuenta),
+1 = azul, 2 = rojo. Sin ``--equipo``, este script espera esa señal
+(``TeamSwitchTelemetry``) antes de arrancar la ronda. ``--equipo`` sigue
+existiendo para bancos de prueba sin el switch instalado: si se pasa, se usa
+directamente y no se espera nada del ESP32.
 
 DISEÑO DEL BUCLE: es de un solo hilo a propósito (la captura de cámara sí corre
 aparte). Percepción, decisión y envío en el mismo hilo hacen que el orden de
@@ -71,6 +81,7 @@ from athena.protocol import (  # noqa: E402
     HealthTelemetry,
     ReflectTelemetry,
     TeamColor,
+    TeamSwitchTelemetry,
     ToFTelemetry,
 )
 from athena.types import Detection, ObjectClass, Perception  # noqa: E402
@@ -139,9 +150,41 @@ def _percepcion_desde_ei(
     )
 
 
+def _esperar_equipo_del_switch(link: EspLink) -> TeamColor | None:
+    """Bloquea hasta que el switch físico de equipo salga de la posición central.
+
+    El switch (``hardware/conexiones-esp32-s3.md``) es la fuente de verdad de
+    qué equipo es este robot: se lee en el ESP32 y llega como
+    ``TeamSwitchTelemetry``. Mientras reporte ``TeamColor.NONE`` (la posición
+    central, el reposo normal al encender), no tiene sentido gastar cámara y
+    CPU en una ronda que ``MotorTask`` ya se niega a mover por su cuenta (ver
+    ``g_switchTeam`` en el firmware) -- mejor esperar aquí a que alguien
+    elija.
+
+    Devuelve ``None`` si se pidió detener (Ctrl+C) mientras se esperaba.
+    """
+    log.info("Esperando el switch físico de equipo (posición 0 = esperando)...")
+    ultimo_aviso = time.monotonic()
+    while not _parar:
+        for paquete in link.poll():
+            if isinstance(paquete, TeamSwitchTelemetry) and paquete.team is not TeamColor.NONE:
+                log.info("Switch de equipo -> %s", paquete.team.name)
+                return paquete.team
+        if time.monotonic() - ultimo_aviso > 5.0:
+            log.info("Sigo esperando el switch de equipo...")
+            ultimo_aviso = time.monotonic()
+        time.sleep(0.05)
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--equipo", required=True, choices=["rojo", "azul"])
+    parser.add_argument(
+        "--equipo", default=None, choices=["rojo", "azul"],
+        help="fuerza el equipo por línea de comandos, sin esperar el switch físico "
+             "(pensado para banco, sin el switch instalado). Si se omite, espera a "
+             "que el switch físico de 3 posiciones salga de la posición central.",
+    )
     parser.add_argument("--modelo", default="models/athena_ei_banderas.eim",
                         help="ruta al .eim exportado de Edge Impulse (target Linux AARCH64)")
     parser.add_argument("--config", default=None)
@@ -164,8 +207,6 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     cfg = Config.load(args.config)
-    equipo = TeamColor.RED if args.equipo == "rojo" else TeamColor.BLUE
-    etiqueta_objetivo = ETIQUETA_AZUL if equipo is TeamColor.RED else ETIQUETA_ROJO
 
     modelo_path = Path(args.modelo)
     if not modelo_path.is_absolute():
@@ -179,13 +220,6 @@ def main() -> int:
         cv2 = _cv2
 
     from athena.camera import Camera
-
-    decisor = DecisionMaker(cfg.control, RobotState(team=equipo))
-
-    log.info("Equipo: %s | objetivo: %s (%s)",
-              equipo.name, decisor.state.bandera_objetivo.value, etiqueta_objetivo)
-    if args.simular:
-        log.warning("MODO SIMULACIÓN: no se enviarán comandos de motor.")
 
     ultimo_color: ColorTelemetry | None = None
     ultimo_reflect: ReflectTelemetry | None = None
@@ -201,6 +235,26 @@ def main() -> int:
     t_inicio = time.monotonic()
 
     try:
+        if args.equipo is not None:
+            equipo = TeamColor.RED if args.equipo == "rojo" else TeamColor.BLUE
+        else:
+            # Conexión corta, solo para esperar la elección de equipo: se
+            # vuelve a abrir el enlace de verdad más abajo. EspLink reconecta
+            # solo, así que abrir/cerrar dos veces seguidas es barato y deja
+            # el resto del bucle principal exactamente igual que antes.
+            with EspLink(cfg.serial_port, cfg.serial_baud) as switch_link:
+                equipo = _esperar_equipo_del_switch(switch_link)
+            if equipo is None:
+                log.info("Detenido mientras se esperaba el switch de equipo.")
+                return 0
+
+        etiqueta_objetivo = ETIQUETA_AZUL if equipo is TeamColor.RED else ETIQUETA_ROJO
+        decisor = DecisionMaker(cfg.control, RobotState(team=equipo))
+        log.info("Equipo: %s | objetivo: %s (%s)",
+                  equipo.name, decisor.state.bandera_objetivo.value, etiqueta_objetivo)
+        if args.simular:
+            log.warning("MODO SIMULACIÓN: no se enviarán comandos de motor.")
+
         with Camera(cfg.camera) as cam, \
              EiFlagDetector(modelo_path, min_confidence=args.min_confianza) as ei_detector, \
              EspLink(cfg.serial_port, cfg.serial_baud) as link:

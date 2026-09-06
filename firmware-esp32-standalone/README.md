@@ -110,27 +110,38 @@ indica equipo ni "veo la bandera":
 | Azul | Azul fijo |
 | Negro (borde) | Destello alternando rojo/azul (~1.7 Hz) |
 
-## Selector de equipo (TEAM_SELECT)
+## Selector de equipo: switch de 3 posiciones
 
 Sin Raspberry Pi que le diga `--equipo rojo` o `--equipo azul` por línea de
-comandos, el equipo se elige con un **puente físico a GND** en
-`Pins::TEAM_SELECT` (GPIO40, libre en este robot — ver el historial de
-`firmware-esp32/` sobre por qué):
+comandos, el equipo se elige con un **switch físico de 3 posiciones
+(ON-OFF-ON)** en `Pins::TEAM_SWITCH_BLUE` (GPIO21) y `Pins::TEAM_SWITCH_RED`
+(GPIO40) — ver `hardware/conexiones-esp32-s3.md` para el cableado completo:
 
-| GPIO40             | Equipo |
-|--------------------|--------|
-| Puenteado a GND    | ROJO   |
-| Sin conectar (pull-up interno) | AZUL |
+| Posición | Equipo | Qué hace el robot |
+|:---:|---|---|
+| 0 (central) | Ninguno todavía | `setup()` se queda esperando aquí, LED en blanco tenue parpadeando. Ninguna tarea ha arrancado, así que el robot no puede moverse. |
+| 1 | AZUL | `setup()` sigue de largo con `g_myTeam = TeamColor::BLUE` |
+| 2 | ROJO | `setup()` sigue de largo con `g_myTeam = TeamColor::RED` |
 
-Se lee **una sola vez**, en `setup()`. Cambiarlo exige reiniciar el ESP32,
-que de todas formas ya se hace entre rondas.
+A diferencia del viejo puente de un solo pin (2 estados, sin reposo real),
+esto le da al procedimiento de arranque una posición de espera de verdad:
+**se enciende el robot con el switch en 0, y recién cuando alguien lo mueve
+a 1 o 2 arranca la cuenta regresiva de `Mission::kStartupDelayMs`.** Se lee
+en un bucle bloqueante dentro de `setup()`, no una sola vez: cambiar de
+equipo sigue exigiendo reiniciar el ESP32, igual que antes, pero ya no hace
+falta adivinar en qué posición estaba el switch al momento exacto del
+arranque.
 
 ## Secuencia de arranque
 
-1. Al energizar, el robot espera quieto `Mission::kStartupDelayMs` (3 s por
-   defecto) — tiempo para que el operador **coloque la llave a mano en la
-   pinza abierta** y ubique el robot en la pista. El LED ya muestra la zona
-   de piso bajo el sensor delantero desde este momento.
+0. Al energizar, el switch de equipo debe estar en la posición central (0):
+   `setup()` se queda esperando ahí (LED blanco tenue parpadeando, ninguna
+   tarea arrancada todavía) hasta que el operador lo mueva a 1 (azul) o 2
+   (rojo). El robot no puede moverse en este paso.
+1. Elegido el equipo, el robot espera quieto `Mission::kStartupDelayMs` (3 s
+   por defecto) — tiempo para que el operador **coloque la llave a mano en
+   la pinza abierta** y ubique el robot en la pista. El LED ya muestra la
+   zona de piso bajo el sensor delantero desde este momento.
 2. `ASEGURAR_LLAVE`: cierra la pinza sobre la llave.
 3. `BUSCAR_ZONA_NEUTRA`: avanza recto hasta pisar la zona amarilla.
 4. `DEPOSITAR_LLAVE`: abre la pinza.
@@ -149,7 +160,7 @@ nada más ande bien.
 ## Hardware
 
 Igual que [`../firmware-esp32/README.md`](../firmware-esp32/README.md), más
-el puente TEAM_SELECT. Las conexiones completas están en
+el switch de 3 posiciones de selección de equipo. Las conexiones completas están en
 [`../hardware/conexiones-esp32-s3.md`](../hardware/conexiones-esp32-s3.md).
 
 | Componente | Cantidad | Para qué |
@@ -160,7 +171,7 @@ el puente TEAM_SELECT. Las conexiones completas están en
 | VL53L1X | 1 | Telémetro delante del gripper — aquí también hace de "ojos" para la bandera |
 | QTRX-HD-01A | 2 | Reflectancia delantera, izquierda y derecha |
 | LED RGB | 1 | Indicador puro de línea/zona de piso |
-| Puente TEAM_SELECT | 1 | GND = ROJO, abierto = AZUL |
+| Switch 3 posiciones (ON-OFF-ON) | 1 | 0 = esperando, 1 = azul, 2 = rojo |
 
 ## Compilar y subir
 
@@ -189,6 +200,6 @@ pio device monitor   # ver los logs de misión (fases, sensores, watchdog)
 |---|---|---|
 | Cerebro de la misión | Raspberry Pi (`decision.py` + `run_rover.py`) | ESP32-S3 (`MissionTask`) |
 | Detección de la bandera contraria | Cámara + Edge Impulse (color real) | VL53L1X (heurística de proximidad) |
-| Selección de equipo | `--equipo rojo/azul` por línea de comandos | Puente físico TEAM_SELECT |
+| Selección de equipo | `--equipo rojo/azul` por línea de comandos | Switch físico de 3 posiciones (0=esperando, 1=azul, 2=rojo) |
 | Enlace serial | Protocolo binario `[0xAA][TYPE][LEN]...` con la Pi | Ninguno — `Serial` solo para logs de depuración |
 | Uso previsto | Clasificatoria completa | Demostración |

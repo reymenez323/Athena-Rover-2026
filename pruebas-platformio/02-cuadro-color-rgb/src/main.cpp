@@ -81,9 +81,10 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
-    // LED de iluminación de cada TCS34725 (activo en alto).
+    // LED de iluminación del TCS34725 (activo en alto). Solo el delantero
+    // pasa por GPIO: el trasero se cableó directo a 3.3V (ver hardware/
+    // conexiones-esp32-s3.md) -- GPIO21 quedó libre para el switch de equipo.
     constexpr uint8_t TCS_LED_FRONT = 18;
-    constexpr uint8_t TCS_LED_BACK  = 21;
 
     // -------- LED RGB indicador del color delantero ------------------------
     // No está en hardware/conexiones-esp32-s3.md todavía (es nuevo en esta
@@ -590,9 +591,7 @@ void setup() {
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
-    pinMode(Pins::TCS_LED_BACK, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
-    digitalWrite(Pins::TCS_LED_BACK, HIGH);
 
     g_frontOk = Tcs34725::Init(Wire);
     g_backOk  = Tcs34725::Init(Wire1);

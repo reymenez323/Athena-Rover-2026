@@ -63,12 +63,13 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
-    // LED blanco de iluminación de cada sensor — activo en alto, con pull-up
-    // propio hacia VIN si se deja sin conectar (ver hardware/conexiones-
-    // esp32-s3.md). Encendidos fijos: la clasificación de color no puede
-    // depender de la luz del salón de competencia.
+    // LED blanco de iluminación del sensor DELANTERO — activo en alto, con
+    // pull-up propio hacia VIN si se deja sin conectar (ver hardware/
+    // conexiones-esp32-s3.md). Encendido fijo: la clasificación de color no
+    // puede depender de la luz del salón de competencia. El del TRASERO ya no
+    // pasa por GPIO: se cableó directo a 3.3V, y GPIO21 quedó libre para el
+    // switch de equipo.
     constexpr uint8_t TCS_LED_FRONT = 18;
-    constexpr uint8_t TCS_LED_BACK  = 21;
 }
 
 namespace I2CAddr {
@@ -192,16 +193,15 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    // Los dos buses y los dos LED se inicializan SIEMPRE, use o no use el
-    // sensor de ese lado — así SENSOR_ES_DELANTERO es de verdad lo único
-    // que hay que tocar para cambiar de sensor, ver el encabezado.
+    // Los dos buses se inicializan SIEMPRE, use o no use el sensor de ese
+    // lado — así SENSOR_ES_DELANTERO es de verdad lo único que hay que tocar
+    // para cambiar de sensor, ver el encabezado. El LED trasero ya no pasa
+    // por GPIO (cableado directo a 3.3V), así que solo queda el delantero.
     Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
-    pinMode(Pins::TCS_LED_BACK, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
-    digitalWrite(Pins::TCS_LED_BACK, HIGH);
 
     g_sensorOk = Tcs34725::Init(BusActivo);
 
