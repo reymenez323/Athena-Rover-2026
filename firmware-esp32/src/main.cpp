@@ -41,7 +41,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <VL53L1X.h>
-#include <freertos/semphr.h>   // SemaphoreHandle_t / mutex del bus I2C nº0 (ver g_i2c0Mutex)
+#include <freertos/semphr.h>   // SemaphoreHandle_t / mutex de los buses I2C (ver g_i2c0Mutex, g_i2c1Mutex)
 #include <esp_system.h>        // esp_reset_reason() — ver el log de arranque en setup()
 
 // ===========================================================================
@@ -79,14 +79,23 @@ namespace Pins {
     constexpr uint8_t L298N_R_IN4 = 14;   // RR sentido B
     constexpr uint8_t L298N_R_ENB = 17;   // RR velocidad (PWM)
 
-    // -------- Bus I2C nº0: PCA9685 (servos) + TCS34725 DELANTERO -----------
+    // -------- Bus I2C nº0: TCS34725 DELANTERO + VL53L1X ---------------------
     constexpr uint8_t I2C0_SDA = 8;
     constexpr uint8_t I2C0_SCL = 9;
 
-    // -------- Bus I2C nº1: TCS34725 TRASERO --------------------------------
+    // -------- Bus I2C nº1: TCS34725 TRASERO + PCA9685 (servos) --------------
     // Los dos TCS34725 tienen la MISMA dirección fija (0x29) y no se puede
     // cambiar. Por eso van en buses separados: el ESP32-S3 tiene dos
     // controladores I2C, así nos ahorramos el multiplexor TCA9548A.
+    //
+    // El PCA9685 se agregó a este bus por decisión del equipo: el bus 0 ya
+    // tenía dos dispositivos (TCS34725 delantero + VL53L1X, y este último
+    // exige la coreografía de XSHUT que se explica en TofSensorTask), así
+    // que el servo del gripper se movió acá en vez de sumar un tercero al 0.
+    // Dirección del PCA9685 (0x40) muy distinta a la del TCS34725 trasero
+    // (0x29): no hay riesgo de colisión de direcciones en este bus, solo el
+    // mismo riesgo de concurrencia entre tareas que ya resolvía el mutex del
+    // bus 0 — ver g_i2c1Mutex.
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
@@ -122,9 +131,8 @@ namespace Pins {
     constexpr uint8_t TEAM_SWITCH_RED  = 21;  // tiro "ROJO": cerrado a GND = equipo rojo
 
     // -------- VL53L1X (ToF), delante del gripper ---------------------------
-    // Va en el bus I2C nº0 (mismo que el PCA9685 y el TCS34725 delantero). El
-    // PCA9685 no da problema (dirección fija 0x40, distinta), pero el
-    // TCS34725 delantero SÍ: arranca en la MISMA dirección fija 0x29 que el
+    // Va en el bus I2C nº0, junto con el TCS34725 delantero. Este SÍ da
+    // problema: arranca en la MISMA dirección fija 0x29 que el
     // VL53L1X, así que este pin XSHUT es necesario para quedarse en reset
     // (sin responder en el bus) hasta que se le reasigna una dirección nueva
     // — ver TofSensorTask y la nota en I2CAddr::VL53L1X_BOOT_ADDR más abajo
@@ -168,10 +176,9 @@ namespace I2CAddr {
     constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar
 
     // El VL53L1X arranca SIEMPRE en 0x29 — la misma dirección fija del
-    // TCS34725, y comparten el bus I2C nº0 (ver Pins::TOF_XSHUT). El PCA9685,
-    // que también vive en ese bus, no es un problema (0x40, distinta). Por
-    // eso se le reasigna esta dirección nueva al VL53L1X en cuanto sale de
-    // reset, antes de hacer cualquier otra cosa con él.
+    // TCS34725 delantero, y comparten el bus I2C nº0 (ver Pins::TOF_XSHUT).
+    // Por eso se le reasigna esta dirección nueva al VL53L1X en cuanto sale
+    // de reset, antes de hacer cualquier otra cosa con él.
     //
     // ⚠️ ESA REASIGNACIÓN ES UNA ÚNICA ESCRITURA CORTA hecha mientras el
     // VL53L1X TODAVÍA responde en 0x29 — el mismo instante en que el
@@ -516,21 +523,20 @@ static QueueHandle_t g_teamSwitchQueue    = nullptr;
 static volatile TeamColor g_switchTeam = TeamColor::NONE;
 
 // ---------------------------------------------------------------------------
-//  Mutex del bus I2C nº0 (Wire) — PCA9685 + TCS34725 delantero + VL53L1X.
+//  Mutex del bus I2C nº0 (Wire) — TCS34725 delantero + VL53L1X.
 // ---------------------------------------------------------------------------
-//  LAS TRES TAREAS QUE TOCAN ESTE BUS CORREN POR SU CUENTA: GripperTask (el
-//  PCA9685) va en el núcleo 1; ColorSensorTask (el TCS34725 delantero) y
-//  TofSensorTask (el VL53L1X) van en el núcleo 0. `Wire`/`TwoWire` NO es
-//  segura para usarse desde varias tareas a la vez, y con dos núcleos de por
-//  medio no hace falta ni que el planificador las intercale mal: pueden estar
-//  literalmente ejecutando una transacción I2C cada una AL MISMO TIEMPO. Eso
-//  corrompe el bus de forma intermitente — exactamente los "problemas de
-//  I2C" que se vieron en banco entre el ToF y el sensor de color — sin que
-//  ninguno de los dos esté roto por separado.
+//  LAS DOS TAREAS QUE TOCAN ESTE BUS CORREN EN EL MISMO NÚCLEO (0: sensores),
+//  pero eso NO alcanza para que `Wire`/`TwoWire` sea segura entre ellas:
+//  ninguna de las dos deshabilita el planificador durante una transacción
+//  I2C, así que un cambio de contexto a mitad de un beginTransmission()/
+//  endTransmission() puede intercalar los bytes de ColorSensorTask con los
+//  de TofSensorTask sobre el mismo objeto `Wire`. Corrompe el bus de forma
+//  intermitente — exactamente los "problemas de I2C" que se vieron en banco
+//  entre el ToF y el sensor de color — sin que ninguno de los dos esté roto
+//  por separado.
 //
 //  Este mutex serializa toda transacción sobre el bus 0: cada tarea lo toma
-//  antes de tocar `Wire` y lo suelta apenas termina. El bus 1 (`Wire1`, el
-//  TCS34725 trasero) no lo necesita: nadie más lo usa.
+//  antes de tocar `Wire` y lo suelta apenas termina.
 //
 //  Con timeout corto (no portMAX_DELAY, por la misma regla que las colas): si
 //  no se consigue el bus en I2C0_LOCK_TIMEOUT_MS, la operación se da por
@@ -539,8 +545,9 @@ static volatile TeamColor g_switchTeam = TeamColor::NONE;
 //  cambio de un periférico que tarda).
 //
 //  Se diagnosticó y se arregló primero en firmware-esp32-standalone/ (commit
-//  75ad526). Este firmware tiene EXACTAMENTE el mismo bus compartido entre
-//  las mismas tres tareas, así que tenía el mismo problema.
+//  75ad526). Este firmware tenía EXACTAMENTE el mismo bus compartido, aunque
+//  ahora entre dos tareas y no tres: el PCA9685, que también vivía acá, se
+//  movió al bus 1 (ver g_i2c1Mutex, justo abajo) por decisión del equipo.
 static SemaphoreHandle_t g_i2c0Mutex = nullptr;
 constexpr uint32_t I2C0_LOCK_TIMEOUT_MS = 50;
 
@@ -550,6 +557,27 @@ static inline bool I2c0Lock() {
 
 static inline void I2c0Unlock() {
     xSemaphoreGive(g_i2c0Mutex);
+}
+
+// ---------------------------------------------------------------------------
+//  Mutex del bus I2C nº1 (Wire1) — TCS34725 trasero + PCA9685 (servos).
+// ---------------------------------------------------------------------------
+//  Mismo problema que el bus 0, con el mismo mecanismo: GripperTask (el
+//  PCA9685) corre en el núcleo 1, ColorSensorTask (el TCS34725 trasero) en
+//  el núcleo 0 — con dos núcleos de por medio, ni siquiera hace falta que el
+//  planificador las intercale mal: pueden estar ejecutando una transacción
+//  I2C cada una AL MISMO TIEMPO. El bus 1 era seguro sin mutex mientras solo
+//  tuviera un dispositivo (el TCS34725 trasero, sin nadie más con quien
+//  competir); deja de serlo en cuanto el PCA9685 se muda acá.
+static SemaphoreHandle_t g_i2c1Mutex = nullptr;
+constexpr uint32_t I2C1_LOCK_TIMEOUT_MS = 50;
+
+static inline bool I2c1Lock() {
+    return xSemaphoreTake(g_i2c1Mutex, pdMS_TO_TICKS(I2C1_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+static inline void I2c1Unlock() {
+    xSemaphoreGive(g_i2c1Mutex);
 }
 
 // ===========================================================================
@@ -601,6 +629,13 @@ static uint8_t WatchdogCheck() {
 //  TODAS las funciones devuelven bool. Si el PCA9685 se desconecta, devuelven
 //  false y la tarea del gripper sigue viva: un servo mudo no puede colgar al
 //  robot entero.
+//
+//  Vive en Wire1 (bus I2C nº1), no en Wire — decisión del equipo para no
+//  sumar un tercer dispositivo al bus 0 (ver Pins::I2C1_SDA/SCL y
+//  g_i2c1Mutex). A diferencia de Tcs34725:: (que sí necesita recibir el bus
+//  por parámetro porque el mismo driver atiende los dos TCS34725, uno en
+//  cada bus), aquí hay un solo PCA9685 y siempre va a estar en el mismo
+//  bus, así que no hace falta esa generalización.
 
 namespace Pca9685 {
     constexpr uint8_t REG_MODE1    = 0x00;
@@ -614,18 +649,18 @@ namespace Pca9685 {
     constexpr uint8_t MODE2_OUTDRV  = 0x04;   // salida totem-pole
 
     bool WriteReg(uint8_t reg, uint8_t value) {
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(reg);
-        Wire.write(value);
-        return Wire.endTransmission() == 0;
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(reg);
+        Wire1.write(value);
+        return Wire1.endTransmission() == 0;
     }
 
     bool ReadReg(uint8_t reg, uint8_t &out) {
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(reg);
-        if (Wire.endTransmission(false) != 0) return false;
-        if (Wire.requestFrom((int)I2CAddr::PCA9685, 1) != 1) return false;
-        out = (uint8_t)Wire.read();
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(reg);
+        if (Wire1.endTransmission(false) != 0) return false;
+        if (Wire1.requestFrom((int)I2CAddr::PCA9685, 1) != 1) return false;
+        out = (uint8_t)Wire1.read();
         return true;
     }
 
@@ -652,13 +687,13 @@ namespace Pca9685 {
         if (channel > 15) return false;
         if (ticks > 4095) ticks = 4095;
 
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(REG_LED0_ON_L + 4 * channel);
-        Wire.write(0x00);                      // ON  low   -> el pulso empieza en 0
-        Wire.write(0x00);                      // ON  high
-        Wire.write((uint8_t)(ticks & 0xFF));   // OFF low
-        Wire.write((uint8_t)(ticks >> 8));     // OFF high
-        return Wire.endTransmission() == 0;
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(REG_LED0_ON_L + 4 * channel);
+        Wire1.write(0x00);                      // ON  low   -> el pulso empieza en 0
+        Wire1.write(0x00);                      // ON  high
+        Wire1.write((uint8_t)(ticks & 0xFF));   // OFF low
+        Wire1.write((uint8_t)(ticks >> 8));     // OFF high
+        return Wire1.endTransmission() == 0;
     }
 }
 
@@ -936,16 +971,16 @@ constexpr int kClawClosedBanderaDeg = 65;
 
 void GripperTask(void *) {
     // El bus I2C ya fue inicializado en setup(); aquí solo se configura el
-    // chip. Todo acceso al PCA9685 comparte el bus 0 con el TCS34725
-    // delantero y el VL53L1X: se toma el mutex antes y se suelta al terminar
-    // (ver la nota larga junto a g_i2c0Mutex).
+    // chip. El PCA9685 vive en el bus 1 (Wire1), junto con el TCS34725
+    // trasero: se toma el mutex de ESE bus antes y se suelta al terminar
+    // (ver la nota larga junto a g_i2c1Mutex).
     bool pca_ok = false;
-    if (I2c0Lock()) {
+    if (I2c1Lock()) {
         pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
         if (pca_ok) {
             Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
         }
-        I2c0Unlock();
+        I2c1Unlock();
     }
     if (!pca_ok) {
         DEBUG_LINK.println("[Gripper] PCA9685 no responde. Reintentando en segundo plano.");
@@ -961,7 +996,7 @@ void GripperTask(void *) {
         // moviéndose y compitiendo mientras tanto.
         if (!pca_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
-            if (I2c0Lock()) {
+            if (I2c1Lock()) {
                 pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
                 // Si el PCA9685 no respondió al arrancar (arriba se saltó el
                 // SetChannel inicial) y recién ahora reaparece, hay que
@@ -970,7 +1005,7 @@ void GripperTask(void *) {
                 if (pca_ok) {
                     pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
                 }
-                I2c0Unlock();
+                I2c1Unlock();
             }
         }
 
@@ -980,7 +1015,7 @@ void GripperTask(void *) {
             // ángulo pedido. Esta tarea no se queda esperándolo: manda la
             // orden y sigue, así que un gripper atascado nunca congela a los
             // motores ni al enlace serial.
-            if (I2c0Lock()) {
+            if (I2c1Lock()) {
                 switch (cmd.action) {
                     case GripperAction::OPEN:
                         pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
@@ -994,7 +1029,7 @@ void GripperTask(void *) {
                     default:
                         break;
                 }
-                I2c0Unlock();
+                I2c1Unlock();
             }
         }
 
@@ -1025,9 +1060,8 @@ void PushDropOldest(QueueHandle_t queue, const T &item) {
 //  agarrar vive en la Pi (raspberry-pi/src/athena/decision.py).
 //
 //  SECUENCIA DE ARRANQUE, y por qué es así:
-//  el VL53L1X comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero.
-//  El PCA9685 no da problema (0x40, distinta), pero el TCS34725 delantero
-//  arranca en la MISMA dirección fija 0x29 que el VL53L1X (ver Pins::TOF_XSHUT
+//  el VL53L1X comparte el bus I2C nº0 con el TCS34725 delantero, que arranca
+//  en la MISMA dirección fija 0x29 que el VL53L1X (ver Pins::TOF_XSHUT
 //  e I2CAddr::VL53L1X_BOOT_ADDR). La secuencia:
 //    1. Mantener XSHUT en LOW un instante: el VL53L1X queda en reset y NO
 //       responde en el bus, así que el TCS34725 delantero no tiene con quién
@@ -1153,14 +1187,19 @@ void ColorSensorTask(void *) {
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
 
-    // El DELANTERO vive en el bus 0, compartido: va bajo mutex. El TRASERO
-    // está en Wire1, que no comparte con nadie, así que no lo necesita.
+    // El DELANTERO vive en el bus 0 (compartido con el VL53L1X): va bajo
+    // I2c0Lock. El TRASERO vive en el bus 1 (compartido con el PCA9685 desde
+    // que el gripper se movió ahí): va bajo I2c1Lock, por la misma razón.
     bool front_ok = false;
     if (I2c0Lock()) {
         front_ok = Tcs34725::Init(Wire);
         I2c0Unlock();
     }
-    bool back_ok = Tcs34725::Init(Wire1);
+    bool back_ok = false;
+    if (I2c1Lock()) {
+        back_ok = Tcs34725::Init(Wire1);
+        I2c1Unlock();
+    }
 
     if (!front_ok) DEBUG_LINK.println("[Color] sensor DELANTERO no responde (bus I2C 0).");
     if (!back_ok)  DEBUG_LINK.println("[Color] sensor TRASERO no responde (bus I2C 1).");
@@ -1177,7 +1216,10 @@ void ColorSensorTask(void *) {
                 front_ok = Tcs34725::Init(Wire);
                 I2c0Unlock();
             }
-            if (!back_ok) back_ok = Tcs34725::Init(Wire1);
+            if (!back_ok && I2c1Lock()) {
+                back_ok = Tcs34725::Init(Wire1);
+                I2c1Unlock();
+            }
         }
 
         ColorReading reading;
@@ -1187,7 +1229,8 @@ void ColorSensorTask(void *) {
         // Se distingue "no se consiguió el bus a tiempo" de "el sensor no
         // respondió". Lo primero es normal bajo contención y NO debe marcar
         // el sensor como caído: simplemente no hay lectura esta vuelta. Solo
-        // un Read() que falla de verdad lo manda a reintento.
+        // un Read() que falla de verdad lo manda a reintento. Mismo criterio
+        // para los dos sensores, cada uno con el lock de su propio bus.
         bool front_read = false;
         bool front_intentado = false;
         if (front_ok && I2c0Lock()) {
@@ -1202,10 +1245,17 @@ void ColorSensorTask(void *) {
             front_ok = false;                 // se marcará para reintento
         }
 
-        if (back_ok && Tcs34725::Read(Wire1, sample)) {
+        bool back_read = false;
+        bool back_intentado = false;
+        if (back_ok && I2c1Lock()) {
+            back_intentado = true;
+            back_read = Tcs34725::Read(Wire1, sample);
+            I2c1Unlock();
+        }
+        if (back_read) {
             reading.back = ClassifyColor(sample);
             reading.back_valid = true;
-        } else {
+        } else if (back_intentado) {
             back_ok = false;
         }
 
@@ -1685,8 +1735,8 @@ void setup() {
 
     // Los dos buses I2C se abren aquí, ANTES de lanzar las tareas, para que
     // ninguna tarea tenga que inicializar hardware compartido.
-    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // PCA9685 + TCS34725 delantero + VL53L1X
-    Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);  // TCS34725 trasero
+    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // TCS34725 delantero + VL53L1X
+    Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);  // TCS34725 trasero + PCA9685
 
     // Timeout corto: si un chip I2C se cuelga tirando SDA a masa, la
     // transacción falla rápido en vez de congelar la tarea que la pidió.
@@ -1704,11 +1754,13 @@ void setup() {
     pinMode(Pins::TOF_XSHUT, OUTPUT);
     digitalWrite(Pins::TOF_XSHUT, LOW);
 
-    // El mutex del bus I2C 0 se crea ANTES que ninguna tarea: las tres que
-    // comparten ese bus lo toman en su primera vuelta (ver g_i2c0Mutex).
+    // Los mutex de los dos buses I2C se crean ANTES que ninguna tarea: las
+    // que los comparten los toman en su primera vuelta (ver g_i2c0Mutex y
+    // g_i2c1Mutex).
     g_i2c0Mutex = xSemaphoreCreateMutex();
-    if (g_i2c0Mutex == nullptr) {
-        DEBUG_LINK.println("[FATAL] no se pudo crear el mutex del bus I2C 0. Arranque detenido.");
+    g_i2c1Mutex = xSemaphoreCreateMutex();
+    if (g_i2c0Mutex == nullptr || g_i2c1Mutex == nullptr) {
+        DEBUG_LINK.println("[FATAL] no se pudo crear un mutex de bus I2C. Arranque detenido.");
         for (;;) delay(1000);
     }
 

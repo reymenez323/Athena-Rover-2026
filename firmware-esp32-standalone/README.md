@@ -38,25 +38,34 @@ cable USB (sin la batería) para confirmar: si los reinicios y los errores
 de I2C desaparecen, el firmware está bien y lo que hace falta es cargar o
 cambiar la batería.
 
-## Bus I2C nº0 compartido: por qué hay un mutex
+## Dos buses I2C compartidos: por qué hay dos mutex
 
-`GripperTask` (PCA9685), `ColorSensorTask` (TCS34725 delantero) y
-`TofSensorTask` (VL53L1X) viven los tres en el mismo bus I2C nº0 (`Wire`),
-pero corren en tareas de FreeRTOS distintas — Gripper en el núcleo 1,
-Color y ToF en el núcleo 0. `TwoWire` no es segura para usarse desde varias
-tareas a la vez, y con dos núcleos de por medio dos de esas tareas pueden
-estar ejecutando una transacción I2C **al mismo tiempo**, no solo
-intercaladas por el planificador. Eso corrompe el bus de forma
-intermitente: exactamente los "problemas de I2C" que se ven al mezclar el
-ToF con el sensor de color.
+El PCA9685 (servos) vive en el bus I2C nº1 (`Wire1`), no en el nº0 —
+decisión del equipo, para no sumar un tercer dispositivo al bus 0 (que ya
+tiene el TCS34725 delantero + el VL53L1X, con su propia coreografía de
+arranque). Eso deja **cada uno de los dos buses compartido entre dos
+tareas**, no uno solo:
 
-La solución es `g_i2c0Mutex`: cada tarea toma este mutex antes de tocar el
-bus 0 y lo suelta apenas termina, así nunca hay dos transacciones activas
-al mismo tiempo. El bus 1 (`Wire1`, el TCS34725 trasero) no lo necesita
-porque nadie más lo usa. Con timeout corto (50 ms, no `portMAX_DELAY`): si
-no se consigue el bus a tiempo, esa operación se da por fallida esta vuelta
-y se reintenta en la siguiente, mismo criterio que ya usan los drivers de
-este archivo.
+- **Bus 0** (`Wire`): `ColorSensorTask` (TCS34725 delantero) y
+  `TofSensorTask` (VL53L1X) — ambas en el núcleo 0.
+- **Bus 1** (`Wire1`): `ColorSensorTask` (TCS34725 trasero) y
+  `GripperTask` (PCA9685) — Color en el núcleo 0, Gripper en el núcleo 1.
+
+`TwoWire` no es segura para usarse desde varias tareas a la vez. En el bus
+1, con dos núcleos de por medio, las dos tareas pueden estar ejecutando una
+transacción I2C **al mismo tiempo**; en el bus 0, aunque compartan núcleo,
+ninguna de las dos deshabilita el planificador durante la transacción, así
+que un cambio de contexto a mitad de una puede intercalarla con la otra
+igual. Ambos casos corrompen el bus de forma intermitente: exactamente los
+"problemas de I2C" que se ven al mezclar el ToF con el sensor de color (o,
+ahora, el gripper con el sensor trasero).
+
+La solución es un mutex por bus: `g_i2c0Mutex` y `g_i2c1Mutex`. Cada tarea
+toma el mutex de SU bus antes de tocarlo y lo suelta apenas termina, así
+nunca hay dos transacciones activas a la vez sobre el mismo bus. Con
+timeout corto (50 ms, no `portMAX_DELAY`) en los dos: si no se consigue el
+bus a tiempo, esa operación se da por fallida esta vuelta y se reintenta en
+la siguiente, mismo criterio que ya usan los drivers de este archivo.
 
 ## Interruptor de movimiento
 

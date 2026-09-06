@@ -186,13 +186,19 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ## Servos — PCA9685 (I2C, dirección 0x40)
 
+> ⚠️ **El PCA9685 va en el bus I2C nº 1, no en el nº 0.** Decisión del
+> equipo: el bus 0 ya tenía dos dispositivos (TCS34725 delantero + VL53L1X,
+> con su propia coreografía de arranque por XSHUT), así que el servo del
+> gripper se conectó junto al TCS34725 trasero en vez de sumar un tercero
+> al 0. Su dirección (0x40) no choca con la del TCS34725 trasero (0x29).
+
 | Pin PCA9685 | Conexión | Cable | Nota |
 |-------------|----------|:---:|------|
 | VCC | 3.3 V del ESP32 | Rojo | Solo la lógica del chip |
 | **V+** | **Fuente aparte de 5–6 V** | Rojo | Alimentación de los servos. **No** desde el ESP32. Comparte color con VCC y con la batería de motores — ver el aviso de Rojo compartido en el [código de colores](#código-de-colores-de-cableado). |
 | GND | GND común | Negro | |
-| SDA | **GPIO 8** | Amarillo | Bus I2C nº 0 |
-| SCL | **GPIO 9** | Verde | Bus I2C nº 0 |
+| SDA | **GPIO 47** | Amarillo | Bus I2C nº 1 |
+| SCL | **GPIO 48** | Verde | Bus I2C nº 1 |
 
 | Canal PCA9685 | Servo |
 |:-------------:|-------|
@@ -207,7 +213,7 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 Por eso van en **buses I2C separados**: el ESP32-S3 tiene dos controladores I2C,
 así te ahorras el multiplexor TCA9548A.
 
-### Sensor DELANTERO — bus I2C nº 0 (compartido con el PCA9685 y el VL53L1X)
+### Sensor DELANTERO — bus I2C nº 0 (compartido con el VL53L1X)
 
 | Pin | GPIO ESP32-S3 | Cable |
 |-----|:-------------:|:---:|
@@ -217,7 +223,7 @@ así te ahorras el multiplexor TCA9548A.
 | GND | GND | Negro |
 | LED | **18** | Azul |
 
-### Sensor TRASERO — bus I2C nº 1 (dedicado)
+### Sensor TRASERO — bus I2C nº 1 (compartido con el PCA9685)
 
 | Pin | GPIO ESP32-S3 / Conexión | Cable |
 |-----|:-------------:|:---:|
@@ -283,14 +289,14 @@ Raspberry Pi sepa cuándo cerrar la pinza — la lógica de "cuándo" vive en
 
 **Dirección I2C fija de fábrica: 0x29 — igual que AMBOS TCS34725.** No hay
 forma de elegir otra dirección desde el pin ni por strapping. Por eso NO va en
-un bus propio: comparte el bus I2C nº0 con el PCA9685 y el TCS34725 delantero
-(el PCA9685 no da problema, es 0x40), y su pin **XSHUT** es imprescindible
-(no opcional) para poder arrancar sin que las dos direcciones 0x29 choquen.
+un bus propio: comparte el bus I2C nº0 con el TCS34725 delantero, y su pin
+**XSHUT** es imprescindible (no opcional) para poder arrancar sin que las dos
+direcciones 0x29 choquen.
 
 | Pin VL53L1X | GPIO ESP32-S3 / Conexión | Cable | Nota |
 |-------------|:------------------------:|:---:|------|
-| SDA | **8** | Amarillo | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
-| SCL | **9** | Verde | Bus I2C nº 0 — compartido con el PCA9685 y el TCS34725 delantero |
+| SDA | **8** | Amarillo | Bus I2C nº 0 — compartido con el TCS34725 delantero |
+| SCL | **9** | Verde | Bus I2C nº 0 — compartido con el TCS34725 delantero |
 | XSHUT | **3** | Azul | Reset por software. Ver la secuencia de arranque abajo, y la nota de JTAG más abajo |
 | VIN | 3.3 V | Rojo | |
 | GND | GND común | Negro | |
@@ -523,11 +529,11 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | Switch equipo — tiro ROJO |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA (PCA9685 + TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro AZUL |
-| 9 | I2C0 SCL (PCA9685 + TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
+| 8 | I2C0 SDA (TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro AZUL |
+| 9 | I2C0 SCL (TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
-| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero) |
-| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero) |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero + PCA9685) |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero + PCA9685) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
