@@ -15,6 +15,12 @@ ejecuta una maniobra fija en dos tiempos y luego retoma la búsqueda:
 3. Vuelve a `BUSCAR_ZONA_NEUTRA` y sigue merodeando hasta encontrar la zona
    amarilla.
 
+La detección del borde negro depende **exclusivamente de los QTR**. Las
+lecturas `BLACK` del TCS34725 se ignoran tanto para la maniobra como para la
+indicación morada del LED, evitando que un falso positivo del sensor de color
+se confunda con un borde real. El TCS34725 se conserva para reconocer las
+zonas amarilla, roja y azul.
+
 El resto de la secuencia (asegurar la llave, detenerse al ver amarillo,
 retroceder, depositar) es idéntico a `v1-confirmado` — no se tocó ese
 mecanismo, ya confirmado funcionando en banco.

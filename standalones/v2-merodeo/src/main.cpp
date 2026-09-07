@@ -518,6 +518,10 @@ namespace Tcs34725 {
 //  allá, ahora con un tercer archivo (este) para no olvidar.
 
 static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
+    // BLACK se conserva como resultado del clasificador para diagnóstico,
+    // pero NO participa en la detección del borde. La maniobra de evasión y
+    // su indicación morada dependen exclusivamente de los QTR; ver
+    // MissionTask. El TCS34725 solo decide zonas amarilla/roja/azul.
     if (s.c < 392) return ColorLabel::BLACK;
 
     const float total = (float)s.c;
@@ -1465,17 +1469,19 @@ void MissionTask(void *pvTeam) {
         xQueueOverwrite(g_motorCmdQueue, &motor);
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);
 
-        // Morado (ColorLabel::BLACK) también cuando el QTR detecta el
-        // borde -- pedido explícito, para que el LED avise del borde real
-        // (el que de verdad importa para no salirse de la pista) y no solo
-        // de si el sensor de color, por casualidad, ve algo negro debajo.
-        // Tiene prioridad sobre el color de piso: si hay borde, manda.
+        // BLACK/morado pertenece EXCLUSIVAMENTE a los QTR. El TCS34725 puede
+        // clasificar una lectura oscura como BLACK para diagnóstico, pero se
+        // ignora aquí para que un falso positivo de color nunca parezca una
+        // detección de borde ni dispare ninguna reacción. El sensor de color
+        // sigue indicando únicamente las zonas amarilla, roja y azul.
         LedCommand led;
         const bool en_borde_qtr = last_reflect.left_on_line || last_reflect.right_on_line;
         if (en_borde_qtr) {
             led.zone = ColorLabel::BLACK;
+        } else if (last_color.back_valid && last_color.back != ColorLabel::BLACK) {
+            led.zone = last_color.back;
         } else {
-            led.zone = last_color.back_valid ? last_color.back : ColorLabel::UNKNOWN;
+            led.zone = ColorLabel::UNKNOWN;
         }
         xQueueOverwrite(g_ledCmdQueue, &led);
 
