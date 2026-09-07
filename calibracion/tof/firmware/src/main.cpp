@@ -15,11 +15,20 @@
 //
 //  Driver del VL53L1X: mismo procedimiento de arranque que tenía
 //  firmware-esp32/src/main.cpp antes de que el bus I2C nº0 se retirara
-//  anoche (ver git log de ese archivo) -- el sensor arranca SIEMPRE
-//  respondiendo en 0x29 (la misma dirección fija del TCS34725 delantero,
-//  aunque acá no haya ninguno conectado), así que se le reasigna una
-//  dirección nueva (0x30) apenas sale de reset, con XSHUT en LOW mientras
-//  tanto para que no responda por accidente en 0x29 antes de tiempo.
+//  anoche (ver git log de ese archivo).
+//
+//  ⚠️ CONFIRMADO EN BANCO 2026-09-07: `VL53L1X::setAddress()` (la
+//  reasignación de 0x29 a 0x30, pensada para poder compartir el bus con el
+//  TCS34725 delantero, que también es 0x29 fijo) NO surte efecto en este
+//  sensor -- un barrido I2C después de llamarla lo sigue mostrando en
+//  0x29. No es un problema de cableado ni de alimentación (el sensor
+//  responde bien en 0x29 antes Y después del intento, y mide perfecto una
+//  vez que se deja `init()` trabajar sobre esa misma dirección de
+//  fábrica). Por eso `setAddress()` está comentada más abajo: **este banco
+//  asume que el VL53L1X es el ÚNICO dispositivo en el bus 0** (sin el
+//  TCS34725 delantero conectado a la vez). Investigar `setAddress()` es
+//  tarea aparte, necesaria recién cuando haga falta compartir el bus de
+//  nuevo.
 //
 //  Protocolo por serial:
 //    'O'  -> abre el gripper
@@ -150,7 +159,12 @@ bool g_tofOk = false;
 bool TofBringUp() {
     g_tof.setBus(&Wire);
     g_tof.setTimeout(500);
-    g_tof.setAddress(I2CAddr::VL53L1X);   // única transacción mientras sigue en 0x29
+    // DIAGNÓSTICO: la reasignación a 0x30 no está surtiendo efecto (ver el
+    // aviso grande arriba) -- sin nada más en el bus ahora mismo, se deja
+    // el sensor en su dirección de fábrica (0x29, la que ya trae la
+    // librería por defecto) para aislar si el problema es SOLO la
+    // reasignación o algo más profundo.
+    // g_tof.setAddress(I2CAddr::VL53L1X);
     if (!g_tof.init()) return false;
     g_tof.setDistanceMode(VL53L1X::Long);
     g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
@@ -181,8 +195,48 @@ void setup() {
     digitalWrite(Pins::TOF_XSHUT, HIGH);
     delay(Tof::BOOT_DELAY_MS);
 
+    // DIAGNÓSTICO: barrido completo del bus 0 justo aquí -- XSHUT ya está
+    // liberado (el sensor debería responder en su dirección ACTUAL,
+    // cualquiera que sea) pero TODAVÍA no se le pidió cambiarla. Si el
+    // VL53L1X nunca perdió alimentación de verdad entre una sesión y otra,
+    // puede haber quedado en 0x30 (la dirección reasignada la última vez)
+    // en vez de volver a su default de fábrica 0x29 -- este barrido lo
+    // muestra tal cual está, sin asumir nada.
+    Serial.println("[Diag] Barriendo bus I2C 0 (0x08-0x77)...");
+    int encontrados = 0;
+    for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[Diag]   responde en 0x%02X\n", addr);
+            ++encontrados;
+        }
+    }
+    if (encontrados == 0) {
+        Serial.println("[Diag]   NADA respondio en todo el bus -- revisa cableado/alimentacion del ToF, no es un tema de direccion.");
+    }
+    Serial.println();
+
     g_tofOk = TofBringUp();
     if (!g_tofOk) Serial.println("[ToF] VL53L1X no responde. Reintentando en segundo plano.");
+
+    // Segundo barrido, DESPUÉS del intento de reasignación: si ahora
+    // aparece en 0x30, la reasignación funcionó y el problema está en
+    // init() de ahí en más; si sigue en 0x29, la reasignación en sí no
+    // surtió efecto; si no aparece nada, el sensor quedó colgado/mudo tras
+    // el intento.
+    Serial.println("[Diag] Segundo barrido, despues de intentar reasignar direccion...");
+    int encontrados2 = 0;
+    for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[Diag]   responde en 0x%02X\n", addr);
+            ++encontrados2;
+        }
+    }
+    if (encontrados2 == 0) {
+        Serial.println("[Diag]   NADA respondio -- el sensor quedo mudo tras el intento de reasignar.");
+    }
+    Serial.println();
 
     g_pcaOk = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
     if (g_pcaOk) {
