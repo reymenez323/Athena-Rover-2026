@@ -961,7 +961,7 @@ constexpr uint32_t kFullStopMs       = 400;
 // zona amarilla, para que el frente (y la llave) quede dentro de la zona
 // segura y no más allá de ella. Variable fácil de ajustar: solo este
 // número, en milisegundos.
-constexpr uint32_t kRetrocesoZonaNeutraMs = 1000;
+constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
