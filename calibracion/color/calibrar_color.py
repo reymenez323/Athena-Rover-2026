@@ -16,6 +16,7 @@ Uso::
 
     python3 calibrar_color.py --puerto COM5 --superficie AZUL --puntos 4 --muestras 60
     python3 calibrar_color.py --puerto COM5 --superficie AZUL --sensor TRASERO --puntos 4 --muestras 60
+    python3 calibrar_color.py --puerto COM11 --superficie AMARILLO --sensor DELANTERO --puntos 8 --muestras 60
 
 Antes de cada punto (incluido el primero), el script cuenta regresivamente
 ``--pausa-s`` segundos: es el tiempo para acomodar la muestra contra el

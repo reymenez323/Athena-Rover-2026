@@ -161,24 +161,23 @@ const char *LabelName(ColorLabel l) {
     return "?";
 }
 
-// RECALIBRADO 2026-08-28 contra los 970 muestras reales de ../data_logs/
-// (sensor DELANTERO, los 5 colores) con ../analizar_umbrales_tcs.py —
+// RECALIBRADO 2026-08-28, AMARILLO reajustado 2026-09-07 -- contra los CSV
+// de ../data_logs/ (sensor DELANTERO) con ../analizar_umbrales_tcs.py --
 // descenso de coordenadas sobre esta MISMA estructura de reglas, buscando
-// los 9 umbrales que menos errores dieran. Reemplaza los valores
-// originales, copiados sin calibrar de ClassifyColor() en
-// firmware-esp32/src/main.cpp:
+// los 9 umbrales que menos errores dieran.
 //
-//   Umbrales originales (sin calibrar): 564/970 errores (58.1%) — casi
-//   todo NEGRO, GRIS y AZUL caían mal clasificados como AMARILLO o entre
-//   sí (ver el detalle completo corriendo el script de nuevo).
-//   Umbrales de abajo (optimizados):     139/970 errores (14.3%)
+//   Umbrales originales (sin calibrar):        564/970  errores (58.1%)
+//   Recalibrados 2026-08-28 (los 5 colores):    139/970  errores (14.3%)
+//   Reajuste 2026-09-07 (solo AMARILLO_G_MIN,
+//     contra AMARILLO recapturado con luz de
+//     oficina + sol -- ver el aviso abajo):    144/1233 errores (11.7%)
 //
-//   Por clase (optimizados): AMARILLO 200/200, GRIS 196/198, ROJO 140/150,
-//   AZUL 178/222, NEGRO 117/200 — NEGRO es, por lejos, el que peor le va
-//   (58.5% de acierto). No es un umbral mal elegido: el rango de `clear`
-//   de NEGRO (67–1235) se solapa fuertemente con el de AZUL (81–1492) y
-//   GRIS (321–1827) — un solo corte en `clear` no puede separarlos limpio,
-//   y las reglas de r/g/b que siguen no fueron pensadas para distinguir
+//   Por clase (tras el reajuste): AMARILLO 458/463, GRIS 196/198,
+//   ROJO 140/150, AZUL 178/222, NEGRO 117/200 -- NEGRO sigue siendo, por
+//   lejos, el que peor le va (58.5% de acierto). No es un umbral mal
+//   elegido: el rango de `clear` de NEGRO se solapa fuertemente con el de
+//   AZUL y GRIS -- un solo corte en `clear` no puede separarlos limpio, y
+//   las reglas de r/g/b que siguen no fueron pensadas para distinguir
 //   "negro oscuro" de "azul oscuro" o "gris oscuro". Esto es un LÍMITE
 //   ESTRUCTURAL de esta clasificación secuencial por umbrales, no algo que
 //   otra vuelta de ajuste vaya a arreglar — el clasificador K-NN de
@@ -187,10 +186,23 @@ const char *LabelName(ColorLabel l) {
 //   le acierta mucho mejor a NEGRO con el MISMO dataset — ver ese sketch
 //   si hace falta una clasificación más confiable que ésta.
 //
-// Actualizar también ClassifyColor() en firmware-esp32/src/main.cpp con
-// estos mismos números si se vuelven a correr — los dos quedarían
-// desincronizados si solo se toca uno (igual que pasó con el umbral IR y
-// el commit c4f9b47).
+// POR QUÉ SOLO CAMBIÓ AMARILLO_G_MIN (0.350 -> 0.200) EL 2026-09-07: al
+// probar el delantero con luz de oficina + sol directo (mucho más fuerte
+// que la del 28 de agosto), su g/c para AMARILLO cayó consistentemente en
+// 0.328-0.357 -- justo a caballo del viejo umbral de 0.350, así que
+// clasificaba GRIS la mayoría de las veces aunque el sensor SÍ estaba
+// viendo amarillo. Confirmado con ../detector-tcs (este mismo sketch) y
+// 480 muestras nuevas (8 puntos): no era un sensor dañado, era un umbral
+// sin margen para esta luz. Los otros 8 umbrales NO se retocaron -- sus
+// clases no se recapturaron hoy, siguen siendo los del 28 de agosto.
+//
+// ⚠️ ESTOS NÚMEROS SON SOLO DEL DELANTERO. NO los copies a ClassifyColor()
+// en firmware-esp32/src/main.cpp: ese firmware le quitó el sensor
+// delantero (ver el aviso ahí) y ClassifyColor() ahora clasifica al
+// TRASERO, que nunca se caracterizó con esta herramienta y bien puede
+// tener una distribución de color distinta (LED de iluminación propio,
+// posición distinta en el chasis). Aplicarle un umbral ajustado para el
+// delantero sería resolver a ciegas un problema que no se midió.
 namespace Umbral {
     constexpr uint16_t CLEAR_NEGRO_MAX = 392;   // clear < esto -> NEGRO, sin mirar el resto
     constexpr float ROJO_R_MIN     = 0.450f;
@@ -199,7 +211,7 @@ namespace Umbral {
     constexpr float AZUL_B_MIN     = 0.216f;
     constexpr float AZUL_R_MAX     = 0.390f;
     constexpr float AMARILLO_R_MIN = 0.416f;
-    constexpr float AMARILLO_G_MIN = 0.350f;
+    constexpr float AMARILLO_G_MIN = 0.200f;
     constexpr float AMARILLO_B_MAX = 0.250f;
 }
 
