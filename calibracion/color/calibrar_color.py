@@ -3,17 +3,14 @@
 
 Coordina con el firmware de ``firmware/`` (mismo ESP32-S3 del rover, pero
 subido aparte con los DOS TCS34725 conectados — sin motores, sin PCA9685,
-sin QTR): manda el comando ``'R'`` por serial, recibe
+sin QTR): manda ``'F'`` o ``'T'`` por serial según ``--sensor``, recibe
 ``DATA,ok,clear,r,g,b``, y guarda las muestras en un .csv dentro de
 ``data_logs/``.
 
-POR AHORA SOLO SE CALIBRA UN SENSOR A LA VEZ — el firmware decide cuál con
-la constante ``SENSOR_ES_DELANTERO`` en ``firmware/src/main.cpp`` (por
-defecto, el delantero). Este script no controla eso; ``--sensor`` es solo
-una ETIQUETA para el nombre del archivo y los metadatos — tiene que
-coincidir con lo que subiste al ESP32, si no el CSV queda mal rotulado.
-Cuando cambies la constante del firmware para calibrar el trasero, pasa
-``--sensor TRASERO`` aquí también.
+SE CALIBRA UN SENSOR A LA VEZ, ELEGIDO POR ``--sensor`` — de verdad: este
+script es quien decide qué comando mandarle al ESP32 en cada corrida, no
+hace falta tocar el firmware ni reflashear para cambiar de delantero a
+trasero (por defecto, delantero).
 
 Uso::
 
@@ -44,7 +41,10 @@ REPO = Path(__file__).resolve().parent
 DATA_LOGS = REPO / "data_logs"
 
 SENSORES_VALIDOS = ("DELANTERO", "TRASERO")
-SENSOR_POR_DEFECTO = "DELANTERO"   # debe coincidir con SENSOR_ES_DELANTERO en firmware/src/main.cpp
+SENSOR_POR_DEFECTO = "DELANTERO"
+# Comando de un byte que el firmware espera para cada sensor -- ver el
+# protocolo en firmware/src/main.cpp.
+COMANDO_POR_SENSOR = {"DELANTERO": b"F", "TRASERO": b"T"}
 SUPERFICIES_ESPERADAS = ("AZUL", "ROJO", "AMARILLO", "NEGRO", "GRIS")
 
 
@@ -63,9 +63,11 @@ def esperar_ready(ser: "serial.Serial", timeout_s: float = 5.0) -> None:
     )
 
 
-def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int, int, int, int]:
-    """Manda 'R' y parsea DATA,ok,clear,r,g,b."""
-    ser.write(b"R")
+def leer_muestra(
+    ser: "serial.Serial", comando: bytes, timeout_s: float = 2.0,
+) -> tuple[int, int, int, int, int]:
+    """Manda el comando del sensor pedido ('F'/'T') y parsea DATA,ok,clear,r,g,b."""
+    ser.write(comando)
     limite = time.monotonic() + timeout_s
     while time.monotonic() < limite:
         linea = ser.readline().decode(errors="ignore").strip()
@@ -78,7 +80,7 @@ def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int
                 return ok, c, r, g, b
             except ValueError:
                 continue
-    raise TimeoutError("El ESP32 no respondió a 'R' a tiempo.")
+    raise TimeoutError(f"El ESP32 no respondió a {comando!r} a tiempo.")
 
 
 def contar(segundos: float, sensor: str) -> None:
@@ -101,11 +103,7 @@ def main() -> int:
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument(
         "--sensor", default=SENSOR_POR_DEFECTO, choices=SENSORES_VALIDOS,
-        help=(
-            "SOLO etiqueta el archivo/metadatos — el firmware es el que decide "
-            f"cuál sensor lee de verdad (default: {SENSOR_POR_DEFECTO}, ver el "
-            "docstring de este script)"
-        ),
+        help=f"cuál TCS34725 leer (default: {SENSOR_POR_DEFECTO})",
     )
     parser.add_argument(
         "--superficie", required=True,
@@ -122,6 +120,7 @@ def main() -> int:
 
     DATA_LOGS.mkdir(parents=True, exist_ok=True)
     sensor = args.sensor.strip().upper()
+    comando = COMANDO_POR_SENSOR[sensor]
     superficie = args.superficie.strip().upper()
     if superficie not in SUPERFICIES_ESPERADAS:
         print(
@@ -135,7 +134,7 @@ def main() -> int:
     destino = DATA_LOGS / f"COLOR_{superficie}_{sensor}_{ahora:%Y-%m-%d_%H-%M-%S}.csv"
 
     print(f"Conectando a {args.puerto} @ {args.baud}...")
-    print(f"Sensor etiquetado para esta corrida: {sensor} (confirma que coincide con SENSOR_ES_DELANTERO en firmware/src/main.cpp)\n")
+    print(f"Sensor para esta corrida: {sensor} (comando {comando.decode()!r})\n")
     try:
         ser = serial.Serial(args.puerto, args.baud, timeout=1)
     except serial.SerialException as exc:
@@ -157,19 +156,19 @@ def main() -> int:
         except TimeoutError:
             # Igual que calibrar_ir.py: si el ESP32 ya estaba corriendo de
             # antes, el 'READY' se mandó una sola vez y nadie lo escuchaba
-            # todavía. Se prueba un 'R' directo como respaldo.
+            # todavía. Se prueba el comando del sensor directo como respaldo.
             print(
                 "No llegó 'READY' — probando un comando directo por si el "
                 "ESP32 ya estaba corriendo de antes...",
             )
             try:
-                leer_muestra(ser)
+                leer_muestra(ser, comando)
             except TimeoutError:
                 raise TimeoutError(
-                    "El ESP32 no respondió ni a 'READY' ni a un comando "
-                    "'R' directo. Revisa el puerto, que el sketch de "
-                    "firmware/ esté cargado, y que no haya otra ventana "
-                    "(pio device monitor, Arduino IDE) usando el puerto."
+                    f"El ESP32 no respondió ni a 'READY' ni al comando "
+                    f"{comando!r} directo. Revisa el puerto, que el sketch "
+                    f"de firmware/ esté cargado, y que no haya otra ventana "
+                    f"(pio device monitor, Arduino IDE) usando el puerto."
                 ) from None
             print("ESP32 responde bien, sigo aunque no vi 'READY'.\n")
 
@@ -179,7 +178,7 @@ def main() -> int:
         f.write("# ROVER COLOR SENSOR CHARACTERIZATION\n")
         f.write(f"# Date: {ahora.isoformat(sep=' ')}\n")
         f.write(f"# Surface: {superficie}\n")
-        f.write(f"# Sensor under test (label only, set by firmware): {sensor}\n")
+        f.write(f"# Sensor under test: {sensor}\n")
         f.write(f"# Number of points: {args.puntos}\n")
         f.write(f"# Samples per point: {args.muestras}\n")
         f.write(f"# Sample interval: {args.intervalo_ms} ms\n")
@@ -194,7 +193,7 @@ def main() -> int:
             print(f"Punto {punto}/{args.puntos} — capturando {args.muestras} muestras...")
 
             for muestra in range(1, args.muestras + 1):
-                ok, c, r, g, b = leer_muestra(ser)
+                ok, c, r, g, b = leer_muestra(ser, comando)
                 writer.writerow([superficie, sensor, punto, muestra, ok, c, r, g, b])
                 f.flush()  # una muestra por línea en disco, no se pierde nada si algo falla a medio camino
                 capturadas += 1

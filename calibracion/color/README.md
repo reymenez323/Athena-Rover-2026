@@ -5,21 +5,18 @@ distintas superficies, **antes** de fijar los umbrales de `ClassifyColor()`
 en `firmware-esp32/src/main.cpp`. No es parte del firmware de vuelo ni de
 `pruebas-platformio/`.
 
-## Por ahora, solo el sensor DELANTERO
+## Un sensor a la vez, elegido por línea de comandos
 
-El robot tiene 2 TCS34725 (delantero y trasero), pero la CAPTURA de
-calibración (`firmware/` + `calibrar_color.py`) se concentra en uno a la
-vez — hoy, el delantero. Cuál sensor está activo se decide en **un solo
-lugar**: la constante `SENSOR_ES_DELANTERO` en `firmware/src/main.cpp`.
-Cambiar de sensor más adelante es tocar esa constante, volver a subir el
-sketch, y listo — no hay que tocar nada más del firmware. En
-`calibrar_color.py`, el flag `--sensor` es solo una ETIQUETA para el nombre
-del archivo y los metadatos (no controla el firmware); cuando cambies la
-constante para calibrar el trasero, pásale `--sensor TRASERO` también para
-que el CSV quede bien rotulado.
+El robot tiene 2 TCS34725 (delantero y trasero). La CAPTURA de calibración
+(`firmware/` + `calibrar_color.py`) lee uno a la vez, pero cuál se elige con
+`--sensor DELANTERO`/`--sensor TRASERO` en `calibrar_color.py` (por
+defecto, delantero) — **no hace falta tocar el firmware ni reflashear** para
+cambiar de sensor entre corridas, el ESP32 ya tiene los dos buses I2C
+inicializados siempre y tan solo lee el que se le pida por comando serial
+(`'F'`/`'T'`, ver el protocolo en `firmware/src/main.cpp`).
 
 (`detector-tcs/` es distinto: ese sketch lee los DOS sensores a la vez
-siempre, no tiene esta limitación — ver la tabla de abajo.)
+siempre y no tiene captura a CSV — ver la tabla de abajo.)
 
 ## ¿Por qué eventualmente hay que calibrar los dos por separado?
 
@@ -80,8 +77,8 @@ El VL53L1X, que comparte el bus 0 con el delantero en el robot real,
 
 | Parte | Qué hace |
 |---|---|
-| `firmware/` | Sketch del ESP32 de banco. Recibe el comando `'R'` por serial y contesta `DATA,ok,clear,r,g,b` — del sensor que indique `SENSOR_ES_DELANTERO`. El driver del TCS34725 es una copia EXACTA del que ya usa `firmware-esp32/` (mismo ATIME/GAIN) — cero librerías externas, y sobre todo, misma configuración de sensor que el robot de verdad usará. |
-| `calibrar_color.py` | Script de Python que orquesta la prueba: pide sostener la muestra contra el sensor activo, manda `'R'` repetidamente, y guarda todo en un `.csv` dentro de `data_logs/` — un archivo por CADA corrida de `--superficie`, nunca se mezclan colores en un mismo CSV. |
+| `firmware/` | Sketch del ESP32 de banco. Recibe `'F'` (delantero) o `'T'` (trasero) por serial y contesta `DATA,ok,clear,r,g,b` del sensor pedido. El driver del TCS34725 es una copia EXACTA del que ya usa `firmware-esp32/` (mismo ATIME/GAIN) — cero librerías externas, y sobre todo, misma configuración de sensor que el robot de verdad usará. |
+| `calibrar_color.py` | Script de Python que orquesta la prueba: pide sostener la muestra contra el sensor elegido con `--sensor`, manda el comando correspondiente repetidamente, y guarda todo en un `.csv` dentro de `data_logs/` — un archivo por CADA corrida de `--superficie`, nunca se mezclan colores en un mismo CSV. |
 | `data_logs/` | Los `.csv` capturados, uno por corrida — se versionan en git a propósito, son datos irremplazables. Ya tiene las 5 corridas del delantero (ver la sección de más abajo). |
 | `generar_dataset_knn.py` | Convierte TODOS los CSV de `data_logs/` en un header C++ con un clasificador K-NN embebido — ver "De los CSV a un clasificador K-NN embebido" más abajo. Ya no lo usa `pruebas-platformio/05-evitador-linea/` (ver la nota en esa sección), queda disponible por si hace falta esa precisión extra en otro lado. |
 | `analizar_umbrales_tcs.py` | Ajusta por descenso de coordenadas los 9 umbrales de `ClassifyColor()`/`detector-tcs` contra los CSV de `data_logs/` — mismo tipo de ejercicio que `calibracion/reflectancia/detector-negro-gris/`, pero con 9 parámetros en vez de 1. Ya se corrió una vez (ver más abajo); volver a correrlo si cambian los datos. |
@@ -105,8 +102,8 @@ El VL53L1X, que comparte el bus 0 con el delantero en el robot real,
    pip install -r requirements.txt
    ```
 3. Correr la calibración: una corrida por color, con la muestra sostenida
-   contra el sensor **delantero** (el que está activo por defecto en el
-   firmware). Para los 5 colores del reto:
+   contra el sensor **delantero** (el que usa `--sensor` por defecto). Para
+   los 5 colores del reto:
    ```bash
    python3 calibrar_color.py --puerto COM5 --superficie AZUL     --puntos 4 --muestras 60
    python3 calibrar_color.py --puerto COM5 --superficie ROJO     --puntos 4 --muestras 60
@@ -121,10 +118,10 @@ El VL53L1X, que comparte el bus 0 con el delantero en el robot real,
    `data_logs/COLOR_<SUPERFICIE>_<SENSOR>_<fecha>_<hora>.csv` — 5 archivos,
    uno por color.
 
-**Para calibrar el trasero más adelante:** editar `SENSOR_ES_DELANTERO =
-false` en `firmware/src/main.cpp`, `pio run -t upload` de nuevo, y repetir
-el paso 3 con `--sensor TRASERO` agregado a cada comando (mismos 5
-colores, 5 archivos nuevos — los del delantero no se tocan).
+**Para calibrar el trasero más adelante:** repetir el paso 3 agregando
+`--sensor TRASERO` a cada comando — no hace falta tocar el firmware ni
+reflashear (mismos 5 colores, 5 archivos nuevos; los del delantero no se
+tocan).
 
 Ver `python3 calibrar_color.py --help` para todas las opciones.
 
@@ -151,7 +148,7 @@ AZUL,DELANTERO,1,1,1,1450,320,410,780
 | Columna | Qué es |
 |---|---|
 | `surface` | Color/superficie que se estaba midiendo (AZUL, ROJO, AMARILLO, NEGRO, GRIS). |
-| `sensor_under_test` | DELANTERO o TRASERO — etiqueta puesta por `--sensor`, tiene que coincidir con `SENSOR_ES_DELANTERO` del firmware en esa corrida. |
+| `sensor_under_test` | DELANTERO o TRASERO — el que se pidió con `--sensor` en esa corrida. |
 | `ok` | 1 si el TCS34725 activo respondió al pedir la lectura, 0 si no (cable flojo, no conectado). Con 0, `clear/r/g/b` son 0 — ignóralos, no son "sin luz", son "no leído". |
 | `clear/r/g/b` | Canales crudos del sensor (0–65535 según ganancia/tiempo de integración, mismos ATIME/GAIN que `firmware-esp32/`). `clear` es la luz total; `r/g/b` son los canales de color. |
 

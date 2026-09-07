@@ -23,25 +23,26 @@
 //  Los dos sensores comparten dirección fija 0x29 — por eso van en buses
 //  separados, no hay forma de diferenciarlos en el mismo bus.
 //
-//  POR AHORA SOLO SE CALIBRA EL SENSOR DELANTERO — ver SENSOR_ES_DELANTERO
-//  más abajo, es el ÚNICO lugar del archivo que hay que tocar para pasar al
-//  trasero más adelante (una constante, no una reescritura). Los dos buses
-//  I2C y los dos LED se siguen inicializando siempre sin importar cuál esté
-//  activo, a propósito: así cambiar la constante es de verdad lo único que
-//  hace falta, no hay que acordarse de mover nada más.
+//  SE CALIBRA UN SENSOR A LA VEZ, ELEGIDO POR COMANDO — no hace falta tocar
+//  este archivo ni reflashear para cambiar de delantero a trasero: lo decide
+//  quien llama, con el comando 'F' o 'T' (ver el protocolo abajo). Los dos
+//  buses I2C y los dos LED se inicializan siempre al arrancar, sin importar
+//  cuál se vaya a usar, así que el cambio de sensor es instantáneo.
 //
 //  Protocolo: este sketch no hace nada por su cuenta. Se queda esperando un
-//  comando por serial y responde una lectura del sensor ACTIVO cada vez que
+//  comando por serial y responde una lectura del sensor pedido cada vez que
 //  lo recibe. La orquestación (qué superficie, cuántos puntos, cuántas
 //  muestras, el guardado a CSV) vive en ../calibrar_color.py — si cambias
 //  el formato de aquí, cámbialo allá también.
 //
-//    Comando recibido : 'R'
+//    Comando recibido : 'F' (delantero, bus I2C 0)  ó  'T' (trasero, bus I2C 1)
 //    Respuesta enviada : DATA,<ok>,<clear>,<r>,<g>,<b>
 //
-//    <ok> es 0 si el TCS34725 activo no respondió (no conectado, cable
+//    <ok> es 0 si el TCS34725 pedido no respondió (no conectado, cable
 //    flojo, etc.) — en ese caso los otros 4 campos son 0 y hay que
-//    ignorarlos, no tratarlos como una lectura real de "sin luz".
+//    ignorarlos, no tratarlos como una lectura real de "sin luz". El estado
+//    de inicialización de cada sensor se recuerda por separado, así que un
+//    sensor caído no afecta al otro ni se reintenta de más.
 //
 // ===========================================================================
 
@@ -89,13 +90,6 @@ namespace Pins {
 namespace I2CAddr {
     constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar — por eso 2 buses
 }
-
-// ===========================================================================
-//  SENSOR BAJO PRUEBA — cambiar SOLO esto para pasar de delantero a trasero
-// ===========================================================================
-constexpr bool SENSOR_ES_DELANTERO = true;
-
-TwoWire &BusActivo = SENSOR_ES_DELANTERO ? Wire : Wire1;
 
 // ===========================================================================
 //  DRIVER TCS34725 — copia exacta del namespace Tcs34725 de firmware-esp32/
@@ -168,7 +162,12 @@ namespace Tcs34725 {
 //  ESTADO Y LECTURA
 // ===========================================================================
 
-bool g_sensorOk = false;
+// Un estado de inicialización POR SENSOR, no uno solo: con la selección por
+// comando, cualquiera de los dos puede pedirse en cualquier momento, y que
+// el trasero no responda no debería hacer que el delantero se reintente de
+// más (ni viceversa).
+bool g_frontOk = false;
+bool g_backOk  = false;
 
 // Si el sensor no estaba OK, reintenta inicializarlo antes de leer. Sin
 // esto, un sensor que no respondió al arrancar (cable conectado después,
@@ -185,9 +184,9 @@ bool ReadOrReinit(TwoWire &bus, Tcs34725::Rgbc &out, bool &okState) {
     return false;
 }
 
-void readSensors() {
+void readSensor(TwoWire &bus, bool &okState) {
     Tcs34725::Rgbc s;
-    const bool ok = ReadOrReinit(BusActivo, s, g_sensorOk);
+    const bool ok = ReadOrReinit(bus, s, okState);
 
     // IMPORTANTE: el formato de salida debe mantenerse en sincronía con
     // ../calibrar_color.py: DATA,ok,clear,r,g,b
@@ -213,17 +212,18 @@ void setup() {
     pinMode(Pins::TOF_XSHUT, OUTPUT);
     digitalWrite(Pins::TOF_XSHUT, LOW);
 
-    // Los dos buses se inicializan SIEMPRE, use o no use el sensor de ese
-    // lado — así SENSOR_ES_DELANTERO es de verdad lo único que hay que tocar
-    // para cambiar de sensor, ver el encabezado. El LED trasero ya no pasa
-    // por GPIO (cableado directo a 3.3V), así que solo queda el delantero.
+    // Los dos buses se inicializan SIEMPRE, sin importar cuál sensor se vaya
+    // a pedir por comando — así el cambio de sensor entre corridas es
+    // instantáneo, ver el encabezado. El LED trasero ya no pasa por GPIO
+    // (cableado directo a 3.3V), así que solo queda el delantero.
     Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
 
-    g_sensorOk = Tcs34725::Init(BusActivo);
+    g_frontOk = Tcs34725::Init(Wire);
+    g_backOk  = Tcs34725::Init(Wire1);
 
     Serial.println("READY");
 }
@@ -236,15 +236,18 @@ void loop() {
     /*
        El ESP32 espera comandos de la computadora.
        Comando:
-       R
+       F  -> lee el sensor DELANTERO (bus I2C 0)
+       T  -> lee el sensor TRASERO   (bus I2C 1)
        Respuesta:
        DATA,ok,clear,r,g,b
     */
     if (Serial.available()) {
         const char command = Serial.read();
 
-        if (command == 'R') {
-            readSensors();
+        if (command == 'F') {
+            readSensor(Wire, g_frontOk);
+        } else if (command == 'T') {
+            readSensor(Wire1, g_backOk);
         }
 
         // Descarta cualquier byte extra (\r, \n, etc.) que haya llegado
