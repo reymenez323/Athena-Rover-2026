@@ -241,6 +241,13 @@ struct MotorCommand {
     MotorMode mode = MotorMode::STOP;
     int8_t    left  = 0;   // -100..100 (%), lado izquierdo (FL+RL)
     int8_t    right = 0;   // -100..100 (%), lado derecho  (FR+RR)
+    // Fuerza la combinación de IN1/IN2 CONTRARIA a la que `left`/`right`
+    // producirían normalmente en MotorApply -- ver la nota grande junto a
+    // MotorApply sobre por qué esto existe en vez de voltear el signo
+    // global de nuevo: RETROCEDER_A_ZONA_NEUTRA es la única fase que lo usa
+    // hasta ahora, precisamente porque volteando la convención global se
+    // rompían las demás fases.
+    bool      invertir_direccion = false;
 };
 
 struct GripperCommand {
@@ -603,9 +610,17 @@ void MotorSetup(const Motor &m) {
 // la misma convención y el problema no sea este booleano global en
 // absoluto, sino cuál motor específico está mal cableado o mal
 // compensado.
-void MotorApply(const Motor &m, int speed) {
+//
+// `invertir_direccion`: en vez de seguir tocando la convención global de
+// arriba (que ya demostró romper otras fases al voltearla), esto manda
+// EXPLÍCITAMENTE la combinación de IN1/IN2 contraria a la que el signo de
+// `speed` produciría solo -- pedido explícito para usarlo ÚNICAMENTE en
+// RETROCEDER_A_ZONA_NEUTRA, sin afectar cómo se mueve el robot en
+// cualquier otra fase.
+void MotorApply(const Motor &m, int speed, bool invertir_direccion = false) {
     speed = constrain(speed, -100, 100);
-    const bool forward = (speed < 0);
+    bool forward = (speed < 0);
+    if (invertir_direccion) forward = !forward;
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);
@@ -648,10 +663,10 @@ void MotorTask(void *) {
         if (mission_stale || current.mode == MotorMode::STOP) {
             MotorsStop();
         } else {
-            MotorApply(kMotorFL, current.left);
-            MotorApply(kMotorRL, current.left);
-            MotorApply(kMotorFR, current.right);
-            MotorApply(kMotorRR, current.right);
+            MotorApply(kMotorFL, current.left,  current.invertir_direccion);
+            MotorApply(kMotorRL, current.left,  current.invertir_direccion);
+            MotorApply(kMotorFR, current.right, current.invertir_direccion);
+            MotorApply(kMotorRR, current.right, current.invertir_direccion);
         }
 
         Heartbeat(TaskId::MOTOR_CONTROL);
@@ -946,7 +961,7 @@ constexpr uint32_t kFullStopMs       = 400;
 // zona amarilla, para que el frente (y la llave) quede dentro de la zona
 // segura y no más allá de ella. Variable fácil de ajustar: solo este
 // número, en milisegundos.
-constexpr uint32_t kRetrocesoZonaNeutraMs = 3000;
+constexpr uint32_t kRetrocesoZonaNeutraMs = 1000;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
@@ -984,10 +999,11 @@ inline const char *PhaseName(Phase phase) {
 // Evita depender de que el compilador trate a MotorCommand como agregado
 // con inicializadores por defecto (necesita C++14+); igual que hace
 // firmware-esp32/src/main.cpp, se asigna campo a campo.
-inline void SetDrive(MotorCommand &m, int left, int right) {
+inline void SetDrive(MotorCommand &m, int left, int right, bool invertir_direccion = false) {
     m.mode  = MotorMode::DRIVE;
     m.left  = (int8_t)constrain(left, -100, 100);
     m.right = (int8_t)constrain(right, -100, 100);
+    m.invertir_direccion = invertir_direccion;
 }
 
 void MissionTask(void *pvTeam) {
@@ -1169,12 +1185,20 @@ void MissionTask(void *pvTeam) {
                 // más allá de la zona segura, no dentro. Tiempo fijo, sin
                 // sensor: Mission::kRetrocesoZonaNeutraMs es el único número
                 // que hay que ajustar en banco según cuánto se pasa.
+                //
+                // invertir_direccion=true: pedido explícito para NO volver
+                // a tocar la convención global de MotorApply (voltearla
+                // rompió las demás fases, ver la nota grande junto a
+                // MotorApply) y en su lugar forzar la combinación de
+                // IN1/IN2 contraria SOLO en esta fase, la única que
+                // necesita moverse hacia atrás de verdad.
                 case Mission::Phase::RETROCEDER_A_ZONA_NEUTRA: {
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kRetrocesoZonaNeutraMs) {
                         phase = Mission::Phase::DEPOSITAR_LLAVE;
                         phase_started_ms = millis();
                     } else {
-                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
+                        SetDrive(motor, Mission::kVelocidadAproximacion, Mission::kVelocidadAproximacion,
+                                 /*invertir_direccion=*/true);
                     }
                     break;
                 }
