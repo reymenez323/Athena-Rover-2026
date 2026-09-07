@@ -568,6 +568,18 @@ static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
     return ColorLabel::FLOOR;
 }
 
+inline const char *ColorLabelName(ColorLabel label) {
+    switch (label) {
+        case ColorLabel::BLACK:   return "NEGRO";
+        case ColorLabel::YELLOW:  return "AMARILLO";
+        case ColorLabel::RED:     return "ROJO";
+        case ColorLabel::BLUE:    return "AZUL";
+        case ColorLabel::FLOOR:   return "GRIS/PISO";
+        case ColorLabel::UNKNOWN:
+        default:                  return "DESCONOCIDO";
+    }
+}
+
 // ===========================================================================
 //  [8] TAREAS DE HARDWARE
 // ===========================================================================
@@ -908,6 +920,24 @@ void ColorSensorTask(void *) {
             if (read_ok) {
                 reading.front = ClassifyColor(sample);
                 reading.front_valid = true;
+
+                // DIAGNÓSTICO TEMPORAL para recalibrar ClassifyColor() en
+                // banco: sostén el sensor DELANTERO sobre cada superficie de
+                // la pista (negro, amarillo, rojo, azul, piso gris) y lee
+                // los valores normalizados de acá. Los umbrales actuales
+                // (r/g/b sobre `clear`) están calibrados con datos viejos —
+                // ver calibracion/color/ para el proceso formal con más
+                // muestras. Quitar este log una vez recalibrado.
+                static uint32_t last_color_log_ms = 0;
+                if ((uint32_t)(millis() - last_color_log_ms) > 500) {
+                    last_color_log_ms = millis();
+                    const float total = (float)sample.c;
+                    DEBUG_LINK.printf(
+                        "[Color] clear=%u r=%u g=%u b=%u | r/c=%.3f g/c=%.3f b/c=%.3f -> %s\n",
+                        sample.c, sample.r, sample.g, sample.b,
+                        (float)sample.r / total, (float)sample.g / total, (float)sample.b / total,
+                        ColorLabelName(reading.front));
+                }
             } else {
                 front_ok = false;
             }
