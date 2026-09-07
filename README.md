@@ -62,11 +62,14 @@ Athena-Rover-2026/
 │                               Todo en un main.cpp, 8 tareas FreeRTOS aisladas,
 │                               cero librerías externas salvo el driver del ToF.
 │
-├── firmware-esp32-standalone/  Firmware de DEMOSTRACIÓN (SIN Raspberry Pi).
-│                               La misión entera corre dentro del ESP32.
-│                               Sin cámara no distingue bandera roja de azul:
-│                               usa el ToF como sustituto. Documentado, no es
-│                               un descuido.
+├── standalones/                Firmware de DEMOSTRACIÓN (SIN Raspberry Pi).
+│                               La misión entera corre dentro del ESP32. Dos
+│                               variantes independientes, cada una su propio
+│                               proyecto PlatformIO:
+│   ├── v1-confirmado/           base confirmada en banco; borde negro =
+│   │                            retroceso reactivo simple.
+│   └── v2-merodeo/              igual, pero el borde negro dispara
+│                                retroceso + giro 180° + sigue merodeando.
 │
 ├── raspberry-pi/               Visión y lógica de misión (Python).
 │                               Corre sobre Raspberry Pi OS de 64 BITS: el
@@ -98,7 +101,7 @@ Athena-Rover-2026/
 | **Entender cómo se hablan las dos mitades** | [`docs/protocolo-serial.md`](docs/protocolo-serial.md) |
 | **Tocar el firmware** | [`firmware-esp32/README.md`](firmware-esp32/README.md) |
 | **Correr el robot en la Pi** | [`raspberry-pi/README.md`](raspberry-pi/README.md) |
-| **Hacer la demo sin Raspberry Pi** | [`firmware-esp32-standalone/README.md`](firmware-esp32-standalone/README.md) |
+| **Hacer la demo sin Raspberry Pi** | [`standalones/v2-merodeo/README.md`](standalones/v2-merodeo/README.md) (o [`v1-confirmado/`](standalones/v1-confirmado/README.md) para la base sin la maniobra de merodeo) |
 | **Probar un subsistema suelto** | [`pruebas-platformio/README.md`](pruebas-platformio/README.md) |
 | **Calibrar un sensor** | [`calibracion/README.md`](calibracion/README.md) |
 | **Saber las reglas y las medidas reales** | [`docs/reglas-reto-rover-2025.md`](docs/reglas-reto-rover-2025.md) |

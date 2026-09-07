@@ -1,6 +1,13 @@
 // ===========================================================================
 //  Athena Rover 2026 — Firmware ESP32-S3 AUTÓNOMO (sin Raspberry Pi)
 //  Retos del Rover H07 · INTEC · Reymildo & Montse
+//
+//  VARIANTE v2-merodeo: parte de standalones/v1-confirmado/ (ver ese
+//  archivo para la versión base ya confirmada) y le cambia el manejo del
+//  borde negro: en vez de retroceder al instante mientras lo siga
+//  detectando, ejecuta una maniobra fija de retroceso (kEvasionRetrocesoMs)
+//  + giro de ~180° (kEvasionGiroMs) y retoma la búsqueda de la zona
+//  amarilla -- "merodea" en vez de solo alejarse del borde.
 // ===========================================================================
 //
 //  Variante de firmware-esp32/src/main.cpp para la DEMOSTRACIÓN: aquí la
