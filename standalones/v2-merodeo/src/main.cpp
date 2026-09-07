@@ -1465,9 +1465,18 @@ void MissionTask(void *pvTeam) {
         xQueueOverwrite(g_motorCmdQueue, &motor);
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);
 
-        // Sensor TRASERO -- único que queda, ver la nota en BUSCAR_ZONA_NEUTRA.
+        // Morado (ColorLabel::BLACK) también cuando el QTR detecta el
+        // borde -- pedido explícito, para que el LED avise del borde real
+        // (el que de verdad importa para no salirse de la pista) y no solo
+        // de si el sensor de color, por casualidad, ve algo negro debajo.
+        // Tiene prioridad sobre el color de piso: si hay borde, manda.
         LedCommand led;
-        led.zone = last_color.back_valid ? last_color.back : ColorLabel::UNKNOWN;
+        const bool en_borde_qtr = last_reflect.left_on_line || last_reflect.right_on_line;
+        if (en_borde_qtr) {
+            led.zone = ColorLabel::BLACK;
+        } else {
+            led.zone = last_color.back_valid ? last_color.back : ColorLabel::UNKNOWN;
+        }
         xQueueOverwrite(g_ledCmdQueue, &led);
 
         Heartbeat(TaskId::MISSION);
