@@ -16,29 +16,25 @@
 //  el color de un objeto lejano, solo leer sensores de contacto/proximidad
 //  y el color del piso justo debajo de sí. Con eso alcanza para:
 //    ✔ Identificar las líneas/zonas de piso negro, amarillo, rojo y azul
-//      (TCS34725, igual que la versión con Raspberry Pi).
+//      (TCS34725 trasero, igual que la versión con Raspberry Pi).
 //    ✔ Cargar y depositar la llave: se asume que un operador la coloca a
 //      mano en la pinza abierta antes de encender el robot (igual que
 //      asume raspberry-pi/src/athena/decision.py en su fase INICIO) — el
 //      firmware la sujeta, la transporta a la zona amarilla y la suelta.
-//    ✔ Trasladar la bandera una vez agarrada: cerrar la pinza, volver a la
-//      zona propia (reconocida por el color de piso) y soltarla ahí.
-//    ✘ Encontrar Y VERIFICAR que lo que agarra es específicamente la
-//      bandera DEL EQUIPO CONTRARIO. Sin cámara no hay forma de distinguir
-//      "bandera roja" de "bandera azul" ni de "un objeto cualquiera" a
-//      distancia. Este firmware usa el VL53L1X (telémetro delante del
-//      gripper) como sustituto: durante la búsqueda, barre el área y
-//      cierra la pinza sobre lo primero sólido que encuentra a corta
-//      distancia. Es una heurística, no una detección real — documentado
-//      a propósito, no es un descuido. Para "detectar la bandera del
-//      oponente" de verdad hace falta la cámara + Edge Impulse de
+//    ✘ Buscar y agarrar la bandera del equipo contrario. Sin cámara ni
+//      telémetro (el VL53L1X y el TCS34725 delantero, ambos en el bus I2C
+//      nº0, se retiraron de esta variante — daban problemas físicos
+//      persistentes en banco) no queda ningún sensor capaz de detectar
+//      "hay algo delante": esta demo se limita a depositar la llave y
+//      termina ahí. Para la misión completa (agarrar y devolver la
+//      bandera) hace falta la cámara + Edge Impulse de
 //      raspberry-pi/src/athena/ei_flag_detector.py (ver firmware-esp32/).
 //
 //  LED RGB: INDICADOR PURO DE LA LÍNEA/ZONA DE PISO, nada más
 //  ----------------------------------------------------------------------
 //    · Piso gris (zona neutra) o sin lectura válida -> APAGADO.
 //    · Amarillo / rojo / azul -> ese mismo color, fijo, mientras el sensor
-//      delantero esté sobre esa zona.
+//      trasero esté sobre esa zona.
 //    · Negro (borde) -> destello alternando rojo/azul, como alerta.
 //  El LED YA NO indica equipo ni "veo la bandera": esta variante lo dedica
 //  por completo a decir en qué línea está parado el robot.
@@ -51,14 +47,26 @@
 //  MissionTask — el procedimiento normal es encender el robot con el switch
 //  en 0 y recién ahí elegir equipo, sin que el robot se mueva mientras tanto.
 //
-//  HARDWARE (idéntico a firmware-esp32/, más el switch de equipo):
+//  HARDWARE (idéntico a firmware-esp32/, más el switch de equipo, MENOS el
+//  bus I2C nº0 -- ver más abajo por qué se retiró por completo):
 //    · 2x L298N            -> 4 motores (cada driver mueve 2)
 //    · 1x PCA9685 (I2C)    -> 1 servo del gripper (la pinza que abre/cierra)
-//    · 2x TCS34725 (I2C)   -> sensor de color delantero y trasero
-//    · 1x VL53L1X (I2C)    -> telémetro delante del gripper
+//    · 1x TCS34725 (I2C)   -> sensor de color trasero (único que queda)
 //    · 2x QTRX-HD-01A      -> reflectancia delantera izquierda y derecha
 //    · LED RGB (1x)        -> indicador puro de la línea/zona de piso
 //    · Switch 3 posiciones -> 0=nadie ha elegido, 1=azul, 2=rojo
+//
+//  BUS I2C Nº0 RETIRADO POR COMPLETO (TCS34725 delantero + VL53L1X)
+//  ----------------------------------------------------------------------
+//  El sensor de color delantero nunca dio una conexión física confiable en
+//  banco (SDA/SCL intermitentes, ver el historial en calibracion/color/), y
+//  el VL53L1X dependía de compartir bus con él (mismo 0x29 de fábrica,
+//  coreografía de XSHUT). Decisión del equipo: en vez de seguir
+//  depurando un bus que solo daba problemas, se elimina TODO lo asociado a
+//  él -- pines, mutex, tarea del ToF, lado delantero de ColorSensorTask --
+//  y la misión se apoya solo en el TCS34725 trasero (bus nº1) y en tiempos
+//  fijos donde antes hacía falta el ToF. Ver el índice: ya no hay sección
+//  de ToF ni de sensor delantero.
 //
 //  ÍNDICE
 //    [1] Configuración: pines, prioridades, stacks, periodos
@@ -66,9 +74,9 @@
 //    [3] Colas
 //    [4] Watchdog cooperativo (heartbeats)
 //    [5] Driver PCA9685 (servos por I2C)
-//    [6] Driver TCS34725 (sensores de color por I2C)
+//    [6] Driver TCS34725 (sensor de color trasero, por I2C)
 //    [7] Clasificación de color -> etiqueta de zona
-//    [8] Tareas de hardware (motores, gripper, color, reflectancia, ToF, LED)
+//    [8] Tareas de hardware (motores, gripper, color, reflectancia, LED)
 //    [9] MissionTask — el cerebro: percibir -> decidir -> mover, sin RPi
 //    [10] setup() / loop()
 //
@@ -76,8 +84,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <VL53L1X.h>
-#include <freertos/semphr.h>   // SemaphoreHandle_t / mutex de los buses I2C (ver g_i2c0Mutex, g_i2c1Mutex)
+#include <freertos/semphr.h>   // SemaphoreHandle_t / mutex del bus I2C (ver g_i2c1Mutex)
 #include <esp_system.h>        // esp_reset_reason() — ver el log de motivo de reinicio en setup()
 
 // ===========================================================================
@@ -112,31 +119,15 @@ namespace Pins {
     constexpr uint8_t L298N_R_IN4 = 14;   // RR sentido B
     constexpr uint8_t L298N_R_ENB = 17;   // RR velocidad (PWM)
 
-    // -------- Bus I2C nº0: TCS34725 DELANTERO + VL53L1X ---------------------
-    constexpr uint8_t I2C0_SDA = 8;
-    constexpr uint8_t I2C0_SCL = 9;
-
     // -------- Bus I2C nº1: TCS34725 TRASERO + PCA9685 (servos) --------------
-    // Los dos TCS34725 comparten la misma dirección fija (0x29): van en buses
-    // separados para no necesitar un multiplexor TCA9548A.
-    //
-    // El PCA9685 se movió a este bus por decisión del equipo, para no sumar
-    // un tercer dispositivo al bus 0 (que ya tiene el TCS34725 delantero y
-    // el VL53L1X, con su propia coreografía de XSHUT). Su dirección (0x40)
-    // no choca con la del TCS34725 trasero (0x29); el riesgo que sí aparece
-    // es de concurrencia entre tareas — ver g_i2c1Mutex.
+    // El bus I2C nº0 (TCS34725 delantero + VL53L1X) se retiró por completo
+    // -- ver la nota grande al principio del archivo. Este es ahora el
+    // ÚNICO bus I2C del firmware: el TCS34725 trasero y el PCA9685
+    // conviven aquí, protegidos por g_i2c1Mutex por el riesgo de
+    // concurrencia entre tareas de distinto núcleo (GripperTask en el
+    // núcleo 1, ColorSensorTask en el núcleo 0).
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
-
-    // -------- LED de iluminación del TCS34725 DELANTERO ---------------------
-    // El trasero se cableó directo a 3.3V (ver hardware/conexiones-esp32-
-    // s3.md) -- GPIO21 quedó libre para el switch de equipo, más abajo.
-    constexpr uint8_t TCS_LED_FRONT = 18;
-
-    // -------- VL53L1X (ToF), delante del gripper ---------------------------
-    // Comparte el bus I2C nº0 con el TCS34725 delantero (mismo 0x29 de
-    // fábrica): XSHUT lo mantiene en reset hasta reasignarle dirección.
-    constexpr uint8_t TOF_XSHUT = 3;
 
     // -------- Reflectancia QTRX-HD-01A (salida analógica) ------------------
     // ¡ALIMENTARLOS A 3.3 V! Ver la nota larga en ReflectanceTask.
@@ -167,12 +158,6 @@ namespace Pins {
 namespace I2CAddr {
     constexpr uint8_t PCA9685  = 0x40;
     constexpr uint8_t TCS34725 = 0x29;
-    // Ver la nota larga en firmware-esp32/src/main.cpp junto a esta misma
-    // constante: es una única escritura corta mientras el VL53L1X todavía
-    // responde en 0x29, el mismo instante en que el TCS34725 delantero
-    // también sigue vivo ahí. Riesgo acotado y aceptado a propósito.
-    constexpr uint8_t VL53L1X_BOOT_ADDR = 0x29;
-    constexpr uint8_t VL53L1X = 0x30;
 }
 
 namespace ServoChannel {
@@ -199,7 +184,6 @@ namespace TaskPriority {
     constexpr UBaseType_t GRIPPER_CONTROL = 3;
     constexpr UBaseType_t REFLECTANCE     = 3;
     constexpr UBaseType_t COLOR_SENSOR    = 2;
-    constexpr UBaseType_t TOF_SENSOR      = 2;
     constexpr UBaseType_t LED_STATUS      = 1;
 }
 
@@ -210,7 +194,6 @@ namespace TaskStack {
     constexpr uint32_t GRIPPER_CONTROL = 3072;
     constexpr uint32_t REFLECTANCE     = 2560;
     constexpr uint32_t COLOR_SENSOR    = 3584;
-    constexpr uint32_t TOF_SENSOR      = 4096;
     constexpr uint32_t LED_STATUS      = 2048;
 }
 
@@ -221,7 +204,6 @@ namespace TaskPeriodMs {
     constexpr uint32_t GRIPPER       = 50;
     constexpr uint32_t REFLECTANCE   = 20;   // 50 Hz, seguimiento de línea
     constexpr uint32_t COLOR_SENSOR  = 100;  // 10 Hz
-    constexpr uint32_t TOF_SENSOR    = 50;   // 20 Hz, igual al periodo de rango
     constexpr uint32_t LED_STATUS    = 100;  // más rápido que antes: hace falta para el destello de 5 Hz
 }
 
@@ -240,7 +222,6 @@ enum class TaskId : uint8_t {
     COLOR_SENSOR,
     REFLECTANCE,
     LED_STATUS,
-    TOF_SENSOR,
     MISSION,
     COUNT   // siempre el último
 };
@@ -277,9 +258,7 @@ struct LedCommand {
 
 struct ColorReading {
     uint32_t   timestamp_ms = 0;
-    ColorLabel front        = ColorLabel::UNKNOWN;
     ColorLabel back         = ColorLabel::UNKNOWN;
-    bool       front_valid  = false;
     bool       back_valid   = false;
 };
 
@@ -289,12 +268,6 @@ struct ReflectanceReading {
     uint16_t right_raw     = 0;
     bool     left_on_line  = false;
     bool     right_on_line = false;
-};
-
-struct TofReading {
-    uint32_t timestamp_ms = 0;
-    uint16_t distance_mm  = 0;
-    bool     valid        = false;
 };
 
 struct HealthReport {
@@ -312,7 +285,6 @@ struct HealthReport {
 //
 //   ColorSensorTask --> colorQueue   (4, FIFO)      --> MissionTask
 //   ReflectanceTask --> reflectQueue (4, FIFO)      --> MissionTask
-//   TofSensorTask   --> tofQueue     (4, FIFO)      --> MissionTask
 //   SupervisorTask  --> healthQueue  (1, overwrite) --> MissionTask (solo log)
 //
 //  Mismo criterio que en firmware-esp32/: colas "overwrite" para datos donde
@@ -324,53 +296,24 @@ static QueueHandle_t g_gripperCmdQueue = nullptr;
 static QueueHandle_t g_ledCmdQueue     = nullptr;
 static QueueHandle_t g_colorQueue      = nullptr;
 static QueueHandle_t g_reflectQueue    = nullptr;
-static QueueHandle_t g_tofQueue        = nullptr;
 static QueueHandle_t g_healthQueue     = nullptr;
-
-// ---------------------------------------------------------------------------
-//  Mutex del bus I2C nº0 (Wire) — TCS34725 delantero + VL53L1X.
-// ---------------------------------------------------------------------------
-//  LAS DOS TAREAS QUE TOCAN ESTE BUS CORREN EN EL MISMO NÚCLEO (0: sensores),
-//  pero eso no alcanza para que `Wire`/`TwoWire` sea segura entre ellas:
-//  ninguna deshabilita el planificador durante una transacción I2C, así que
-//  un cambio de contexto a mitad de un beginTransmission()/endTransmission()
-//  puede intercalar los bytes de ColorSensorTask con los de TofSensorTask
-//  sobre el mismo objeto `Wire`. Eso corrompe el bus de forma intermitente
-//  — exactamente los "problemas de I2C" que se ven en banco entre el ToF y
-//  el sensor de color — sin que ninguno de los dos esté roto por separado.
-//
-//  Este mutex serializa toda transacción sobre el bus 0: cada tarea lo toma
-//  antes de tocar `Wire` y lo suelta apenas termina.
-//
-//  Con timeout corto (no portMAX_DELAY, por la misma regla que las colas):
-//  si no se consigue el bus en I2C0_LOCK_TIMEOUT_MS, la operación se da por
-//  fallida esta vuelta y se reintenta en la siguiente — mismo espíritu que
-//  ya tienen los drivers de este archivo (nunca bloquear indefinidamente a
-//  cambio de un periférico que tarda).
-//
-//  El PCA9685, que antes vivía acá también, se movió al bus 1 (ver
-//  g_i2c1Mutex, justo abajo) por decisión del equipo: ya no forma parte de
-//  este mutex.
-static SemaphoreHandle_t g_i2c0Mutex = nullptr;
-constexpr uint32_t I2C0_LOCK_TIMEOUT_MS = 50;
-
-static inline bool I2c0Lock() {
-    return xSemaphoreTake(g_i2c0Mutex, pdMS_TO_TICKS(I2C0_LOCK_TIMEOUT_MS)) == pdTRUE;
-}
-
-static inline void I2c0Unlock() {
-    xSemaphoreGive(g_i2c0Mutex);
-}
 
 // ---------------------------------------------------------------------------
 //  Mutex del bus I2C nº1 (Wire1) — TCS34725 trasero + PCA9685 (servos).
 // ---------------------------------------------------------------------------
-//  Mismo problema que el bus 0, con el mismo mecanismo, esta vez entre
-//  núcleos distintos: GripperTask (el PCA9685) corre en el núcleo 1,
-//  ColorSensorTask (el TCS34725 trasero) en el núcleo 0 — pueden estar
-//  ejecutando una transacción I2C cada una AL MISMO TIEMPO. El bus 1 era
-//  seguro sin mutex mientras solo tuviera un dispositivo; deja de serlo en
-//  cuanto el PCA9685 se muda acá.
+//  Único bus I2C de este firmware: el bus nº0 (TCS34725 delantero + ToF) se
+//  retiró por completo, ver la nota grande al principio del archivo.
+//
+//  GripperTask (el PCA9685) corre en el núcleo 1, ColorSensorTask (el
+//  TCS34725 trasero) en el núcleo 0 — pueden estar ejecutando una
+//  transacción I2C cada una AL MISMO TIEMPO sobre el mismo objeto `Wire1`,
+//  y ninguna deshabilita el planificador durante beginTransmission()/
+//  endTransmission(). Este mutex serializa toda transacción sobre el bus:
+//  cada tarea lo toma antes de tocar `Wire1` y lo suelta apenas termina.
+//
+//  Con timeout corto (no portMAX_DELAY, por la misma regla que las colas):
+//  si no se consigue el bus en I2C1_LOCK_TIMEOUT_MS, la operación se da por
+//  fallida esta vuelta y se reintenta en la siguiente.
 static SemaphoreHandle_t g_i2c1Mutex = nullptr;
 constexpr uint32_t I2C1_LOCK_TIMEOUT_MS = 50;
 
@@ -589,6 +532,9 @@ namespace {
 // ---------------------------------------------------------------------------
 //  8.1  MotorTask — 4 motores a través de 2 drivers L298N
 // ---------------------------------------------------------------------------
+//  (numeración de subsecciones: 8.1 Motor, 8.2 Gripper, 8.3 Color,
+//  8.4 Reflectancia, 8.5 LED — sin ToF, retirado del bus I2C nº0)
+// ---------------------------------------------------------------------------
 
 struct Motor {
     uint8_t in1, in2, en, ledc_channel;
@@ -776,136 +722,30 @@ void PushDropOldest(QueueHandle_t queue, const T &item) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.3  TofSensorTask — VL53L1X, telémetro delante del gripper
-// ---------------------------------------------------------------------------
-//  Aquí es donde este firmware hace más trabajo que en la versión con
-//  Raspberry Pi: sin cámara, esta es la ÚNICA fuente de "algo delante" que
-//  tiene MissionTask para intentar agarrar la bandera. Ver el aviso grande
-//  al principio del archivo sobre esta limitación.
-
-namespace Tof {
-    constexpr uint32_t BOOT_DELAY_MS = 2;
-    constexpr uint16_t TIMING_BUDGET_US = 50000;
-    constexpr uint32_t RANGING_PERIOD_MS = 50;
-}
-
-VL53L1X g_tof;
-
-bool TofBringUp() {
-    g_tof.setBus(&Wire);
-    g_tof.setTimeout(500);
-    g_tof.setAddress(I2CAddr::VL53L1X);
-
-    if (!g_tof.init()) return false;
-
-    g_tof.setDistanceMode(VL53L1X::Long);
-    g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
-    g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
-    return true;
-}
-
-void TofSensorTask(void *) {
-    digitalWrite(Pins::TOF_XSHUT, HIGH);
-    delay(Tof::BOOT_DELAY_MS);
-
-    // TofBringUp() incluye la reasignación de dirección del VL53L1X (ver la
-    // nota larga en I2CAddr::VL53L1X_BOOT_ADDR): esa escritura ocurre
-    // mientras el chip todavía responde en 0x29, la MISMA dirección del
-    // TCS34725 delantero. El mutex del bus (g_i2c0Mutex) resuelve un riesgo
-    // DISTINTO: que dos tareas corrompan el objeto `Wire` al llamarlo a la
-    // vez. NO elimina el choque de direcciones en sí — durante esa escritura
-    // puntual, los dos chips siguen respondiendo a 0x29 a nivel eléctrico,
-    // sea cual sea la tarea que la origine. Sigue siendo "un riesgo acotado
-    // y aceptado" (una sola transacción de 3 bytes, no la inicialización
-    // completa), igual que documenta I2CAddr::VL53L1X_BOOT_ADDR — el mutex
-    // ayuda a que esta ventana sea lo más corta y predecible posible, no a
-    // que deje de existir.
-    bool tof_ok = false;
-    if (I2c0Lock()) {
-        tof_ok = TofBringUp();
-        I2c0Unlock();
-    }
-    if (!tof_ok) {
-        DEBUG_LINK.println("[ToF] VL53L1X no responde. Reintentando en segundo plano.");
-    }
-
-    const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::TOF_SENSOR);
-    TickType_t last_wake = xTaskGetTickCount();
-    uint32_t last_retry_ms = millis();
-
-    for (;;) {
-        if (!tof_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
-            last_retry_ms = millis();
-            if (I2c0Lock()) {
-                tof_ok = g_tof.init();
-                if (tof_ok) {
-                    g_tof.setDistanceMode(VL53L1X::Long);
-                    g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
-                    g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
-                }
-                I2c0Unlock();
-            }
-        }
-
-        TofReading reading;
-        reading.timestamp_ms = millis();
-
-        if (tof_ok && I2c0Lock()) {
-            if (g_tof.dataReady()) {
-                reading.distance_mm = g_tof.read(false);
-                reading.valid = !g_tof.timeoutOccurred() &&
-                                g_tof.ranging_data.range_status == VL53L1X::RangeValid;
-                if (g_tof.timeoutOccurred()) tof_ok = false;
-            }
-            I2c0Unlock();
-        }
-
-        PushDropOldest(g_tofQueue, reading);
-
-        Heartbeat(TaskId::TOF_SENSOR);
-        vTaskDelayUntil(&last_wake, period);
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  8.4  ColorSensorTask — TCS34725 delantero (Wire) y trasero (Wire1)
+//  8.3  ColorSensorTask — TCS34725 trasero (Wire1), único sensor de color
 // ---------------------------------------------------------------------------
 
 void ColorSensorTask(void *) {
-    pinMode(Pins::TCS_LED_FRONT, OUTPUT);
-    digitalWrite(Pins::TCS_LED_FRONT, HIGH);
-
-    // El sensor DELANTERO vive en Wire (bus I2C nº0), junto con el VL53L1X:
-    // sus llamadas van protegidas por g_i2c0Mutex. El TRASERO vive en Wire1
-    // (bus nº1), que ahora comparte con el PCA9685 desde que el gripper se
-    // movió ahí: sus llamadas van protegidas por g_i2c1Mutex, por la misma
-    // razón (ver la nota larga junto a las declaraciones de ambos mutex).
-    bool front_ok = false;
-    if (I2c0Lock()) {
-        front_ok = Tcs34725::Init(Wire);
-        I2c0Unlock();
-    }
+    // Único sensor y único bus desde que se retiró el bus I2C nº0 (ver la
+    // nota grande al principio del archivo): sus llamadas van protegidas
+    // por g_i2c1Mutex, que comparte con el PCA9685 (GripperTask corre en el
+    // otro núcleo).
     bool back_ok = false;
     if (I2c1Lock()) {
         back_ok = Tcs34725::Init(Wire1);
         I2c1Unlock();
     }
 
-    if (!front_ok) DEBUG_LINK.println("[Color] sensor DELANTERO no responde (bus I2C 0).");
-    if (!back_ok)  DEBUG_LINK.println("[Color] sensor TRASERO no responde (bus I2C 1).");
+    if (!back_ok) DEBUG_LINK.println("[Color] sensor TRASERO no responde (bus I2C 1).");
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::COLOR_SENSOR);
     TickType_t last_wake = xTaskGetTickCount();
     uint32_t last_retry_ms = millis();
 
     for (;;) {
-        if ((!front_ok || !back_ok) && (uint32_t)(millis() - last_retry_ms) > 1000) {
+        if (!back_ok && (uint32_t)(millis() - last_retry_ms) > 1000) {
             last_retry_ms = millis();
-            if (!front_ok && I2c0Lock()) {
-                front_ok = Tcs34725::Init(Wire);
-                I2c0Unlock();
-            }
-            if (!back_ok && I2c1Lock()) {
+            if (I2c1Lock()) {
                 back_ok = Tcs34725::Init(Wire1);
                 I2c1Unlock();
             }
@@ -915,38 +755,6 @@ void ColorSensorTask(void *) {
         reading.timestamp_ms = millis();
 
         Tcs34725::Rgbc sample;
-        if (front_ok) {
-            bool read_ok = false;
-            if (I2c0Lock()) {
-                read_ok = Tcs34725::Read(Wire, sample);
-                I2c0Unlock();
-            }
-            if (read_ok) {
-                reading.front = ClassifyColor(sample);
-                reading.front_valid = true;
-
-                // DIAGNÓSTICO TEMPORAL para recalibrar ClassifyColor() en
-                // banco: sostén el sensor DELANTERO sobre cada superficie de
-                // la pista (negro, amarillo, rojo, azul, piso gris) y lee
-                // los valores normalizados de acá. Los umbrales actuales
-                // (r/g/b sobre `clear`) están calibrados con datos viejos —
-                // ver calibracion/color/ para el proceso formal con más
-                // muestras. Quitar este log una vez recalibrado.
-                static uint32_t last_color_log_ms = 0;
-                if ((uint32_t)(millis() - last_color_log_ms) > 500) {
-                    last_color_log_ms = millis();
-                    const float total = (float)sample.c;
-                    DEBUG_LINK.printf(
-                        "[Color] clear=%u r=%u g=%u b=%u | r/c=%.3f g/c=%.3f b/c=%.3f -> %s\n",
-                        sample.c, sample.r, sample.g, sample.b,
-                        (float)sample.r / total, (float)sample.g / total, (float)sample.b / total,
-                        ColorLabelName(reading.front));
-                }
-            } else {
-                front_ok = false;
-            }
-        }
-
         if (back_ok) {
             bool read_ok = false;
             if (I2c1Lock()) {
@@ -969,7 +777,7 @@ void ColorSensorTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.5  ReflectanceTask — 2x QTRX-HD-01A
+//  8.4  ReflectanceTask — 2x QTRX-HD-01A
 // ---------------------------------------------------------------------------
 //  Valor ADC ALTO = superficie OSCURA (cinta negra del borde). Ver la nota
 //  larga en firmware-esp32/src/main.cpp si esto no es intuitivo.
@@ -1003,7 +811,7 @@ void ReflectanceTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.6  LedTask — LED RGB: indicador puro de la línea/zona de piso
+//  8.5  LedTask — LED RGB: indicador puro de la línea/zona de piso
 // ---------------------------------------------------------------------------
 //  Único trabajo del LED en esta variante: decir sobre qué está parado el
 //  robot AHORA MISMO, nada más — ni equipo, ni "veo la bandera".
@@ -1098,15 +906,14 @@ void LedTask(void *) {
 //  [9] MISSIONTASK — el cerebro, sin Raspberry Pi
 // ===========================================================================
 //
-//  Puerto directo de la lógica de raspberry-pi/src/athena/decision.py a
-//  C++, adaptado a que aquí NO hay percepción visual de la bandera: donde
-//  decision.py usaba ``perception.best(bandera_objetivo)`` (una detección
-//  de la cámara con clase, ángulo y distancia), esta versión usa el
-//  VL53L1X como sustituto ciego — ver el aviso grande al principio del
-//  archivo. Las prioridades y el orden de fases son EXACTAMENTE los mismos
-//  que allá, por la misma razón: salirse de la pista y adelantar la
-//  secuencia pierden la ronda de inmediato, así que esas dos reglas no
-//  pueden depender de que nada más ande bien.
+//  Puerto parcial de la lógica de raspberry-pi/src/athena/decision.py a
+//  C++: solo la parte de "cargar y depositar la llave". Esta variante NO
+//  intenta buscar ni agarrar la bandera del oponente — ver el aviso grande
+//  al principio del archivo sobre por qué (se retiró el bus I2C nº0, único
+//  sensor con el que esta demo podía intentarlo). La prioridad de no
+//  salirse de la pista sí es EXACTAMENTE la misma que allá: salirse de la
+//  pista pierde la ronda de inmediato, así que esa regla no puede depender
+//  de que nada más ande bien.
 
 namespace Mission {
 
@@ -1124,44 +931,35 @@ constexpr bool kMotionEnabled = true;
 // Velocidades y umbrales — mismo rol que ControlConfig en decision.py,
 // pero constexpr porque aquí no hay archivo de configuración que cargar.
 constexpr int kVelocidadCrucero     = 70;   // % de PWM al avanzar recto
-constexpr int kVelocidadBusqueda    = 65;   // % al girar buscando
 constexpr int kVelocidadAproximacion = 60;  // % al acercarse / evadir
-
-constexpr uint16_t kDistanciaAgarreMm = 150;  // debajo de esto: cerrar la pinza
-constexpr uint8_t  kTofDebounceHits   = 3;    // lecturas seguidas antes de agarrar
 
 constexpr uint32_t kStartupDelayMs   = 3000;  // tiempo para cargar la llave y ubicar el robot
 constexpr uint32_t kGripperSettleMs  = 400;   // tiempo mecánico para que el servo llegue
+// Full stop al llegar a la zona amarilla, antes de retroceder: pedido
+// explícito para que el robot se detenga por completo (no una frenada
+// suave a mitad de un SetDrive) antes de invertir el sentido de marcha.
+constexpr uint32_t kFullStopMs       = 400;
 // Retrocede a tiempo fijo justo DESPUÉS de que el sensor trasero detecta la
 // zona amarilla, para que el frente (y la llave) quede dentro de la zona
 // segura y no más allá de ella. Variable fácil de ajustar: solo este
 // número, en milisegundos.
 constexpr uint32_t kRetrocesoZonaNeutraMs = 3000;
-constexpr uint32_t kSpinBurstMs      = 900;   // barrido: cuánto gira sobre su eje
-constexpr uint32_t kForwardBurstMs   = 700;   // barrido: cuánto avanza entre giros
-constexpr uint32_t kReturnTurnMs     = 1500;  // giro aproximado de 180°, A CALIBRAR EN BANCO
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
     BUSCAR_ZONA_NEUTRA,
+    // Full stop al detectar la zona amarilla, antes de retroceder -- ver
+    // kFullStopMs.
+    DETENER_ZONA_NEUTRA,
     // Retrocede a tiempo fijo tras detectar la zona amarilla: el sensor
     // TRASERO ya la pasó de largo en el instante en que la detecta, así
     // que sin este paso el frente (y la llave) quedarían más allá de la
     // zona segura, no dentro.
     RETROCEDER_A_ZONA_NEUTRA,
     DEPOSITAR_LLAVE,
-    BUSCAR_BANDERA,
-    AGARRAR_BANDERA,
-    RETORNAR_GIRANDO,
-    RETORNAR_AVANZANDO,
-    ENTREGAR,
     TERMINADO,
 };
-
-inline ColorLabel ZonaPropia(TeamColor team) {
-    return (team == TeamColor::RED) ? ColorLabel::RED : ColorLabel::BLUE;
-}
 
 // Nombre legible de cada fase, para el log — sin esto, el monitor serial
 // solo mostraba el número crudo del enum y había que contar a mano.
@@ -1169,14 +967,10 @@ inline const char *PhaseName(Phase phase) {
     switch (phase) {
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
-        case Phase::RETROCEDER_A_ZONA_NEUTRA: return "RETROCEDER_A_ZONA_NEUTRA";
         case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
+        case Phase::DETENER_ZONA_NEUTRA: return "DETENER_ZONA_NEUTRA";
+        case Phase::RETROCEDER_A_ZONA_NEUTRA: return "RETROCEDER_A_ZONA_NEUTRA";
         case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
-        case Phase::BUSCAR_BANDERA:      return "BUSCAR_BANDERA";
-        case Phase::AGARRAR_BANDERA:     return "AGARRAR_BANDERA";
-        case Phase::RETORNAR_GIRANDO:    return "RETORNAR_GIRANDO";
-        case Phase::RETORNAR_AVANZANDO:  return "RETORNAR_AVANZANDO";
-        case Phase::ENTREGAR:            return "ENTREGAR";
         case Phase::TERMINADO:           return "TERMINADO";
         default:                         return "DESCONOCIDA";
     }
@@ -1200,14 +994,8 @@ void MissionTask(void *pvTeam) {
     Mission::Phase last_logged_phase = phase;
     uint32_t phase_started_ms = millis();
 
-    // Estado propio del barrido de búsqueda (fase BUSCAR_BANDERA).
-    bool     buscando_gira = true;
-    int8_t   sentido = 1;
-    uint8_t  tof_hits = 0;
-
     ColorReading       last_color{};
     ReflectanceReading last_reflect{};
-    TofReading         last_tof{};
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
@@ -1222,8 +1010,6 @@ void MissionTask(void *pvTeam) {
         while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) last_color = c;
         ReflectanceReading r;
         while (xQueueReceive(g_reflectQueue, &r, 0) == pdTRUE) last_reflect = r;
-        TofReading t;
-        while (xQueueReceive(g_tofQueue, &t, 0) == pdTRUE) last_tof = t;
         HealthReport h;
         while (xQueueReceive(g_healthQueue, &h, 0) == pdTRUE) {
             DEBUG_LINK.printf("[Mission] tareas colgadas, bitmask=0x%02X\n", h.faulted_tasks_bitmask);
@@ -1315,15 +1101,29 @@ void MissionTask(void *pvTeam) {
                 }
 
                 // -- 4. Avanzar hasta pisar la zona amarilla ----------------
-                // Usa el sensor TRASERO: el delantero no está midiendo bien
-                // (ver el diagnóstico en ColorSensorTask) -- cambio temporal
-                // hasta que se resuelva el cableado del delantero.
+                // Usa el sensor TRASERO: el delantero se retiró por
+                // completo junto con el bus I2C nº0 (ver aviso al
+                // principio del archivo).
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
                     if (last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
-                        phase = Mission::Phase::RETROCEDER_A_ZONA_NEUTRA;
+                        phase = Mission::Phase::DETENER_ZONA_NEUTRA;
                         phase_started_ms = millis();
                     } else {
                         SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
+                    }
+                    break;
+                }
+
+                // -- 4a. Full stop antes de invertir el sentido de marcha ---
+                // Pedido explícito: detenerse por completo (motor en STOP,
+                // no una frenada a mitad de un SetDrive) antes de
+                // retroceder, en vez de pasar directo de avanzar a
+                // retroceder. motor se queda en su valor por defecto
+                // (STOP): no hace falta llamar a SetDrive aquí.
+                case Mission::Phase::DETENER_ZONA_NEUTRA: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kFullStopMs) {
+                        phase = Mission::Phase::RETROCEDER_A_ZONA_NEUTRA;
+                        phase_started_ms = millis();
                     }
                     break;
                 }
@@ -1345,100 +1145,11 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 5. Soltar la llave: única transición que habilita ------
-                //       la búsqueda de bandera (igual que decision.py).
+                // -- 5. Soltar la llave: fin de la misión de esta demo ------
+                // (sin bus I2C nº0 no hay forma de buscar la bandera del
+                // oponente -- ver el aviso grande al principio del
+                // archivo -- así que la secuencia termina aquí).
                 case Mission::Phase::DEPOSITAR_LLAVE: {
-                    gripper.action = GripperAction::OPEN;
-                    send_gripper = true;
-                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
-                        phase = Mission::Phase::BUSCAR_BANDERA;
-                        phase_started_ms = millis();
-                        buscando_gira = true;
-                        tof_hits = 0;
-                    }
-                    break;
-                }
-
-                // -- 6. Barrer el área; el VL53L1X hace de "ojos" ----------
-                // LIMITACIÓN A PROPÓSITO (ver el aviso grande arriba): no
-                // hay forma de confirmar que lo que se detecta es la
-                // bandera del equipo contrario y no cualquier otro objeto
-                // u obstáculo. Es la mejor aproximación posible sin cámara.
-                case Mission::Phase::BUSCAR_BANDERA: {
-                    if (last_tof.valid && last_tof.distance_mm <= Mission::kDistanciaAgarreMm) {
-                        if (tof_hits < 255) tof_hits++;
-                    } else {
-                        tof_hits = 0;
-                    }
-
-                    if (tof_hits >= Mission::kTofDebounceHits) {
-                        phase = Mission::Phase::AGARRAR_BANDERA;
-                        phase_started_ms = millis();
-                        break;
-                    }
-
-                    const uint32_t elapsed = millis() - phase_started_ms;
-                    if (buscando_gira) {
-                        SetDrive(motor, Mission::kVelocidadBusqueda * sentido,
-                                        -Mission::kVelocidadBusqueda * sentido);
-                        if (elapsed > Mission::kSpinBurstMs) {
-                            buscando_gira = false;
-                            phase_started_ms = millis();
-                        }
-                    } else {
-                        // Avance con un leve arco, para barrer el ToF a
-                        // ambos lados en vez de solo mirar de frente.
-                        const int base = Mission::kVelocidadAproximacion;
-                        const int sesgo = 10 * sentido;
-                        SetDrive(motor, base + sesgo, base - sesgo);
-                        if (elapsed > Mission::kForwardBurstMs) {
-                            buscando_gira = true;
-                            sentido = (int8_t)-sentido;   // alterna el lado del barrido
-                            phase_started_ms = millis();
-                        }
-                    }
-                    break;
-                }
-
-                // -- 7. Cerrar la pinza sobre lo que haya delante -----------
-                case Mission::Phase::AGARRAR_BANDERA: {
-                    gripper.action = GripperAction::CLOSE_BANDERA;
-                    send_gripper = true;
-                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
-                        phase = Mission::Phase::RETORNAR_GIRANDO;
-                        phase_started_ms = millis();
-                    }
-                    break;
-                }
-
-                // -- 8a. Girar ~180° antes de buscar la zona propia ---------
-                // Sin odometría ni referencia visual (mismo hueco que anota
-                // decision.py::_retornar): es un giro a tiempo fijo, A
-                // CALIBRAR EN BANCO según el peso real del robot y la
-                // fricción de la pista.
-                case Mission::Phase::RETORNAR_GIRANDO: {
-                    SetDrive(motor, Mission::kVelocidadBusqueda, -Mission::kVelocidadBusqueda);
-                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kReturnTurnMs) {
-                        phase = Mission::Phase::RETORNAR_AVANZANDO;
-                        phase_started_ms = millis();
-                    }
-                    break;
-                }
-
-                // -- 8b. Avanzar hasta pisar la zona del propio equipo ------
-                // Sensor TRASERO -- ver la nota en BUSCAR_ZONA_NEUTRA.
-                case Mission::Phase::RETORNAR_AVANZANDO: {
-                    if (last_color.back_valid && last_color.back == Mission::ZonaPropia(team)) {
-                        phase = Mission::Phase::ENTREGAR;
-                        phase_started_ms = millis();
-                    } else {
-                        SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
-                    }
-                    break;
-                }
-
-                // -- 9. Soltar la bandera en zona propia ---------------------
-                case Mission::Phase::ENTREGAR: {
                     gripper.action = GripperAction::OPEN;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
@@ -1448,7 +1159,7 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 10. Misión completa: quieto -----------------------------
+                // -- 6. Misión completa: quieto -------------------------------
                 case Mission::Phase::TERMINADO:
                 default:
                     break;
@@ -1460,8 +1171,7 @@ void MissionTask(void *pvTeam) {
         xQueueOverwrite(g_motorCmdQueue, &motor);
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);
 
-        // Sensor TRASERO -- ver la nota en BUSCAR_ZONA_NEUTRA: el delantero
-        // no está midiendo bien, así que el LED muestra lo que ve el trasero.
+        // Sensor TRASERO -- único que queda, ver la nota en BUSCAR_ZONA_NEUTRA.
         LedCommand led;
         led.zone = last_color.back_valid ? last_color.back : ColorLabel::UNKNOWN;
         xQueueOverwrite(g_ledCmdQueue, &led);
@@ -1510,11 +1220,10 @@ static bool CreateQueues() {
     g_ledCmdQueue     = xQueueCreate(1, sizeof(LedCommand));
     g_colorQueue      = xQueueCreate(4, sizeof(ColorReading));
     g_reflectQueue    = xQueueCreate(4, sizeof(ReflectanceReading));
-    g_tofQueue        = xQueueCreate(4, sizeof(TofReading));
     g_healthQueue     = xQueueCreate(1, sizeof(HealthReport));
 
     return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue &&
-           g_colorQueue && g_reflectQueue && g_tofQueue && g_healthQueue;
+           g_colorQueue && g_reflectQueue && g_healthQueue;
 }
 
 constexpr uint32_t SERIAL_BAUD_RATE = 115200;
@@ -1618,42 +1327,25 @@ void setup() {
     DEBUG_LINK.printf("[Setup] Switch de equipo -> %s\n",
                        g_myTeam == TeamColor::RED ? "ROJO" : "AZUL");
 
-    // Los dos buses I2C se abren aquí, ANTES de lanzar las tareas, igual que
-    // en firmware-esp32/: así ninguna tarea tiene que inicializar hardware
-    // compartido por su cuenta.
-    //
-    // DIAGNÓSTICO TEMPORAL: bus 0 (TCS34725 delantero + VL53L1X) sin abrir
-    // a propósito -- para descartar que algo en ese bus (ColorSensorTask o
-    // TofSensorTask tocando un Wire nunca inicializado) esté colgando el
-    // sistema y por eso nunca se ven los logs de [Mission]/[Reflect]. Con
-    // esto comentado, ColorSensorTask/TofSensorTask van a fallar todas sus
-    // operaciones de bus 0 (esperado, no es un problema en sí), pero el
-    // resto del sistema debería seguir funcionando si el problema real
-    // estaba ahí. Restaurar la línea de Wire.begin() una vez descartado.
-    // Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // TCS34725 delantero + VL53L1X
+    // Único bus I2C del firmware: se abre aquí, ANTES de lanzar las tareas,
+    // igual que en firmware-esp32/, así ninguna tarea tiene que
+    // inicializar hardware compartido por su cuenta. El bus nº0 (TCS34725
+    // delantero + VL53L1X) se retiró por completo -- ver el aviso grande
+    // al principio del archivo.
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);  // TCS34725 trasero + PCA9685
-    Wire.setTimeOut(25);
     Wire1.setTimeOut(25);
-
-    // VL53L1X en reset desde ya — ver la nota larga en TofSensorTask (y su
-    // gemela, más detallada, en firmware-esp32/src/main.cpp) sobre por qué
-    // esto tiene que pasar ANTES de crear ninguna tarea.
-    pinMode(Pins::TOF_XSHUT, OUTPUT);
-    digitalWrite(Pins::TOF_XSHUT, LOW);
 
     if (!CreateQueues()) {
         DEBUG_LINK.println("[FATAL] no se pudieron crear las colas. Arranque detenido.");
         for (;;) delay(1000);
     }
 
-    // Mutex de los dos buses I2C, creados ANTES de lanzar ninguna tarea:
-    // ColorSensors y TofSensor usan g_i2c0Mutex, ColorSensors y Gripper usan
-    // g_i2c1Mutex, desde el primer momento que corren (ver la nota larga
-    // junto a cada uno).
-    g_i2c0Mutex = xSemaphoreCreateMutex();
+    // Mutex del bus I2C, creado ANTES de lanzar ninguna tarea: ColorSensors
+    // y Gripper lo usan desde el primer momento que corren (ver la nota
+    // larga junto a su declaración).
     g_i2c1Mutex = xSemaphoreCreateMutex();
-    if (g_i2c0Mutex == nullptr || g_i2c1Mutex == nullptr) {
-        DEBUG_LINK.println("[FATAL] no se pudo crear un mutex de bus I2C. Arranque detenido.");
+    if (g_i2c1Mutex == nullptr) {
+        DEBUG_LINK.println("[FATAL] no se pudo crear el mutex del bus I2C. Arranque detenido.");
         for (;;) delay(1000);
     }
 
@@ -1671,8 +1363,6 @@ void setup() {
                             nullptr, TaskPriority::GRIPPER_CONTROL, nullptr, 1);
     xTaskCreatePinnedToCore(ColorSensorTask, "ColorSensors", TaskStack::COLOR_SENSOR,
                             nullptr, TaskPriority::COLOR_SENSOR, nullptr, 0);
-    xTaskCreatePinnedToCore(TofSensorTask, "TofSensor", TaskStack::TOF_SENSOR,
-                            nullptr, TaskPriority::TOF_SENSOR, nullptr, 0);
     xTaskCreatePinnedToCore(ReflectanceTask, "Reflectance", TaskStack::REFLECTANCE,
                             nullptr, TaskPriority::REFLECTANCE, nullptr, 0);
     xTaskCreatePinnedToCore(LedTask, "TeamLed", TaskStack::LED_STATUS,
