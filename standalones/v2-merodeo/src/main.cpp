@@ -982,6 +982,16 @@ constexpr uint32_t kEvasionGiroMs      = 500;
 // on_line=true ya no alcanza: si en cualquier momento se deja de detectar,
 // el conteo se reinicia desde cero.
 constexpr uint32_t kBordeDebounceMs = 50;
+// Gracia al ENTRAR a BUSCAR_ZONA_NEUTRA (arranque de la misión, y también
+// cada vez que se vuelve aquí tras un giro de evasión): durante este tiempo
+// se IGNORA por completo la lectura de los QTR y el robot avanza sí o sí.
+// Pedido explícito -- la pista es gris con manchas de suciedad más oscuras
+// que el kDarkThreshold sin calibrar confunde con el borde negro, y sin
+// esto el robot podía ponerse a retroceder desde el segundo 0 sin haber
+// avanzado nunca. kBordeDebounceMs (arriba) filtra ruido de un instante;
+// esto filtra "la mancha bajo el sensor justo en este momento", que puede
+// sostenerse mucho más que 50 ms si el robot no se ha movido todavía.
+constexpr uint32_t kIgnorarBordeAlEntrarMs = 1000;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
@@ -1168,6 +1178,20 @@ void MissionTask(void *pvTeam) {
                 // a mandar el robot para atrás en cuanto esta fase por fin
                 // se ejecute de verdad.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
+                    // Gracia de arranque (Mission::kIgnorarBordeAlEntrarMs,
+                    // ver su declaración): recién entrando a esta fase (al
+                    // arrancar la misión, o al volver aquí tras un giro de
+                    // evasión) se ignora el borde por completo -- la pista
+                    // gris con manchas de suciedad puede leer "negro" bajo
+                    // el sensor sin que el robot se haya movido nunca, y
+                    // eso no es un borde real que evadir. Ni siquiera se
+                    // toca borde_detectado_desde_ms aquí: el debounce de
+                    // abajo arranca limpio en cuanto termine esta gracia.
+                    if ((uint32_t)(millis() - phase_started_ms) <= Mission::kIgnorarBordeAlEntrarMs) {
+                        SetDrive(motor, -Mission::kVelocidadCrucero, -Mission::kVelocidadCrucero);
+                        break;
+                    }
+
                     // Debounce (Mission::kBordeDebounceMs, ver su
                     // declaración): un solo instante con on_line=true no
                     // dispara la evasión -- tiene que sostenerse SIN
