@@ -56,9 +56,24 @@ namespace Pins {
     // switch de equipo.
     constexpr uint8_t TCS_LED_FRONT = 18;
 
+    // XSHUT del VL53L1X — este sketch no lo usa para nada, pero comparte el
+    // bus I2C nº0 con el TCS34725 DELANTERO en el robot real, y arranca
+    // SIEMPRE respondiendo en 0x29 -- la MISMA dirección fija del TCS34725
+    // (ver I2CAddr::TCS34725 abajo). Si sigue conectado y este pin se deja
+    // flotando, el delantero da lecturas corrompidas mientras el trasero
+    // (solo en su bus, sin nadie con quien chocar) sigue viéndose bien —
+    // mismo bug ya encontrado y arreglado en ../firmware/src/main.cpp, ver
+    // la nota larga ahí. Se mantiene en LOW (reset) todo el tiempo.
+    constexpr uint8_t TOF_XSHUT = 3;
+
     constexpr uint8_t RGB_R = 39;
     constexpr uint8_t RGB_G = 38;
-    constexpr uint8_t RGB_B = 3;
+    // GPIO 41, NO el 3: el diseño final le cedió el 3 al XSHUT del VL53L1X
+    // (ver hardware/conexiones-esp32-s3.md, sección del LED RGB) -- este
+    // sketch se había quedado con la asignación vieja, de antes de ese
+    // cambio, y con el 3 ocupado por dos cosas a la vez (RGB azul Y XSHUT)
+    // ninguna de las dos habría funcionado bien.
+    constexpr uint8_t RGB_B = 41;
 }
 
 namespace I2CAddr {
@@ -288,6 +303,12 @@ void setup() {
     delay(1000);
     Serial.println("\nDetector TCS34725 - clasificador de color (banco)");
     Serial.println("Umbrales recalibrados 2026-08-28 (delantero) -- NEGRO es el mas debil, ver encabezado.\n");
+
+    // VL53L1X en reset ANTES de abrir el bus I2C0 -- ver la nota larga junto
+    // a Pins::TOF_XSHUT sobre por qué, si sigue conectado, corrompe las
+    // lecturas del TCS34725 delantero (misma dirección fija 0x29).
+    pinMode(Pins::TOF_XSHUT, OUTPUT);
+    digitalWrite(Pins::TOF_XSHUT, LOW);
 
     Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
