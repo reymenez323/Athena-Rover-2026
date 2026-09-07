@@ -278,8 +278,15 @@ struct ColorReading {
 
 struct ReflectanceReading {
     uint32_t timestamp_ms  = 0;
-    uint16_t left_raw      = 0;
+    uint16_t left_raw      = 0;   // "crudo": ADC con el emisor prendido
     uint16_t right_raw     = 0;
+    // con_luz - ambiente (ver la nota grande de rechazo de luz ambiente
+    // junto a ReflectanceTask): |restado| chico = negro (absorbe casi
+    // toda la luz del emisor), |restado| grande = superficie clara
+    // (rebota mucho más). left_restado no se usa para decidir on_line
+    // (ver left_on_line) -- se reporta solo para diagnóstico.
+    int16_t  left_restado  = 0;
+    int16_t  right_restado = 0;
     bool     left_on_line  = false;
     bool     right_on_line = false;
 };
@@ -821,16 +828,39 @@ void ColorSensorTask(void *) {
 }
 
 // ---------------------------------------------------------------------------
-//  8.4  ReflectanceTask — 2x QTRX-HD-01A
+//  8.4  ReflectanceTask — 2x QTRX-HD-01A, con rechazo de luz ambiente
 // ---------------------------------------------------------------------------
-//  Valor ADC ALTO = superficie OSCURA (cinta negra del borde). Ver la nota
-//  larga en firmware-esp32/src/main.cpp si esto no es intuitivo.
+//  CALIBRADO EN BANCO (robot físicamente quieto sobre cada superficie,
+//  ver el historial de esta sesión de depuración) comparando una lectura
+//  con el emisor IR prendido contra una con el emisor apagado de verdad:
+//
+//    restado = (ADC con emisor prendido) - (ADC con emisor apagado)
+//
+//  Con el sensor DERECHO (único que funciona -- ver la nota sobre el
+//  izquierdo más abajo):
+//    negro (absorbe casi toda la luz del emisor): |restado| ~= 1 a 8
+//    gris  (rebota mucho más):                    |restado| ~= 76 a 87
+//
+//  |restado| CHICO = negro, GRANDE = superficie clara. Antes se comparaba
+//  el ADC crudo (con el emisor siempre prendido) contra un umbral fijo,
+//  pero esa lectura mezcla el reflejo del piso CON cualquier luz ambiente
+//  que le llegue al fototransistor -- con suficiente luz ambiente, esa
+//  componente domina y aplana la diferencia entre negro y gris (eso es
+//  justo lo que pasaba: crudo salía casi igual en las dos superficies).
+//  Restar una lectura con el emisor apagado aísla la parte que de verdad
+//  depende del color del piso.
+//
+//  IMPORTANTE sobre el pulso de apagado: según el datasheet del QTRX-HD,
+//  un LOW de 0.5-300 us en CTRL NO apaga el emisor -- lo interpreta como
+//  un PULSO DE ATENUACIÓN (baja un escalón de 32 en el brillo, ~3.33%) y
+//  lo deja prendido. Solo un LOW sostenido >= 1 ms apaga los LEDs de
+//  verdad; ese mismo LOW seguido de HIGH reinicia el emisor a corriente
+//  completa (100%), así que no hace falta re-sincronizar ningún estado de
+//  atenuación entre lecturas.
 
-constexpr uint16_t kDarkThreshold = 2048;   // TODO: calibrar en la pista real
-
-// Periodo del diagnóstico de calibración con rechazo de luz ambiente, ver
-// el bloque "[QTR-cal]" dentro de ReflectanceTask.
-constexpr uint32_t kAmbientCalibLogMs = 500;
+// Umbral sobre |restado|: a la mitad entre el peor caso de negro (~8) y
+// el mejor caso de gris (~76), con margen generoso a los dos lados.
+constexpr int16_t kBordeRestadoUmbral = 40;
 
 void ReflectanceTask(void *) {
     analogReadResolution(12);
@@ -844,71 +874,34 @@ void ReflectanceTask(void *) {
     TickType_t last_wake = xTaskGetTickCount();
 
     for (;;) {
+        digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
+        delay(2);   // >= 1 ms: apagado real, no un pulso de dimming
+        const uint16_t left_ambiente  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+        const uint16_t right_ambiente = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
+        digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
+        delayMicroseconds(200);   // asentar el fototransistor con luz IR ya estable
+        const uint16_t left_raw  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+        const uint16_t right_raw = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
         ReflectanceReading reading;
         reading.timestamp_ms  = millis();
-        reading.left_raw      = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-        reading.right_raw     = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
-        reading.left_on_line  = reading.left_raw  > kDarkThreshold;
-        reading.right_on_line = reading.right_raw > kDarkThreshold;
+        reading.left_raw       = left_raw;
+        reading.right_raw      = right_raw;
+        reading.left_restado   = (int16_t)((int32_t)left_raw  - (int32_t)left_ambiente);
+        reading.right_restado  = (int16_t)((int32_t)right_raw - (int32_t)right_ambiente);
+
+        reading.right_on_line = abs(reading.right_restado) < kBordeRestadoUmbral;
+
+        // IZQUIERDO: sensor confirmado roto en banco -- pegado en 4095 sin
+        // importar superficie NI estado del emisor (restado ronda 0
+        // constante, que bajo este criterio se leería como "negro"). Si
+        // se dejara participar, el lado izquierdo dispararía la evasión
+        // todo el tiempo. Forzado en false hasta reparar el hardware;
+        // left_raw/left_restado se siguen reportando para diagnóstico.
+        reading.left_on_line = false;
 
         PushDropOldest(g_reflectQueue, reading);
-
-        // DIAGNÓSTICO TEMPORAL para recalibrar contra la pista real, usando
-        // Pins::QTR_EMITTER_CTRL para rechazo de luz ambiente: la lectura
-        // "cruda" de arriba (emisor siempre encendido) mezcla lo que
-        // rebota del piso CON cualquier luz ambiente que le llegue al
-        // fototransistor -- si esa componente ambiente es grande, puede
-        // aplanar la diferencia entre negro y gris (parece ser justo lo
-        // que está pasando: der salió casi igual sobre las dos
-        // superficies). Restando una lectura con el emisor APAGADO (solo
-        // ambiente) de una con el emisor PRENDIDO (ambiente + reflejo) se
-        // aísla la parte que de verdad depende del color del piso.
-        // Comparar en banco la columna "restado" contra "crudo" sobre
-        // negro y gris: si separa mucho mejor, conviene migrar
-        // kDarkThreshold a compararse contra ESTE valor en vez del crudo.
-        // Quitar este bloque una vez decidido -- por ahora NO cambia el
-        // comportamiento del robot, solo imprime.
-        {
-            static uint32_t last_ambient_log_ms = 0;
-            if ((uint32_t)(millis() - last_ambient_log_ms) > kAmbientCalibLogMs) {
-                last_ambient_log_ms = millis();
-
-                // OJO: según el datasheet del QTRX-HD, un LOW de 0.5-300 us
-                // en CTRL NO apaga el emisor -- lo interpreta como un
-                // PULSO DE ATENUACIÓN (baja un escalón de 32 en el brillo,
-                // ~3.33%) y lo deja prendido. Solo un LOW sostenido >= 1 ms
-                // apaga los LEDs de verdad. La primera versión de este
-                // diagnóstico usaba 200 us (un pulso de dimming, no un
-                // apagado real) -- por eso "ambiente" y "crudo" salían
-                // casi idénticos: nunca se apagó el emisor de verdad. 2 ms
-                // aquí, con margen sobre el mínimo de 1 ms.
-                digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
-                delay(2);   // >= 1 ms: apagado real, no un pulso de dimming
-                const uint16_t left_ambiente  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-                const uint16_t right_ambiente = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
-
-                // Un LOW >1 ms seguido de HIGH reinicia el emisor a
-                // corriente completa (100%) -- el datasheet lo garantiza
-                // explícitamente, así que no hace falta re-sincronizar
-                // ningún estado de atenuación acá.
-                digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
-                delayMicroseconds(200);   // asentar el fototransistor con luz IR ya estable
-                const uint16_t left_con_luz  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-                const uint16_t right_con_luz = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
-
-                // int32_t: si el sensor está roto (como izq, pegado a
-                // 4095) la resta puede salir rara -- no debe desbordar.
-                const int32_t left_restado  = (int32_t)left_con_luz  - (int32_t)left_ambiente;
-                const int32_t right_restado = (int32_t)right_con_luz - (int32_t)right_ambiente;
-
-                DEBUG_LINK.printf(
-                    "[QTR-cal] crudo: izq=%u der=%u | ambiente(emisor apagado): izq=%u der=%u | "
-                    "restado(con_luz-ambiente): izq=%ld der=%ld\n",
-                    reading.left_raw, reading.right_raw,
-                    left_ambiente, right_ambiente,
-                    (long)left_restado, (long)right_restado);
-            }
-        }
 
         Heartbeat(TaskId::REFLECTANCE);
         vTaskDelayUntil(&last_wake, period);
@@ -1042,10 +1035,11 @@ constexpr uint32_t kEvasionGiroMs      = 500;
 constexpr int kVelocidadGiroMax = 100;
 // Debounce del borde negro: los QTR tienen que reportar on_line de forma
 // CONTINUA durante al menos este tiempo antes de disparar la maniobra de
-// evasión -- pedido explícito para filtrar falsos positivos (kDarkThreshold
-// sigue sin calibrar contra el piso/luz reales). Un solo instante con
-// on_line=true ya no alcanza: si en cualquier momento se deja de detectar,
-// el conteo se reinicia desde cero.
+// evasión -- pedido explícito para filtrar falsos positivos (ruido de un
+// instante, no la calibración en sí: kBordeRestadoUmbral ya está calibrado
+// en banco, ver ReflectanceTask). Un solo instante con on_line=true ya no
+// alcanza: si en cualquier momento se deja de detectar, el conteo se
+// reinicia desde cero.
 constexpr uint32_t kBordeDebounceMs = 50;
 // Mismo criterio de debounce que kBordeDebounceMs, pero para la zona
 // amarilla (sensor de color trasero) en vez del borde negro (QTR) -- ver
@@ -1055,11 +1049,12 @@ constexpr uint32_t kZonaNeutraDebounceMs = 50;
 // cada vez que se vuelve aquí tras un giro de evasión): durante este tiempo
 // se IGNORA por completo la lectura de los QTR y el robot avanza sí o sí.
 // Pedido explícito -- la pista es gris con manchas de suciedad más oscuras
-// que el kDarkThreshold sin calibrar confunde con el borde negro, y sin
-// esto el robot podía ponerse a retroceder desde el segundo 0 sin haber
-// avanzado nunca. kBordeDebounceMs (arriba) filtra ruido de un instante;
-// esto filtra "la mancha bajo el sensor justo en este momento", que puede
-// sostenerse mucho más que 50 ms si el robot no se ha movido todavía.
+// que aunque kBordeRestadoUmbral ya esté calibrado (ver ReflectanceTask)
+// podrían seguir leyendo parecido al borde real, y sin esto el robot podía
+// ponerse a retroceder desde el segundo 0 sin haber avanzado nunca.
+// kBordeDebounceMs (arriba) filtra ruido de un instante; esto filtra "la
+// mancha bajo el sensor justo en este momento", que puede sostenerse mucho
+// más que 50 ms si el robot no se ha movido todavía.
 constexpr uint32_t kIgnorarBordeAlEntrarMs = 1000;
 
 enum class Phase : uint8_t {
@@ -1195,18 +1190,20 @@ void MissionTask(void *pvTeam) {
             }
         }
 
-        // DIAGNÓSTICO TEMPORAL: kDarkThreshold nunca se calibró contra el
-        // piso/luz reales (ver el TODO junto a su declaración). Este log
-        // muestra los valores crudos para comparar contra el umbral.
-        // Quitar una vez que kDarkThreshold quede calibrado en banco.
+        // Log de reflectancia: valores crudos + restado (ver la nota
+        // grande de rechazo de luz ambiente en ReflectanceTask) contra
+        // kBordeRestadoUmbral. izq siempre sale on_line=0 a propósito
+        // (sensor roto, forzado en ReflectanceTask) -- su raw/restado se
+        // imprime solo para seguir monitoreando si algún día se repara.
         {
             static uint32_t last_reflect_log_ms = 0;
             if ((uint32_t)(millis() - last_reflect_log_ms) > 500) {
                 last_reflect_log_ms = millis();
                 DEBUG_LINK.printf(
-                    "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d "
-                    "-> zona_neutra_detectada=%d\n",
-                    last_reflect.left_raw, last_reflect.right_raw, kDarkThreshold,
+                    "[Reflect] crudo: izq=%u der=%u | restado: izq=%d der=%d (umbral=|%d|) "
+                    "on_line: izq=%d der=%d -> zona_neutra_detectada=%d\n",
+                    last_reflect.left_raw, last_reflect.right_raw,
+                    last_reflect.left_restado, last_reflect.right_restado, kBordeRestadoUmbral,
                     last_reflect.left_on_line, last_reflect.right_on_line,
                     zona_neutra_detectada);
             }
