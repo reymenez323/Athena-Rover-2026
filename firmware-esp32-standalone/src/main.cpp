@@ -817,8 +817,7 @@ void ReflectanceTask(void *) {
 //  robot AHORA MISMO, nada más — ni equipo, ni "veo la bandera".
 //    · Piso gris (FLOOR) o sin lectura válida -> apagado.
 //    · Amarillo / rojo / azul                 -> ese mismo color, fijo.
-//    · Negro (borde)                          -> destello alternando
-//                                                 rojo/azul, como alerta.
+//    · Negro (borde)                          -> morado, fijo.
 
 namespace RgbLed {
     constexpr uint8_t CH_R = 4;
@@ -844,14 +843,13 @@ namespace RgbLed {
         PwmWrite(Pins::LED_RGB_B, CH_B, b);
     }
 
-    // Color fijo de las zonas que NO parpadean. BLACK no aparece aquí a
-    // propósito: LedTask lo maneja aparte, alternando rojo/azul.
+    // Color fijo de cada zona -- BLACK incluido, ya no parpadea.
     void ApplyZone(ColorLabel zone) {
         switch (zone) {
             case ColorLabel::YELLOW: SetRaw(255, 170, 0); break;
             case ColorLabel::RED:    SetRaw(255, 0, 0);   break;
             case ColorLabel::BLUE:   SetRaw(0, 0, 255);   break;
-            case ColorLabel::BLACK:
+            case ColorLabel::BLACK:  SetRaw(160, 0, 200); break;   // morado
             case ColorLabel::FLOOR:
             case ColorLabel::UNKNOWN:
             default:
@@ -861,18 +859,11 @@ namespace RgbLed {
     }
 }
 
-// Cuántas vueltas de LedTask dura cada mitad del destello rojo/azul sobre
-// el borde negro. A TaskPeriodMs::LED_STATUS (100 ms) y 3 vueltas por
-// mitad, el ciclo completo dura 600 ms (~1.7 Hz): lo bastante lento para
-// distinguir los dos colores a simple vista, no un borrón.
-constexpr uint32_t kBorderBlinkHalfPeriodTicks = 3;
-
 void LedTask(void *) {
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
 
     ColorLabel zone = ColorLabel::UNKNOWN;
-    uint32_t   blink_tick = 0;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::LED_STATUS);
     TickType_t last_wake = xTaskGetTickCount();
@@ -883,17 +874,7 @@ void LedTask(void *) {
             zone = cmd.zone;
         }
 
-        if (zone == ColorLabel::BLACK) {
-            blink_tick = (blink_tick + 1) % (2 * kBorderBlinkHalfPeriodTicks);
-            if (blink_tick < kBorderBlinkHalfPeriodTicks) {
-                RgbLed::SetRaw(255, 0, 0);
-            } else {
-                RgbLed::SetRaw(0, 0, 255);
-            }
-        } else {
-            blink_tick = 0;
-            RgbLed::ApplyZone(zone);
-        }
+        RgbLed::ApplyZone(zone);
 
         Heartbeat(TaskId::LED_STATUS);
         vTaskDelayUntil(&last_wake, period);
