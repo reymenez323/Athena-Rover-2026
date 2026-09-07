@@ -828,6 +828,10 @@ void ColorSensorTask(void *) {
 
 constexpr uint16_t kDarkThreshold = 2048;   // TODO: calibrar en la pista real
 
+// Periodo del diagnóstico de calibración con rechazo de luz ambiente, ver
+// el bloque "[QTR-cal]" dentro de ReflectanceTask.
+constexpr uint32_t kAmbientCalibLogMs = 500;
+
 void ReflectanceTask(void *) {
     analogReadResolution(12);
     analogSetPinAttenuation(Pins::QTR_LEFT_OUT, ADC_11db);
@@ -848,6 +852,50 @@ void ReflectanceTask(void *) {
         reading.right_on_line = reading.right_raw > kDarkThreshold;
 
         PushDropOldest(g_reflectQueue, reading);
+
+        // DIAGNÓSTICO TEMPORAL para recalibrar contra la pista real, usando
+        // Pins::QTR_EMITTER_CTRL para rechazo de luz ambiente: la lectura
+        // "cruda" de arriba (emisor siempre encendido) mezcla lo que
+        // rebota del piso CON cualquier luz ambiente que le llegue al
+        // fototransistor -- si esa componente ambiente es grande, puede
+        // aplanar la diferencia entre negro y gris (parece ser justo lo
+        // que está pasando: der salió casi igual sobre las dos
+        // superficies). Restando una lectura con el emisor APAGADO (solo
+        // ambiente) de una con el emisor PRENDIDO (ambiente + reflejo) se
+        // aísla la parte que de verdad depende del color del piso.
+        // Comparar en banco la columna "restado" contra "crudo" sobre
+        // negro y gris: si separa mucho mejor, conviene migrar
+        // kDarkThreshold a compararse contra ESTE valor en vez del crudo.
+        // Quitar este bloque una vez decidido -- por ahora NO cambia el
+        // comportamiento del robot, solo imprime.
+        {
+            static uint32_t last_ambient_log_ms = 0;
+            if ((uint32_t)(millis() - last_ambient_log_ms) > kAmbientCalibLogMs) {
+                last_ambient_log_ms = millis();
+
+                digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
+                delayMicroseconds(200);   // asentar el fototransistor sin luz IR propia
+                const uint16_t left_ambiente  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+                const uint16_t right_ambiente = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
+                digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
+                delayMicroseconds(200);
+                const uint16_t left_con_luz  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+                const uint16_t right_con_luz = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
+                // int32_t: si el sensor está roto (como izq, pegado a
+                // 4095) la resta puede salir rara -- no debe desbordar.
+                const int32_t left_restado  = (int32_t)left_con_luz  - (int32_t)left_ambiente;
+                const int32_t right_restado = (int32_t)right_con_luz - (int32_t)right_ambiente;
+
+                DEBUG_LINK.printf(
+                    "[QTR-cal] crudo: izq=%u der=%u | ambiente(emisor apagado): izq=%u der=%u | "
+                    "restado(con_luz-ambiente): izq=%ld der=%ld\n",
+                    reading.left_raw, reading.right_raw,
+                    left_ambiente, right_ambiente,
+                    (long)left_restado, (long)right_restado);
+            }
+        }
 
         Heartbeat(TaskId::REFLECTANCE);
         vTaskDelayUntil(&last_wake, period);
