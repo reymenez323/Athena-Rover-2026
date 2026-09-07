@@ -1042,9 +1042,13 @@ constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
 // se puede seguir saliendo de la pista antes de que el retroceso empiece
 // a traerlo de vuelta.
 constexpr uint32_t kDetenerAntesRetrocesoMs = 200;
-constexpr uint32_t kEvasionRetrocesoMs      = 1000;
+// Valores recuperados de la calibracion sobre el chasis real hecha en
+// pruebas-platformio/01-mantente-en-cuadro (commit b435181): 1.5 s para
+// alejar las cuatro ruedas del borde y 2 s para completar el pivote. Los
+// 500 ms originales eran solo una estimacion y el giro quedaba incompleto.
+constexpr uint32_t kEvasionRetrocesoMs      = 1500;
 constexpr uint32_t kDetenerAntesGiroMs      = 1000;
-constexpr uint32_t kEvasionGiroMs           = 500;
+constexpr uint32_t kEvasionGiroMs           = 2000;
 // Velocidad del giro de evasión -- pedido explícito: máxima velocidad
 // (100%), no kVelocidadAproximacion como el resto de las maniobras de
 // borde.

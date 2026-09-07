@@ -7,13 +7,19 @@ durante `BUSCAR_ZONA_NEUTRA`.
 ## Diferencia con v1-confirmado
 
 En vez de retroceder al instante mientras el borde siga detectándose,
-ejecuta una maniobra fija en dos tiempos y luego retoma la búsqueda:
+ejecuta una maniobra fija en cuatro tiempos y luego retoma la búsqueda:
 
-1. `EVADIR_BORDE_RETROCESO`: retrocede `kEvasionRetrocesoMs` (500 ms).
-2. `EVADIR_BORDE_GIRO`: gira ~180° sobre su propio eje durante
-   `kEvasionGiroMs` (500 ms) — un lado avanza, el otro retrocede.
-3. Vuelve a `BUSCAR_ZONA_NEUTRA` y sigue merodeando hasta encontrar la zona
+1. `EVADIR_BORDE_DETENER_ANTES_RETROCESO`: detiene las cuatro ruedas (200 ms).
+2. `EVADIR_BORDE_RETROCESO`: retrocede `kEvasionRetrocesoMs` (1500 ms).
+3. `EVADIR_BORDE_DETENER_ANTES_GIRO`: vuelve a detener las cuatro ruedas
+   (1000 ms).
+4. `EVADIR_BORDE_GIRO`: gira ~180° sobre su propio eje durante
+   `kEvasionGiroMs` (2000 ms), con ambos lados al 100 % y en sentidos opuestos.
+5. Vuelve a `BUSCAR_ZONA_NEUTRA` y sigue merodeando hasta encontrar la zona
    amarilla.
+
+Los tiempos de retroceso y giro recuperan la calibracion realizada sobre el
+chasis real en `pruebas-platformio/01-mantente-en-cuadro` (commit `b435181`).
 
 La detección del borde negro depende **exclusivamente de los QTR**. Las
 lecturas `BLACK` del TCS34725 se ignoran tanto para la maniobra como para la
