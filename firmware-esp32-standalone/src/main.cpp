@@ -1132,10 +1132,11 @@ constexpr uint8_t  kTofDebounceHits   = 3;    // lecturas seguidas antes de agar
 
 constexpr uint32_t kStartupDelayMs   = 3000;  // tiempo para cargar la llave y ubicar el robot
 constexpr uint32_t kGripperSettleMs  = 400;   // tiempo mecánico para que el servo llegue
-// Retrocede a tiempo fijo justo después de asegurar la llave, antes de
-// empezar a buscar la zona amarilla — pedido explícito del equipo. Variable
-// fácil de ajustar: solo este número, en milisegundos.
-constexpr uint32_t kRetrocesoInicialMs = 3000;
+// Retrocede a tiempo fijo justo DESPUÉS de que el sensor trasero detecta la
+// zona amarilla, para que el frente (y la llave) quede dentro de la zona
+// segura y no más allá de ella. Variable fácil de ajustar: solo este
+// número, en milisegundos.
+constexpr uint32_t kRetrocesoZonaNeutraMs = 3000;
 constexpr uint32_t kSpinBurstMs      = 900;   // barrido: cuánto gira sobre su eje
 constexpr uint32_t kForwardBurstMs   = 700;   // barrido: cuánto avanza entre giros
 constexpr uint32_t kReturnTurnMs     = 1500;  // giro aproximado de 180°, A CALIBRAR EN BANCO
@@ -1143,8 +1144,12 @@ constexpr uint32_t kReturnTurnMs     = 1500;  // giro aproximado de 180°, A CAL
 enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
-    RETROCESO_INICIAL,     // retrocede a tiempo fijo, ya con la llave asegurada
     BUSCAR_ZONA_NEUTRA,
+    // Retrocede a tiempo fijo tras detectar la zona amarilla: el sensor
+    // TRASERO ya la pasó de largo en el instante en que la detecta, así
+    // que sin este paso el frente (y la llave) quedarían más allá de la
+    // zona segura, no dentro.
+    RETROCEDER_A_ZONA_NEUTRA,
     DEPOSITAR_LLAVE,
     BUSCAR_BANDERA,
     AGARRAR_BANDERA,
@@ -1164,7 +1169,7 @@ inline const char *PhaseName(Phase phase) {
     switch (phase) {
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
-        case Phase::RETROCESO_INICIAL:   return "RETROCESO_INICIAL";
+        case Phase::RETROCEDER_A_ZONA_NEUTRA: return "RETROCEDER_A_ZONA_NEUTRA";
         case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
         case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
         case Phase::BUSCAR_BANDERA:      return "BUSCAR_BANDERA";
@@ -1303,23 +1308,8 @@ void MissionTask(void *pvTeam) {
                     gripper.action = GripperAction::CLOSE_LLAVE;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
-                        phase = Mission::Phase::RETROCESO_INICIAL;
-                        phase_started_ms = millis();
-                    }
-                    break;
-                }
-
-                // -- 3b. Retroceso a tiempo fijo, ya con la llave asegurada -
-                // Pedido explícito del equipo. No rompe la regla de "el
-                // gripper cierra antes de que el robot se mueva": ese
-                // requisito ya se cumplió en ASEGURAR_LLAVE, esta es la
-                // primera fase que mueve motores de verdad.
-                case Mission::Phase::RETROCESO_INICIAL: {
-                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kRetrocesoInicialMs) {
                         phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
                         phase_started_ms = millis();
-                    } else {
-                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
                     }
                     break;
                 }
@@ -1330,10 +1320,27 @@ void MissionTask(void *pvTeam) {
                 // hasta que se resuelva el cableado del delantero.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
                     if (last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
-                        phase = Mission::Phase::DEPOSITAR_LLAVE;
+                        phase = Mission::Phase::RETROCEDER_A_ZONA_NEUTRA;
                         phase_started_ms = millis();
                     } else {
                         SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
+                    }
+                    break;
+                }
+
+                // -- 4b. Retroceder para que el FRENTE (no solo el sensor
+                // trasero) quede dentro de la zona amarilla --------------
+                // El trasero recién detecta el amarillo cuando ya lo pasó
+                // de largo -- sin este paso, la llave (al frente) quedaría
+                // más allá de la zona segura, no dentro. Tiempo fijo, sin
+                // sensor: Mission::kRetrocesoZonaNeutraMs es el único número
+                // que hay que ajustar en banco según cuánto se pasa.
+                case Mission::Phase::RETROCEDER_A_ZONA_NEUTRA: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kRetrocesoZonaNeutraMs) {
+                        phase = Mission::Phase::DEPOSITAR_LLAVE;
+                        phase_started_ms = millis();
+                    } else {
+                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
                     }
                     break;
                 }
