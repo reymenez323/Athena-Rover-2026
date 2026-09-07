@@ -975,6 +975,13 @@ constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
 // de ajustar en banco según cuánto se pasa/gira de verdad.
 constexpr uint32_t kEvasionRetrocesoMs = 500;
 constexpr uint32_t kEvasionGiroMs      = 500;
+// Debounce del borde negro: los QTR tienen que reportar on_line de forma
+// CONTINUA durante al menos este tiempo antes de disparar la maniobra de
+// evasión -- pedido explícito para filtrar falsos positivos (kDarkThreshold
+// sigue sin calibrar contra el piso/luz reales). Un solo instante con
+// on_line=true ya no alcanza: si en cualquier momento se deja de detectar,
+// el conteo se reinicia desde cero.
+constexpr uint32_t kBordeDebounceMs = 50;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
@@ -1043,6 +1050,13 @@ void MissionTask(void *pvTeam) {
     // (ver el switch más abajo): una vez en DETENER_ZONA_NEUTRA en adelante
     // el estado de este cerrojo ya no se vuelve a consultar.
     bool zona_neutra_detectada = false;
+
+    // Debounce del borde negro (ver Mission::kBordeDebounceMs): 0 = no se
+    // está detectando borde ahora mismo; en cuanto on_line se pone true,
+    // guarda el millis() de ESE instante y no se reinicia hasta que
+    // on_line vuelva a false -- así (millis() - esto) mide cuánto lleva
+    // detectándose SIN INTERRUPCIÓN, no cuántas veces se detectó.
+    uint32_t borde_detectado_desde_ms = 0;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
@@ -1154,12 +1168,26 @@ void MissionTask(void *pvTeam) {
                 // a mandar el robot para atrás en cuanto esta fase por fin
                 // se ejecute de verdad.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
-                    if (last_reflect.left_on_line || last_reflect.right_on_line) {
-                        phase = Mission::Phase::EVADIR_BORDE_RETROCESO;
-                        phase_started_ms = millis();
+                    // Debounce (Mission::kBordeDebounceMs, ver su
+                    // declaración): un solo instante con on_line=true no
+                    // dispara la evasión -- tiene que sostenerse SIN
+                    // INTERRUPCIÓN al menos ese tiempo. Mientras se está
+                    // confirmando (o si no hay borde en absoluto) el robot
+                    // sigue avanzando normalmente.
+                    const bool en_borde = last_reflect.left_on_line || last_reflect.right_on_line;
+                    if (en_borde) {
+                        if (borde_detectado_desde_ms == 0) {
+                            borde_detectado_desde_ms = millis();
+                        } else if ((uint32_t)(millis() - borde_detectado_desde_ms) >= Mission::kBordeDebounceMs) {
+                            phase = Mission::Phase::EVADIR_BORDE_RETROCESO;
+                            phase_started_ms = millis();
+                            borde_detectado_desde_ms = 0;
+                            break;
+                        }
                     } else {
-                        SetDrive(motor, -Mission::kVelocidadCrucero, -Mission::kVelocidadCrucero);
+                        borde_detectado_desde_ms = 0;
                     }
+                    SetDrive(motor, -Mission::kVelocidadCrucero, -Mission::kVelocidadCrucero);
                     break;
                 }
 
