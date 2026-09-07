@@ -1023,12 +1023,19 @@ constexpr uint32_t kFullStopMs       = 400;
 // segura y no más allá de ella. Variable fácil de ajustar: solo este
 // número, en milisegundos.
 constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
-// Evasión de borde negro, en dos tiempos fijos (sin sensor, igual criterio
-// que kRetrocesoZonaNeutraMs): retroceder kEvasionRetrocesoMs y luego girar
-// ~180° durante kEvasionGiroMs antes de retomar la búsqueda. Números fáciles
-// de ajustar en banco según cuánto se pasa/gira de verdad.
-constexpr uint32_t kEvasionRetrocesoMs = 500;
-constexpr uint32_t kEvasionGiroMs      = 500;
+// Evasión de borde negro, en CUATRO tiempos fijos (sin sensor, igual
+// criterio que kRetrocesoZonaNeutraMs): full stop, retroceder, full stop
+// otra vez, y luego girar ~180° antes de retomar la búsqueda. Números
+// fáciles de ajustar en banco según cuánto se pasa/gira de verdad.
+//
+// Los dos full stop (antes de retroceder, y antes de girar) son pedido
+// explícito: detenerse por completo (motor en STOP, no una frenada a
+// mitad de un SetDrive) antes de cada cambio de sentido de marcha, mismo
+// criterio que kFullStopMs para la zona amarilla.
+constexpr uint32_t kDetenerAntesRetrocesoMs = 1000;
+constexpr uint32_t kEvasionRetrocesoMs      = 2000;
+constexpr uint32_t kDetenerAntesGiroMs      = 1000;
+constexpr uint32_t kEvasionGiroMs           = 500;
 // Velocidad del giro de evasión -- pedido explícito: máxima velocidad
 // (100%), no kVelocidadAproximacion como el resto de las maniobras de
 // borde.
@@ -1061,9 +1068,12 @@ enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
     BUSCAR_ZONA_NEUTRA,
-    // Borde negro detectado durante BUSCAR_ZONA_NEUTRA: retroceder, girar
-    // ~180°, y volver a BUSCAR_ZONA_NEUTRA a seguir merodeando.
+    // Borde negro detectado durante BUSCAR_ZONA_NEUTRA: full stop,
+    // retroceder, full stop otra vez, girar ~180°, y volver a
+    // BUSCAR_ZONA_NEUTRA a seguir merodeando.
+    EVADIR_BORDE_DETENER_ANTES_RETROCESO,
     EVADIR_BORDE_RETROCESO,
+    EVADIR_BORDE_DETENER_ANTES_GIRO,
     EVADIR_BORDE_GIRO,
     // Full stop al detectar la zona amarilla, antes de retroceder -- ver
     // kFullStopMs.
@@ -1084,7 +1094,9 @@ inline const char *PhaseName(Phase phase) {
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
         case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
+        case Phase::EVADIR_BORDE_DETENER_ANTES_RETROCESO: return "EVADIR_BORDE_DETENER_ANTES_RETROCESO";
         case Phase::EVADIR_BORDE_RETROCESO: return "EVADIR_BORDE_RETROCESO";
+        case Phase::EVADIR_BORDE_DETENER_ANTES_GIRO: return "EVADIR_BORDE_DETENER_ANTES_GIRO";
         case Phase::EVADIR_BORDE_GIRO:   return "EVADIR_BORDE_GIRO";
         case Phase::DETENER_ZONA_NEUTRA: return "DETENER_ZONA_NEUTRA";
         case Phase::RETROCEDER_A_ZONA_NEUTRA: return "RETROCEDER_A_ZONA_NEUTRA";
@@ -1284,7 +1296,7 @@ void MissionTask(void *pvTeam) {
                         if (borde_detectado_desde_ms == 0) {
                             borde_detectado_desde_ms = millis();
                         } else if ((uint32_t)(millis() - borde_detectado_desde_ms) >= Mission::kBordeDebounceMs) {
-                            phase = Mission::Phase::EVADIR_BORDE_RETROCESO;
+                            phase = Mission::Phase::EVADIR_BORDE_DETENER_ANTES_RETROCESO;
                             phase_started_ms = millis();
                             borde_detectado_desde_ms = 0;
                             break;
@@ -1296,14 +1308,27 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 4·i. Borde negro: retroceder a tiempo fijo -------------
+                // -- 4·i. Borde negro: full stop antes de retroceder --------
+                // Pedido explícito: detenerse por completo (motor en STOP,
+                // no una frenada a mitad de un SetDrive) antes de invertir
+                // el sentido de marcha. motor se queda en su valor por
+                // defecto (STOP): no hace falta llamar a SetDrive aquí.
+                case Mission::Phase::EVADIR_BORDE_DETENER_ANTES_RETROCESO: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kDetenerAntesRetrocesoMs) {
+                        phase = Mission::Phase::EVADIR_BORDE_RETROCESO;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // -- 4·ii. Borde negro: retroceder a tiempo fijo ------------
                 // Mismo mecanismo (signo negativo + invertir_direccion) ya
                 // confirmado en banco para RETROCEDER_A_ZONA_NEUTRA, más
                 // abajo -- reutilizado tal cual, sin inventar una tercera
                 // combinación de signo/flag.
                 case Mission::Phase::EVADIR_BORDE_RETROCESO: {
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kEvasionRetrocesoMs) {
-                        phase = Mission::Phase::EVADIR_BORDE_GIRO;
+                        phase = Mission::Phase::EVADIR_BORDE_DETENER_ANTES_GIRO;
                         phase_started_ms = millis();
                     } else {
                         SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion,
@@ -1312,7 +1337,19 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 4·ii. Borde negro: gira ~180° SIEMPRE A LA DERECHA -----
+                // -- 4·iii. Borde negro: full stop antes de girar -----------
+                // Mismo criterio que EVADIR_BORDE_DETENER_ANTES_RETROCESO,
+                // arriba: parar por completo antes del siguiente cambio de
+                // sentido (esta vez, antes de girar).
+                case Mission::Phase::EVADIR_BORDE_DETENER_ANTES_GIRO: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kDetenerAntesGiroMs) {
+                        phase = Mission::Phase::EVADIR_BORDE_GIRO;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // -- 4·iv. Borde negro: gira ~180° SIEMPRE A LA DERECHA -----
                 // Pedido explícito: siempre gira hacia la derecha (nunca
                 // hacia la izquierda, sin importar de qué lado vino el
                 // borde) y a velocidad MÁXIMA en ambos lados
