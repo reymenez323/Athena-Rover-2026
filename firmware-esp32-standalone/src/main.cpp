@@ -962,11 +962,21 @@ constexpr uint32_t kFullStopMs       = 400;
 // segura y no más allá de ella. Variable fácil de ajustar: solo este
 // número, en milisegundos.
 constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
+// Evasión de borde negro, en dos tiempos fijos (sin sensor, igual criterio
+// que kRetrocesoZonaNeutraMs): retroceder kEvasionRetrocesoMs y luego girar
+// ~180° durante kEvasionGiroMs antes de retomar la búsqueda. Números fáciles
+// de ajustar en banco según cuánto se pasa/gira de verdad.
+constexpr uint32_t kEvasionRetrocesoMs = 500;
+constexpr uint32_t kEvasionGiroMs      = 500;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
     BUSCAR_ZONA_NEUTRA,
+    // Borde negro detectado durante BUSCAR_ZONA_NEUTRA: retroceder, girar
+    // ~180°, y volver a BUSCAR_ZONA_NEUTRA a seguir merodeando.
+    EVADIR_BORDE_RETROCESO,
+    EVADIR_BORDE_GIRO,
     // Full stop al detectar la zona amarilla, antes de retroceder -- ver
     // kFullStopMs.
     DETENER_ZONA_NEUTRA,
@@ -986,6 +996,8 @@ inline const char *PhaseName(Phase phase) {
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
         case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
+        case Phase::EVADIR_BORDE_RETROCESO: return "EVADIR_BORDE_RETROCESO";
+        case Phase::EVADIR_BORDE_GIRO:   return "EVADIR_BORDE_GIRO";
         case Phase::DETENER_ZONA_NEUTRA: return "DETENER_ZONA_NEUTRA";
         case Phase::RETROCEDER_A_ZONA_NEUTRA: return "RETROCEDER_A_ZONA_NEUTRA";
         case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
@@ -1020,10 +1032,9 @@ void MissionTask(void *pvTeam) {
     // pedido explícito: "que se detenga por completo al detectar la zona,
     // sin importar si luego empezaste a leer otra cosa" (ej. por inercia
     // el robot sigue deslizándose un poco y el sensor deja de ver amarillo
-    // un instante después). Una vez puesto, también apaga la evasión de
-    // borde (ver puede_evadir más abajo): el resto de la secuencia
-    // (parada, retroceso, soltar la llave) es una maniobra fija que no
-    // debe abortarse por una lectura de reflectancia.
+    // un instante después). Solo importa mientras phase==BUSCAR_ZONA_NEUTRA
+    // (ver el switch más abajo): una vez en DETENER_ZONA_NEUTRA en adelante
+    // el estado de este cerrojo ya no se vuelve a consultar.
     bool zona_neutra_detectada = false;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
@@ -1056,15 +1067,12 @@ void MissionTask(void *pvTeam) {
         if (Mission::kMotionEnabled) {
 
         // --- 0b. Cerrojo de zona neutra: detenerse YA, para siempre -------
-        // Se evalúa ANTES que la evasión de borde a propósito: si se
-        // dejara adentro del "if (puede_evadir)" de más abajo, una lectura
-        // de reflectancia que diera evadiendo=true en el mismo instante
-        // taparía esta detección (evadiendo=true se salta todo el
-        // switch(phase), incluida la transición a DETENER_ZONA_NEUTRA) y
-        // el robot seguiría de largo. Aquí no hay ese riesgo: en cuanto
-        // ve amarillo una vez, cambia de fase inmediatamente y ya no
-        // vuelve a evaluar esta condición (zona_neutra_detectada nunca
-        // vuelve a false).
+        // Se evalúa ANTES del switch(phase) de abajo: en cuanto el sensor
+        // trasero ve amarillo una vez estando en BUSCAR_ZONA_NEUTRA, esto
+        // cambia de fase inmediatamente y zona_neutra_detectada nunca
+        // vuelve a false -- así el resto de la secuencia (parada,
+        // retroceso, soltar la llave) no se puede reabrir por una lectura
+        // posterior, sin importar qué color se lea después.
         if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA &&
             last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
             zona_neutra_detectada = true;
@@ -1072,38 +1080,8 @@ void MissionTask(void *pvTeam) {
             phase_started_ms = millis();
         }
 
-        // --- 1. PRIORIDAD MÁXIMA: no salirse de la pista -------------------
-        // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase...
-        // EXCEPTO mientras se asegura la llave, Y EXCEPTO una vez que ya se
-        // detectó la zona neutra (ver zona_neutra_detectada arriba): a
-        // partir de ahí, parar/retroceder/soltar es una maniobra fija que
-        // no debe interrumpirse por una lectura de reflectancia. Sin el
-        // freno de ASEGURAR_LLAVE, un umbral de reflectancia sin calibrar
-        // (ver kDarkThreshold) podía hacer que el robot arrancara
-        // moviéndose para atrás desde el segundo 0, sin que el
-        // switch(phase) de más abajo llegara siquiera a mandar CLOSE_LLAVE
-        // (evadiendo=true se salta ese switch por completo).
-        const bool puede_moverse = (phase != Mission::Phase::ARRANQUE &&
-                                     phase != Mission::Phase::ASEGURAR_LLAVE);
-        const bool puede_evadir = puede_moverse && !zona_neutra_detectada;
-        bool evadiendo = false;
-        if (puede_evadir) {
-            if (last_reflect.left_on_line && last_reflect.right_on_line) {
-                SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
-                evadiendo = true;
-            } else if (last_reflect.left_on_line) {
-                SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion / 3);
-                evadiendo = true;
-            } else if (last_reflect.right_on_line) {
-                SetDrive(motor, -Mission::kVelocidadAproximacion / 3, -Mission::kVelocidadAproximacion);
-                evadiendo = true;
-            }
-        }
-
         // DIAGNÓSTICO TEMPORAL: kDarkThreshold nunca se calibró contra el
-        // piso/luz reales (ver el TODO junto a su declaración). Si el robot
-        // solo retrocede y el gripper nunca recibe comandos, lo primero a
-        // revisar es si "evadiendo" da true todo el tiempo — este log
+        // piso/luz reales (ver el TODO junto a su declaración). Este log
         // muestra los valores crudos para comparar contra el umbral.
         // Quitar una vez que kDarkThreshold quede calibrado en banco.
         {
@@ -1112,10 +1090,10 @@ void MissionTask(void *pvTeam) {
                 last_reflect_log_ms = millis();
                 DEBUG_LINK.printf(
                     "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d "
-                    "-> puede_moverse=%d puede_evadir=%d evadiendo=%d zona_neutra_detectada=%d\n",
+                    "-> zona_neutra_detectada=%d\n",
                     last_reflect.left_raw, last_reflect.right_raw, kDarkThreshold,
                     last_reflect.left_on_line, last_reflect.right_on_line,
-                    puede_moverse, puede_evadir, evadiendo, zona_neutra_detectada);
+                    zona_neutra_detectada);
             }
         }
 
@@ -1126,8 +1104,7 @@ void MissionTask(void *pvTeam) {
             last_logged_phase = phase;
         }
 
-        if (!evadiendo) {
-            switch (phase) {
+        switch (phase) {
 
                 // -- 2. Cuenta regresiva para cargar la llave a mano --------
                 case Mission::Phase::ARRANQUE: {
@@ -1149,18 +1126,66 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 4. Avanzar hasta pisar la zona amarilla ----------------
+                // -- 4. Avanzar/merodear hasta pisar la zona amarilla -------
                 // Usa el sensor TRASERO: el delantero se retiró por
                 // completo junto con el bus I2C nº0 (ver aviso al
                 // principio del archivo). La transición a
                 // DETENER_ZONA_NEUTRA ya no se decide aquí: la maneja el
-                // cerrojo zona_neutra_detectada, más arriba, ANTES de la
-                // evasión de borde -- si se dejara aquí, evadiendo=true
-                // podría saltarse este case entero justo el instante en
-                // que se detecta el amarillo. Si seguimos viendo esta
-                // fase, es que todavía no se detectó: seguir avanzando.
+                // cerrojo zona_neutra_detectada, más arriba. Si seguimos
+                // viendo esta fase, es que todavía no se detectó el
+                // amarillo: seguir avanzando, salvo que el borde negro
+                // interrumpa con la maniobra de evasión de abajo.
+                //
+                // OJO CON EL SIGNO: antes se mandaba kVelocidadCrucero en
+                // POSITIVO, pero nunca se probó de verdad en banco porque
+                // la evasión de borde (ahora reemplazada por las dos fases
+                // de abajo) tapaba este case el 100% del tiempo en toda
+                // prueba hecha hasta ahora. La evasión vieja usaba
+                // velocidad NEGATIVA sin invertir_direccion y eso sí se
+                // confirmó en banco que avanza físicamente -- por eso este
+                // avance usa el mismo signo negativo ahora, para no volver
+                // a mandar el robot para atrás en cuanto esta fase por fin
+                // se ejecute de verdad.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
-                    SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
+                    if (last_reflect.left_on_line || last_reflect.right_on_line) {
+                        phase = Mission::Phase::EVADIR_BORDE_RETROCESO;
+                        phase_started_ms = millis();
+                    } else {
+                        SetDrive(motor, -Mission::kVelocidadCrucero, -Mission::kVelocidadCrucero);
+                    }
+                    break;
+                }
+
+                // -- 4·i. Borde negro: retroceder a tiempo fijo -------------
+                // Mismo mecanismo (signo negativo + invertir_direccion) ya
+                // confirmado en banco para RETROCEDER_A_ZONA_NEUTRA, más
+                // abajo -- reutilizado tal cual, sin inventar una tercera
+                // combinación de signo/flag.
+                case Mission::Phase::EVADIR_BORDE_RETROCESO: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kEvasionRetrocesoMs) {
+                        phase = Mission::Phase::EVADIR_BORDE_GIRO;
+                        phase_started_ms = millis();
+                    } else {
+                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion,
+                                 /*invertir_direccion=*/true);
+                    }
+                    break;
+                }
+
+                // -- 4·ii. Borde negro: girar ~180° y volver a merodear -----
+                // Un lado en sentido "avanza" (negativo) y el otro en
+                // sentido "retrocede" (positivo, sin necesitar
+                // invertir_direccion): con las dos ruedas de un lado
+                // girando al revés que las del otro, el robot rota sobre
+                // su propio eje en vez de desplazarse. Al terminar, vuelve
+                // a BUSCAR_ZONA_NEUTRA a seguir merodeando.
+                case Mission::Phase::EVADIR_BORDE_GIRO: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kEvasionGiroMs) {
+                        phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
+                        phase_started_ms = millis();
+                    } else {
+                        SetDrive(motor, -Mission::kVelocidadAproximacion, Mission::kVelocidadAproximacion);
+                    }
                     break;
                 }
 
@@ -1231,7 +1256,6 @@ void MissionTask(void *pvTeam) {
                 case Mission::Phase::TERMINADO:
                 default:
                     break;
-            }
         }
 
         } // if (Mission::kMotionEnabled)
