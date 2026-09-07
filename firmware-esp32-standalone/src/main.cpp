@@ -619,7 +619,13 @@ void MotorSetup(const Motor &m) {
 
 void MotorApply(const Motor &m, int speed) {
     speed = constrain(speed, -100, 100);
-    const bool forward = (speed >= 0);
+    // Confirmado en banco: con `speed` positivo (lo que la misión manda
+    // para "adelante") el robot entero iba para atrás -- los 4 motores por
+    // igual, no uno solo (ese caso ya está resuelto aparte, en kMotorFL).
+    // Se corrige acá, en el único lugar que traduce signo -> dirección
+    // física, así que el sentido de "forward" queda invertido a propósito
+    // respecto al signo de `speed`.
+    const bool forward = (speed < 0);
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);
@@ -1500,6 +1506,25 @@ void setup() {
     pinMode(Pins::TEAM_SWITCH_BLUE, INPUT_PULLUP);
     pinMode(Pins::TEAM_SWITCH_RED,  INPUT_PULLUP);
     delay(5);   // deja asentar la lectura tras habilitar los pull-up
+
+    // Gripper a 0 (abierto) apenas se pueda, ANTES de elegir equipo. Pedido
+    // explícito: mientras el switch siga en el centro, el gripper no debe
+    // quedar en lo que sea que haya dejado un ciclo de energía anterior.
+    // Se abre aquí el bus 1 (donde vive el PCA9685) con un intento único,
+    // sin bloquear si falla: no hay ninguna otra tarea corriendo todavía
+    // (nada se crea hasta después del switch), así que no hace falta el
+    // mutex de g_i2c1Mutex para esto — no hay con quién competir por el bus
+    // en este punto. GripperTask, más abajo, vuelve a abrir el bus y a
+    // reafirmar "abierto" como su primer gesto de todas formas.
+    Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);
+    Wire1.setTimeOut(25);
+    if (Pca9685::Init(Pwm::SERVO_FREQ_HZ)) {
+        Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+        DEBUG_LINK.println("[Setup] Gripper a 0 (abierto) mientras se espera el switch de equipo.");
+    } else {
+        DEBUG_LINK.println("[Setup] PCA9685 no respondio al intentar abrir el gripper temprano "
+                            "-- GripperTask lo reintentara despues de elegir equipo.");
+    }
 
     RgbLed::Setup();
     DEBUG_LINK.println("[Setup] Esperando el switch de equipo (posicion 0 = esperando)...");
