@@ -577,13 +577,16 @@ void MotorSetup(const Motor &m) {
 
 void MotorApply(const Motor &m, int speed) {
     speed = constrain(speed, -100, 100);
-    // Confirmado en banco: con `speed` positivo (lo que la misión manda
-    // para "adelante") el robot entero iba para atrás -- los 4 motores por
-    // igual, no uno solo (ese caso ya está resuelto aparte, en kMotorFL).
-    // Se corrige acá, en el único lugar que traduce signo -> dirección
-    // física, así que el sentido de "forward" queda invertido a propósito
-    // respecto al signo de `speed`.
-    const bool forward = (speed < 0);
+    // RECONFIRMADO EN BANCO (otra vez): con `speed` NEGATIVO -- lo que
+    // Mission:: manda para "retroceder" (RETROCEDER_A_ZONA_NEUTRA, evasión
+    // de borde) -- el robot iba para ADELANTE. Es el sentido contrario al
+    // que se había confirmado la vez anterior (ver historial de commits):
+    // lo más probable es que algún cable IN1/IN2 se haya movido durante
+    // tanto manoseo de banco entre esa prueba y esta. Se corrige acá, en
+    // el único lugar que traduce signo -> dirección física. Si esto vuelve
+    // a invertirse en una prueba futura, revisar el cableado físico de
+    // IN1/IN2 en vez de voltear este booleano una tercera vez a ciegas.
+    const bool forward = (speed >= 0);
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);
