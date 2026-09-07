@@ -575,18 +575,37 @@ void MotorSetup(const Motor &m) {
     PwmWrite(m.en, m.ledc_channel, 0);
 }
 
+// CÓMO CONTROLA DIRECCIÓN UN L298N (para no seguir adivinando el signo a
+// ciegas): cada canal tiene DOS entradas lógicas (IN1/IN2 aquí) más una de
+// habilitación PWM (EN, aquí `m.en`). La tabla de verdad real del puente H
+// es:
+//   IN1=HIGH, IN2=LOW  -> gira en un sentido      (a esto llamamos "forward")
+//   IN1=LOW,  IN2=HIGH -> gira en el sentido contrario ("no forward")
+//   IN1=IN2=LOW        -> rueda libre (freno suave, sin corriente)
+//   IN1=IN2=HIGH       -> frenado activo (cortocircuita el motor)
+//   EN en 0% de duty   -> el motor NO gira sin importar IN1/IN2 -- por eso
+//                         `PwmWrite` recibe abs(speed): la magnitud siempre
+//                         es un duty positivo, el signo de `speed` SOLO
+//                         decide cuál de las dos combinaciones de IN1/IN2
+//                         se manda, nunca "un PWM negativo" (eso no existe).
+//
+// Con esto claro: el código de abajo YA implementa la tabla de verdad
+// correctamente (nunca fue el bug). Lo que puede estar mal es cuál de las
+// dos combinaciones corresponde a "avanza" en la realidad -- y eso NO se
+// resuelve volteando este booleano cada vez que una sola fase se ve mal:
+// la última prueba (invertir para arreglar RETROCEDER_A_ZONA_NEUTRA) hizo
+// que el robot arrancara mal en TODAS las fases, así que el booleano se
+// revirtió a su valor anterior. Antes de tocarlo de nuevo, hay que medir
+// en banco, RUEDA POR RUEDA (no las 4 a la vez), qué combinación de IN1/IN2
+// corresponde a qué sentido físico -- kMotorFL ya tiene IN1/IN2
+// intercambiados a propósito por su cableado físico (ver el comentario
+// junto a su declaración), así que puede que no todas las ruedas compartan
+// la misma convención y el problema no sea este booleano global en
+// absoluto, sino cuál motor específico está mal cableado o mal
+// compensado.
 void MotorApply(const Motor &m, int speed) {
     speed = constrain(speed, -100, 100);
-    // RECONFIRMADO EN BANCO (otra vez): con `speed` NEGATIVO -- lo que
-    // Mission:: manda para "retroceder" (RETROCEDER_A_ZONA_NEUTRA, evasión
-    // de borde) -- el robot iba para ADELANTE. Es el sentido contrario al
-    // que se había confirmado la vez anterior (ver historial de commits):
-    // lo más probable es que algún cable IN1/IN2 se haya movido durante
-    // tanto manoseo de banco entre esa prueba y esta. Se corrige acá, en
-    // el único lugar que traduce signo -> dirección física. Si esto vuelve
-    // a invertirse en una prueba futura, revisar el cableado físico de
-    // IN1/IN2 en vez de voltear este booleano una tercera vez a ciegas.
-    const bool forward = (speed >= 0);
+    const bool forward = (speed < 0);
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);
