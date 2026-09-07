@@ -873,13 +873,26 @@ void ReflectanceTask(void *) {
             if ((uint32_t)(millis() - last_ambient_log_ms) > kAmbientCalibLogMs) {
                 last_ambient_log_ms = millis();
 
+                // OJO: según el datasheet del QTRX-HD, un LOW de 0.5-300 us
+                // en CTRL NO apaga el emisor -- lo interpreta como un
+                // PULSO DE ATENUACIÓN (baja un escalón de 32 en el brillo,
+                // ~3.33%) y lo deja prendido. Solo un LOW sostenido >= 1 ms
+                // apaga los LEDs de verdad. La primera versión de este
+                // diagnóstico usaba 200 us (un pulso de dimming, no un
+                // apagado real) -- por eso "ambiente" y "crudo" salían
+                // casi idénticos: nunca se apagó el emisor de verdad. 2 ms
+                // aquí, con margen sobre el mínimo de 1 ms.
                 digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
-                delayMicroseconds(200);   // asentar el fototransistor sin luz IR propia
+                delay(2);   // >= 1 ms: apagado real, no un pulso de dimming
                 const uint16_t left_ambiente  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
                 const uint16_t right_ambiente = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
 
+                // Un LOW >1 ms seguido de HIGH reinicia el emisor a
+                // corriente completa (100%) -- el datasheet lo garantiza
+                // explícitamente, así que no hace falta re-sincronizar
+                // ningún estado de atenuación acá.
                 digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
-                delayMicroseconds(200);
+                delayMicroseconds(200);   // asentar el fototransistor con luz IR ya estable
                 const uint16_t left_con_luz  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
                 const uint16_t right_con_luz = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
 
