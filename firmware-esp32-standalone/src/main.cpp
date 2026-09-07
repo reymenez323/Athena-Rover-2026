@@ -1132,6 +1132,10 @@ constexpr uint8_t  kTofDebounceHits   = 3;    // lecturas seguidas antes de agar
 
 constexpr uint32_t kStartupDelayMs   = 3000;  // tiempo para cargar la llave y ubicar el robot
 constexpr uint32_t kGripperSettleMs  = 400;   // tiempo mecánico para que el servo llegue
+// Retrocede a tiempo fijo justo después de asegurar la llave, antes de
+// empezar a buscar la zona amarilla — pedido explícito del equipo. Variable
+// fácil de ajustar: solo este número, en milisegundos.
+constexpr uint32_t kRetrocesoInicialMs = 3000;
 constexpr uint32_t kSpinBurstMs      = 900;   // barrido: cuánto gira sobre su eje
 constexpr uint32_t kForwardBurstMs   = 700;   // barrido: cuánto avanza entre giros
 constexpr uint32_t kReturnTurnMs     = 1500;  // giro aproximado de 180°, A CALIBRAR EN BANCO
@@ -1139,6 +1143,7 @@ constexpr uint32_t kReturnTurnMs     = 1500;  // giro aproximado de 180°, A CAL
 enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
+    RETROCESO_INICIAL,     // retrocede a tiempo fijo, ya con la llave asegurada
     BUSCAR_ZONA_NEUTRA,
     DEPOSITAR_LLAVE,
     BUSCAR_BANDERA,
@@ -1159,6 +1164,7 @@ inline const char *PhaseName(Phase phase) {
     switch (phase) {
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
+        case Phase::RETROCESO_INICIAL:   return "RETROCESO_INICIAL";
         case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
         case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
         case Phase::BUSCAR_BANDERA:      return "BUSCAR_BANDERA";
@@ -1297,15 +1303,33 @@ void MissionTask(void *pvTeam) {
                     gripper.action = GripperAction::CLOSE_LLAVE;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
-                        phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
+                        phase = Mission::Phase::RETROCESO_INICIAL;
                         phase_started_ms = millis();
                     }
                     break;
                 }
 
+                // -- 3b. Retroceso a tiempo fijo, ya con la llave asegurada -
+                // Pedido explícito del equipo. No rompe la regla de "el
+                // gripper cierra antes de que el robot se mueva": ese
+                // requisito ya se cumplió en ASEGURAR_LLAVE, esta es la
+                // primera fase que mueve motores de verdad.
+                case Mission::Phase::RETROCESO_INICIAL: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kRetrocesoInicialMs) {
+                        phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
+                        phase_started_ms = millis();
+                    } else {
+                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
+                    }
+                    break;
+                }
+
                 // -- 4. Avanzar hasta pisar la zona amarilla ----------------
+                // Usa el sensor TRASERO: el delantero no está midiendo bien
+                // (ver el diagnóstico en ColorSensorTask) -- cambio temporal
+                // hasta que se resuelva el cableado del delantero.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
-                    if (last_color.front_valid && last_color.front == ColorLabel::YELLOW) {
+                    if (last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
                         phase = Mission::Phase::DEPOSITAR_LLAVE;
                         phase_started_ms = millis();
                     } else {
@@ -1395,8 +1419,9 @@ void MissionTask(void *pvTeam) {
                 }
 
                 // -- 8b. Avanzar hasta pisar la zona del propio equipo ------
+                // Sensor TRASERO -- ver la nota en BUSCAR_ZONA_NEUTRA.
                 case Mission::Phase::RETORNAR_AVANZANDO: {
-                    if (last_color.front_valid && last_color.front == Mission::ZonaPropia(team)) {
+                    if (last_color.back_valid && last_color.back == Mission::ZonaPropia(team)) {
                         phase = Mission::Phase::ENTREGAR;
                         phase_started_ms = millis();
                     } else {
@@ -1428,8 +1453,10 @@ void MissionTask(void *pvTeam) {
         xQueueOverwrite(g_motorCmdQueue, &motor);
         if (send_gripper) xQueueSend(g_gripperCmdQueue, &gripper, 0);
 
+        // Sensor TRASERO -- ver la nota en BUSCAR_ZONA_NEUTRA: el delantero
+        // no está midiendo bien, así que el LED muestra lo que ve el trasero.
         LedCommand led;
-        led.zone = last_color.front_valid ? last_color.front : ColorLabel::UNKNOWN;
+        led.zone = last_color.back_valid ? last_color.back : ColorLabel::UNKNOWN;
         xQueueOverwrite(g_ledCmdQueue, &led);
 
         Heartbeat(TaskId::MISSION);
