@@ -1621,7 +1621,16 @@ void setup() {
     // Los dos buses I2C se abren aquí, ANTES de lanzar las tareas, igual que
     // en firmware-esp32/: así ninguna tarea tiene que inicializar hardware
     // compartido por su cuenta.
-    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // TCS34725 delantero + VL53L1X
+    //
+    // DIAGNÓSTICO TEMPORAL: bus 0 (TCS34725 delantero + VL53L1X) sin abrir
+    // a propósito -- para descartar que algo en ese bus (ColorSensorTask o
+    // TofSensorTask tocando un Wire nunca inicializado) esté colgando el
+    // sistema y por eso nunca se ven los logs de [Mission]/[Reflect]. Con
+    // esto comentado, ColorSensorTask/TofSensorTask van a fallar todas sus
+    // operaciones de bus 0 (esperado, no es un problema en sí), pero el
+    // resto del sistema debería seguir funcionando si el problema real
+    // estaba ahí. Restaurar la línea de Wire.begin() una vez descartado.
+    // Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL, 400000);   // TCS34725 delantero + VL53L1X
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL, 400000);  // TCS34725 trasero + PCA9685
     Wire.setTimeOut(25);
     Wire1.setTimeOut(25);
