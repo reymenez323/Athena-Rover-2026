@@ -10,12 +10,17 @@ alcance acotado a propósito para esta prueba.
 ## Secuencia de misión
 
 0. `ARRANQUE`: cuenta regresiva de 3 s para cargar la llave y ubicar el robot.
-1. `ASEGURAR_LLAVE`: cierra la pinza sobre la llave.
-2. `BUSCAR_ZONA_NEUTRA`: avanza **en línea recta** (sin QTR, sin evasión de
-   borde) hasta que el color activo (ver abajo) sea AMARILLO.
-3. `DETENER_ZONA_NEUTRA`: full stop (400 ms) antes de soltar — sin
-   retroceso, ver el porqué más abajo.
-4. `DEPOSITAR_LLAVE`: abre la pinza. Misión terminada.
+1. `ASEGURAR_LLAVE`: cierra la pinza sobre la llave, espera a que el servo
+   llegue físicamente (400 ms).
+2. `ESPERAR_ANTES_DE_AVANZAR`: pausa adicional (600 ms) con el agarre ya
+   asentado, antes de arrancar a avanzar — para que quede firme.
+3. `BUSCAR_ZONA_NEUTRA`: avanza **en línea recta** (sin QTR, sin evasión de
+   borde) hasta que el color activo (ver abajo) sea AMARILLO. Se detiene
+   **de inmediato** al detectarlo, en el mismo ciclo — no sigue avanzando
+   ni un instante de más.
+4. `DETENER_ZONA_NEUTRA`: full stop breve (400 ms) antes de soltar, para
+   que la llave no rebote al caer — sin retroceso, ver el porqué más abajo.
+5. `DEPOSITAR_LLAVE`: abre la pinza. Misión terminada.
 
 Durante **todo** el recorrido (no solo mientras busca la zona), el LED RGB
 muestra en vivo qué color está viendo el sensor activo:
@@ -79,6 +84,20 @@ Esta prueba no depende del equipo elegido para nada (no busca ninguna
 bandera), pero el switch físico de 3 posiciones ya está cableado y sigue
 actuando como traba de seguridad: nada se mueve mientras esté en el centro.
 Cualquiera de los dos tiros arma el robot (no importa cuál).
+
+## ⚠️ Sentido de giro de los motores: se reconfirmó distinto al de v1
+
+`v1-confirmado`/`firmware-esp32` usan la convención "`speed < 0` = avanza",
+confirmada en banco en su momento y **conservada tal cual en esos
+archivos** (no se tocó ahí). Al probar esta variante en banco el
+2026-09-07, con esa misma convención copiada tal cual, el robot agarraba
+la llave bien pero **retrocedía** en vez de avanzar. Se invirtió a
+"`speed > 0` = avanza" **solo en este archivo** — ver el comentario junto a
+`MotorApply` en `src/main.cpp`. Lo más probable es que algo se haya
+re-sentado físicamente en el cableado de motores desde que se confirmó
+v1 (no que la convención vieja estuviera mal razonada). Si esto vuelve a
+comportarse al revés en el futuro, es señal de que el cableado cambió de
+nuevo — medir en banco antes de voltear el booleano una vez más.
 
 ## Hardware necesario
 

@@ -519,13 +519,23 @@ void MotorSetup(const Motor &m) {
     PwmWrite(m.en, m.ledc_channel, 0);
 }
 
-// speed < 0 -> "avanza" con el cableado físico actual (ver la tabla de
-// verdad del L298N documentada en firmware-esp32/src/main.cpp). Sin
-// maniobra de retroceso en esta variante (ver el aviso al principio del
-// archivo), así que no hace falta invertir_direccion aquí.
+// speed > 0 -> "avanza" -- CONFIRMADO EN BANCO 2026-09-07 sobre el robot
+// físico tal como está cableado HOY (con el gripper cerrando bien sobre la
+// llave, el chasis iba hacia atrás con la convención "speed < 0 = avanza"
+// copiada de v1-confirmado/firmware-esp32; se invirtió acá, en este
+// archivo nada más). v1-confirmado quedó "CONSERVAR TAL CUAL" con la
+// convención vieja porque se confirmó en su propia sesión de banco -- no
+// se tocó ahí para no invalidar esa confirmación, pero evidentemente algo
+// cambió físicamente desde entonces (un cable de motor re-sentado al
+// tocar otras conexiones, lo más probable). Sin maniobra de retroceso en
+// esta variante (ver el aviso al principio del archivo), así que no hace
+// falta invertir_direccion aquí -- si el sentido vuelve a estar al revés
+// en el futuro, es señal de que el cableado cambió otra vez, no de que
+// este booleano esté mal elegido: medir en banco antes de voltearlo de
+// nuevo (ver la nota larga sobre esto en v1-confirmado/src/main.cpp).
 void MotorApply(const Motor &m, int speed) {
     speed = constrain(speed, -100, 100);
-    const bool forward = (speed < 0);
+    const bool forward = (speed > 0);
     digitalWrite(m.in1, forward ? HIGH : LOW);
     digitalWrite(m.in2, forward ? LOW  : HIGH);
     PwmWrite(m.en, m.ledc_channel, (uint32_t)abs(speed) * 255u / 100u);
@@ -803,13 +813,29 @@ constexpr int kVelocidadCrucero = 60;   // % de PWM al avanzar recto
 
 constexpr uint32_t kStartupDelayMs  = 3000;  // tiempo para cargar la llave y ubicar el robot
 constexpr uint32_t kGripperSettleMs = 400;   // tiempo mecánico para que el servo llegue
-// Full stop al detectar amarillo, antes de soltar -- para no abrir la pinza
-// mientras el robot todavía se desliza por inercia.
+
+// Pausa ADICIONAL después de que el servo ya llegó a cerrado sobre la
+// llave, antes de arrancar a avanzar -- pedido explícito: más margen que
+// el simple asentamiento mecánico del servo (kGripperSettleMs), para que
+// el agarre quede firme y estable antes de que el robot empiece a
+// moverse. Se sigue esperando kGripperSettleMs primero (el servo tiene que
+// llegar físicamente) y ESTA pausa corre después, no en paralelo.
+constexpr uint32_t kDelayTrasAsegurarLlaveMs = 600;
+
+// Full stop al detectar amarillo, antes de soltar -- para no abrir la
+// pinza mientras el robot todavía se desliza por inercia (evita que la
+// llave rebote al caer). "Pequeño tiempo", pedido explícito: se detiene
+// del todo y suelta pronto, no una pausa larga.
 constexpr uint32_t kFullStopMs      = 400;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
     ASEGURAR_LLAVE,
+    // Pausa adicional tras el asentamiento del servo, ANTES de arrancar a
+    // avanzar -- ver kDelayTrasAsegurarLlaveMs. Fase propia (no un segundo
+    // timer dentro de ASEGURAR_LLAVE) para que el log de fases distinga
+    // claramente "el servo ya llegó" de "ya se puede avanzar".
+    ESPERAR_ANTES_DE_AVANZAR,
     BUSCAR_ZONA_NEUTRA,
     DETENER_ZONA_NEUTRA,
     DEPOSITAR_LLAVE,
@@ -818,13 +844,14 @@ enum class Phase : uint8_t {
 
 inline const char *PhaseName(Phase phase) {
     switch (phase) {
-        case Phase::ARRANQUE:            return "ARRANQUE";
-        case Phase::ASEGURAR_LLAVE:      return "ASEGURAR_LLAVE";
-        case Phase::BUSCAR_ZONA_NEUTRA:  return "BUSCAR_ZONA_NEUTRA";
-        case Phase::DETENER_ZONA_NEUTRA: return "DETENER_ZONA_NEUTRA";
-        case Phase::DEPOSITAR_LLAVE:     return "DEPOSITAR_LLAVE";
-        case Phase::TERMINADO:           return "TERMINADO";
-        default:                         return "DESCONOCIDA";
+        case Phase::ARRANQUE:                  return "ARRANQUE";
+        case Phase::ASEGURAR_LLAVE:             return "ASEGURAR_LLAVE";
+        case Phase::ESPERAR_ANTES_DE_AVANZAR:   return "ESPERAR_ANTES_DE_AVANZAR";
+        case Phase::BUSCAR_ZONA_NEUTRA:         return "BUSCAR_ZONA_NEUTRA";
+        case Phase::DETENER_ZONA_NEUTRA:        return "DETENER_ZONA_NEUTRA";
+        case Phase::DEPOSITAR_LLAVE:            return "DEPOSITAR_LLAVE";
+        case Phase::TERMINADO:                  return "TERMINADO";
+        default:                                return "DESCONOCIDA";
     }
 }
 
@@ -897,6 +924,18 @@ void MissionTask(void *) {
                     gripper.action = GripperAction::CLOSE_LLAVE;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleMs) {
+                        phase = Mission::Phase::ESPERAR_ANTES_DE_AVANZAR;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // Servo ya asentado sobre la llave; espera un poco más
+                // (kDelayTrasAsegurarLlaveMs) antes de arrancar a avanzar
+                // -- pedido explícito, para que el agarre quede firme.
+                // Quieto: motor se queda en su valor por defecto (STOP).
+                case Mission::Phase::ESPERAR_ANTES_DE_AVANZAR: {
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kDelayTrasAsegurarLlaveMs) {
                         phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
                         phase_started_ms = millis();
                     }
