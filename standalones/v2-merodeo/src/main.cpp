@@ -1032,8 +1032,13 @@ constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
 // explícito: detenerse por completo (motor en STOP, no una frenada a
 // mitad de un SetDrive) antes de cada cambio de sentido de marcha, mismo
 // criterio que kFullStopMs para la zona amarilla.
-constexpr uint32_t kDetenerAntesRetrocesoMs = 1000;
-constexpr uint32_t kEvasionRetrocesoMs      = 2000;
+// Pedido explícito: corto a propósito (no como kDetenerAntesGiroMs) -- con
+// el motor sin energía el robot sigue deslizándose por inercia igual,
+// dure lo que dure la parada; entre más tiempo se quede sin corregir, más
+// se puede seguir saliendo de la pista antes de que el retroceso empiece
+// a traerlo de vuelta.
+constexpr uint32_t kDetenerAntesRetrocesoMs = 200;
+constexpr uint32_t kEvasionRetrocesoMs      = 1000;
 constexpr uint32_t kDetenerAntesGiroMs      = 1000;
 constexpr uint32_t kEvasionGiroMs           = 500;
 // Velocidad del giro de evasión -- pedido explícito: máxima velocidad
@@ -1187,7 +1192,20 @@ void MissionTask(void *pvTeam) {
         // vuelve a false -- así el resto de la secuencia (parada,
         // retroceso, soltar la llave) no se puede reabrir por una lectura
         // posterior, sin importar qué color se lea después.
-        if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA) {
+        //
+        // Mission::kIgnorarBordeAlEntrarMs también se aplica AQUÍ, no solo
+        // a la evasión de borde: pedido explícito, porque el piso FUERA de
+        // la pista (la casa) también es amarillo. Si el robot cruza el
+        // borde negro (se sale de la pista) y termina retrocediendo sobre
+        // ese piso amarillo real, sin esta gracia el sensor trasero vería
+        // amarillo genuino ahí mismo y dispararía un falso "zona neutra
+        // encontrada" justo cuando en realidad el robot está afuera de la
+        // pista, no sobre la zona segura. Mantenerse DENTRO de la pista es
+        // imperativo -- no se vuelve a evaluar esto hasta pasado el mismo
+        // tiempo que ya se le da al borde para asentarse tras la maniobra
+        // de evasión completa (parada+retroceso+parada+giro).
+        if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA &&
+            (uint32_t)(millis() - phase_started_ms) > Mission::kIgnorarBordeAlEntrarMs) {
             const bool ve_amarillo = last_color.back_valid && last_color.back == ColorLabel::YELLOW;
             if (ve_amarillo) {
                 if (amarillo_detectado_desde_ms == 0) {
