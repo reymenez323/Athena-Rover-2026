@@ -63,6 +63,20 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
+    // XSHUT del VL53L1X (ToF) — este banco no lo usa para nada, pero el
+    // bus I2C nº0 en el robot real también lo tiene conectado, y arranca
+    // SIEMPRE respondiendo en 0x29 — la MISMA dirección fija del TCS34725
+    // DELANTERO (ver I2CAddr::TCS34725 abajo). Si el ToF sigue físicamente
+    // conectado mientras corre este firmware (nada en este archivo se lo
+    // impide) y este pin se deja flotando, los dos chips responden a la vez
+    // en 0x29 y el bus queda corrompido: el delantero deja de leer bien
+    // mientras el trasero (solo en su propio bus, sin nadie con quien
+    // chocar) sigue funcionando normal — exactamente el síntoma que se ve
+    // en banco. Se mantiene en LOW (reset) todo el tiempo: este banco no
+    // necesita el ToF para nada, así que no hace falta la coreografía de
+    // reasignarle dirección que sí usa firmware-esp32/TofSensorTask.
+    constexpr uint8_t TOF_XSHUT = 3;
+
     // LED blanco de iluminación del sensor DELANTERO — activo en alto, con
     // pull-up propio hacia VIN si se deja sin conectar (ver hardware/
     // conexiones-esp32-s3.md). Encendido fijo: la clasificación de color no
@@ -192,6 +206,12 @@ void readSensors() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
+
+    // VL53L1X en reset ANTES de abrir el bus I2C0 — ver la nota larga junto
+    // a Pins::TOF_XSHUT sobre por qué, si sigue conectado, corrompe las
+    // lecturas del TCS34725 delantero (misma dirección fija 0x29).
+    pinMode(Pins::TOF_XSHUT, OUTPUT);
+    digitalWrite(Pins::TOF_XSHUT, LOW);
 
     // Los dos buses se inicializan SIEMPRE, use o no use el sensor de ese
     // lado — así SENSOR_ES_DELANTERO es de verdad lo único que hay que tocar

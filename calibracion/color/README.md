@@ -51,17 +51,30 @@ es distinto es el contexto: se sube solo, con los DOS TCS34725 conectados y
 inicializan siempre aunque solo se lea uno, precisamente para que cambiar
 de sensor no requiera recablear nada.
 
+> ⚠️ **Si el VL53L1X (ToF) sigue físicamente conectado, el sensor
+> DELANTERO deja de leer bien — el trasero no se ve afectado.** El ToF
+> comparte el bus I2C nº0 con el TCS34725 delantero y arranca SIEMPRE
+> respondiendo en la MISMA dirección fija 0x29 (ver la tabla de abajo).
+> Este firmware mantiene su pin XSHUT en reset (`Pins::TOF_XSHUT`, GPIO 3)
+> precisamente para esto, pero si el ToF nunca se desconectó del banco,
+> vale la pena confirmar que ese cable de XSHUT también siga en su lugar.
+> Si el sensor delantero da lecturas erráticas o "no responde" mientras el
+> trasero funciona normal, este es el primer sospechoso.
+
 | Señal | GPIO | Nota |
 |---|:---:|---|
 | I2C0 SDA (delantero) | **8** | Mismo bus que el PCA9685 en el diseño de vuelo — aquí solo tiene el TCS34725 conectado |
 | I2C0 SCL (delantero) | **9** | |
+| XSHUT del VL53L1X | **3** | Mantenido en LOW (reset) todo el tiempo — este banco no usa el ToF para nada |
 | I2C1 SDA (trasero) | **47** | Bus dedicado |
 | I2C1 SCL (trasero) | **48** | |
 | LED TCS delantero | **18** | Activo en alto, encendido fijo |
-| LED TCS trasero | **21** | Activo en alto, encendido fijo |
+| LED TCS trasero | **3.3V directo** | Ya no pasa por GPIO — ver `hardware/conexiones-esp32-s3.md`, GPIO21 quedó libre para el switch de equipo |
 
 Los dos TCS34725 tienen la MISMA dirección I2C fija (0x29) y no se puede
 cambiar — por eso van en buses separados, igual que en `firmware-esp32/`.
+El VL53L1X, que comparte el bus 0 con el delantero en el robot real,
+**también** arranca en esa misma dirección — de ahí la fila de XSHUT.
 
 ## Cinco partes
 

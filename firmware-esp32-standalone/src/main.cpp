@@ -811,11 +811,15 @@ void TofSensorTask(void *) {
     // TofBringUp() incluye la reasignación de dirección del VL53L1X (ver la
     // nota larga en I2CAddr::VL53L1X_BOOT_ADDR): esa escritura ocurre
     // mientras el chip todavía responde en 0x29, la MISMA dirección del
-    // TCS34725 delantero. Antes esto era "un riesgo acotado y aceptado";
-    // con el mutex del bus (ver g_i2c0Mutex) deja de ser un riesgo: mientras
-    // se sostiene el lock, ColorSensorTask no puede tocar el bus, así que
-    // las dos direcciones nunca coinciden con dos transacciones activas a
-    // la vez.
+    // TCS34725 delantero. El mutex del bus (g_i2c0Mutex) resuelve un riesgo
+    // DISTINTO: que dos tareas corrompan el objeto `Wire` al llamarlo a la
+    // vez. NO elimina el choque de direcciones en sí — durante esa escritura
+    // puntual, los dos chips siguen respondiendo a 0x29 a nivel eléctrico,
+    // sea cual sea la tarea que la origine. Sigue siendo "un riesgo acotado
+    // y aceptado" (una sola transacción de 3 bytes, no la inicialización
+    // completa), igual que documenta I2CAddr::VL53L1X_BOOT_ADDR — el mutex
+    // ayuda a que esta ventana sea lo más corta y predecible posible, no a
+    // que deje de existir.
     bool tof_ok = false;
     if (I2c0Lock()) {
         tof_ok = TofBringUp();
