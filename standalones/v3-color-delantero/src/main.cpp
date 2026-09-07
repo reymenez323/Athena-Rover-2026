@@ -436,8 +436,11 @@ namespace Tcs34725 {
 //  [7] CLASIFICACIÓN DE COLOR -> ETIQUETA
 // ===========================================================================
 //
-//  Umbrales del DELANTERO, recalibrados 2026-09-07 -- ver el detalle
-//  completo (matriz de confusión, por qué solo cambió AMARILLO_G_MIN) en
+//  Umbrales del DELANTERO, reajustados 2026-09-07 (segunda vuelta: los 9
+//  de nuevo, con AMARILLO y GRIS recapturados bajo la luz de hoy -- el
+//  primer reajuste, que solo tocó AMARILLO_G_MIN, dejó falsos positivos de
+//  AMARILLO sobre piso GRIS). Ver el detalle completo (matriz de
+//  confusión, por qué GRIS necesitó recapturarse) en
 //  calibracion/color/detector-tcs/src/main.cpp, que usa estos MISMOS
 //  números. Si se recalibra de nuevo, actualizar los dos archivos.
 //
@@ -445,7 +448,7 @@ namespace Tcs34725 {
 //  ver "PRIORIDAD: DELANTERO SOBRE TRASERO" al principio del archivo.
 
 static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
-    if (s.c < 392) return ColorLabel::BLACK;
+    if (s.c < 314) return ColorLabel::BLACK;
 
     const float total = (float)s.c;
     const float r = (float)s.r / total;
@@ -453,8 +456,8 @@ static ColorLabel ClassifyColor(const Tcs34725::Rgbc &s) {
     const float b = (float)s.b / total;
 
     if (r > 0.450f && g < 0.312f && b < 0.300f) return ColorLabel::RED;
-    if (b > 0.216f && r < 0.390f)               return ColorLabel::BLUE;
-    if (r > 0.416f && g > 0.200f && b < 0.250f) return ColorLabel::YELLOW;
+    if (b > 0.206f && r < 0.390f)               return ColorLabel::BLUE;
+    if (r > 0.420f && g > 0.200f && b < 0.140f) return ColorLabel::YELLOW;
 
     return ColorLabel::FLOOR;
 }

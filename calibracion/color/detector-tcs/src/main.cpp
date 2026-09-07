@@ -161,40 +161,37 @@ const char *LabelName(ColorLabel l) {
     return "?";
 }
 
-// RECALIBRADO 2026-08-28, AMARILLO reajustado 2026-09-07 -- contra los CSV
-// de ../data_logs/ (sensor DELANTERO) con ../analizar_umbrales_tcs.py --
-// descenso de coordenadas sobre esta MISMA estructura de reglas, buscando
-// los 9 umbrales que menos errores dieran.
+// RECALIBRADO 2026-08-28, AMARILLO y GRIS reajustados 2026-09-07 -- contra
+// los CSV de ../data_logs/ (sensor DELANTERO) con
+// ../analizar_umbrales_tcs.py -- descenso de coordenadas sobre esta MISMA
+// estructura de reglas, buscando los 9 umbrales que menos errores dieran.
 //
-//   Umbrales originales (sin calibrar):        564/970  errores (58.1%)
-//   Recalibrados 2026-08-28 (los 5 colores):    139/970  errores (14.3%)
-//   Reajuste 2026-09-07 (solo AMARILLO_G_MIN,
-//     contra AMARILLO recapturado con luz de
-//     oficina + sol -- ver el aviso abajo):    144/1233 errores (11.7%)
+//   Umbrales originales (sin calibrar):           564/970  errores (58.1%)
+//   Recalibrados 2026-08-28 (los 5 colores):       139/970  errores (14.3%)
+//   Reajuste 2026-09-07 #1 (solo AMARILLO_G_MIN):  144/1233 errores (11.7%)
+//   Reajuste 2026-09-07 #2 (los 9 de nuevo, con
+//     AMARILLO+GRIS frescos de hoy):               171/1516 errores (11.3%)
 //
-//   Por clase (tras el reajuste): AMARILLO 458/463, GRIS 196/198,
-//   ROJO 140/150, AZUL 178/222, NEGRO 117/200 -- NEGRO sigue siendo, por
-//   lejos, el que peor le va (58.5% de acierto). No es un umbral mal
-//   elegido: el rango de `clear` de NEGRO se solapa fuertemente con el de
-//   AZUL y GRIS -- un solo corte en `clear` no puede separarlos limpio, y
-//   las reglas de r/g/b que siguen no fueron pensadas para distinguir
-//   "negro oscuro" de "azul oscuro" o "gris oscuro". Esto es un LÍMITE
-//   ESTRUCTURAL de esta clasificación secuencial por umbrales, no algo que
-//   otra vuelta de ajuste vaya a arreglar — el clasificador K-NN de
-//   pruebas-platformio/05-evitador-linea/ (que usa las 4 dimensiones
-//   juntas, con distancias reales, en vez de reglas encadenadas con AND)
-//   le acierta mucho mejor a NEGRO con el MISMO dataset — ver ese sketch
-//   si hace falta una clasificación más confiable que ésta.
+//   Por clase (tras el reajuste #2): AMARILLO 461/463 (99.6%),
+//   GRIS 458/481 (95.2%), AZUL 211/222 (95.0%), ROJO 141/150 (94.0%),
+//   NEGRO 74/200 (37.0%) -- NEGRO empeoró respecto al reajuste #1 (era
+//   58.5%): con GRIS más que duplicado en muestras (198 -> 481), el
+//   descenso de coordenadas le da más peso a acertarle a GRIS/AMARILLO/
+//   AZUL/ROJO a costa de NEGRO. Sigue siendo un LÍMITE ESTRUCTURAL de esta
+//   clasificación secuencial (el rango de `clear` de NEGRO se solapa
+//   fuerte con AZUL y GRIS, ver el detalle completo corriendo el script de
+//   nuevo) -- el clasificador K-NN de pruebas-platformio/05-evitador-
+//   linea/ le acierta mucho mejor con el MISMO dataset, ver ese sketch si
+//   hace falta más confiabilidad en NEGRO.
 //
-// POR QUÉ SOLO CAMBIÓ AMARILLO_G_MIN (0.350 -> 0.200) EL 2026-09-07: al
-// probar el delantero con luz de oficina + sol directo (mucho más fuerte
-// que la del 28 de agosto), su g/c para AMARILLO cayó consistentemente en
-// 0.328-0.357 -- justo a caballo del viejo umbral de 0.350, así que
-// clasificaba GRIS la mayoría de las veces aunque el sensor SÍ estaba
-// viendo amarillo. Confirmado con ../detector-tcs (este mismo sketch) y
-// 480 muestras nuevas (8 puntos): no era un sensor dañado, era un umbral
-// sin margen para esta luz. Los otros 8 umbrales NO se retocaron -- sus
-// clases no se recapturaron hoy, siguen siendo los del 28 de agosto.
+// REAJUSTE #2, por qué: con el reajuste #1 (solo AMARILLO_G_MIN bajado a
+// 0.200) empezaron a aparecer falsos positivos de AMARILLO sobre piso
+// GRIS -- el r/c del delantero sobre gris ronda 0.40-0.42, casi pegado a
+// AMARILLO_R_MIN (0.416), y bajar G_MIN quitó un filtro que por casualidad
+// (nunca a propósito) venía bloqueando esos falsos positivos. Se
+// recapturó GRIS (5 puntos, 500 muestras) bajo la misma luz de hoy y se
+// corrieron los 9 umbrales de nuevo contra AMARILLO+GRIS frescos +
+// ROJO/AZUL/NEGRO del 28 de agosto.
 //
 // ⚠️ ESTOS NÚMEROS SON SOLO DEL DELANTERO. NO los copies a ClassifyColor()
 // en firmware-esp32/src/main.cpp: ese firmware le quitó el sensor
@@ -204,15 +201,15 @@ const char *LabelName(ColorLabel l) {
 // posición distinta en el chasis). Aplicarle un umbral ajustado para el
 // delantero sería resolver a ciegas un problema que no se midió.
 namespace Umbral {
-    constexpr uint16_t CLEAR_NEGRO_MAX = 392;   // clear < esto -> NEGRO, sin mirar el resto
+    constexpr uint16_t CLEAR_NEGRO_MAX = 314;   // clear < esto -> NEGRO, sin mirar el resto
     constexpr float ROJO_R_MIN     = 0.450f;
     constexpr float ROJO_G_MAX     = 0.312f;
     constexpr float ROJO_B_MAX     = 0.300f;
-    constexpr float AZUL_B_MIN     = 0.216f;
+    constexpr float AZUL_B_MIN     = 0.206f;
     constexpr float AZUL_R_MAX     = 0.390f;
-    constexpr float AMARILLO_R_MIN = 0.416f;
+    constexpr float AMARILLO_R_MIN = 0.420f;
     constexpr float AMARILLO_G_MIN = 0.200f;
-    constexpr float AMARILLO_B_MAX = 0.250f;
+    constexpr float AMARILLO_B_MAX = 0.140f;
 }
 
 // Normaliza cada canal contra "clear" (luz total) antes de comparar, para
