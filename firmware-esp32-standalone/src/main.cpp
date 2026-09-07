@@ -1197,7 +1197,17 @@ void MissionTask(void *pvTeam) {
                         phase = Mission::Phase::DEPOSITAR_LLAVE;
                         phase_started_ms = millis();
                     } else {
-                        SetDrive(motor, Mission::kVelocidadAproximacion, Mission::kVelocidadAproximacion,
+                        // OJO: el signo aquí SÍ importa incluso con
+                        // invertir_direccion=true -- son dos inversiones
+                        // independientes (signo de `speed`, y el flag) y
+                        // hay que combinarlas bien. La evasión de borde ya
+                        // demostró en banco que speed NEGATIVO sin invertir
+                        // produce "avanza" físicamente; para obtener el
+                        // estado contrario hay que partir de ESE mismo
+                        // signo negativo y sí invertirlo -- usar positivo
+                        // aquí (como se hizo antes) cancela las dos
+                        // inversiones y vuelve a producir "avanza".
+                        SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion,
                                  /*invertir_direccion=*/true);
                     }
                     break;
