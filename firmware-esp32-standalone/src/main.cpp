@@ -977,6 +977,16 @@ void MissionTask(void *pvTeam) {
 
     ColorReading       last_color{};
     ReflectanceReading last_reflect{};
+    // Cerrojo: en cuanto el sensor trasero ve amarillo UNA vez estando en
+    // BUSCAR_ZONA_NEUTRA, esto pasa a true y ya NUNCA vuelve a false --
+    // pedido explícito: "que se detenga por completo al detectar la zona,
+    // sin importar si luego empezaste a leer otra cosa" (ej. por inercia
+    // el robot sigue deslizándose un poco y el sensor deja de ver amarillo
+    // un instante después). Una vez puesto, también apaga la evasión de
+    // borde (ver puede_evadir más abajo): el resto de la secuencia
+    // (parada, retroceso, soltar la llave) es una maniobra fija que no
+    // debe abortarse por una lectura de reflectancia.
+    bool zona_neutra_detectada = false;
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
@@ -1007,19 +1017,39 @@ void MissionTask(void *pvTeam) {
         // zona por el LED (eso pasa siempre, fuera de este bloque).
         if (Mission::kMotionEnabled) {
 
+        // --- 0b. Cerrojo de zona neutra: detenerse YA, para siempre -------
+        // Se evalúa ANTES que la evasión de borde a propósito: si se
+        // dejara adentro del "if (puede_evadir)" de más abajo, una lectura
+        // de reflectancia que diera evadiendo=true en el mismo instante
+        // taparía esta detección (evadiendo=true se salta todo el
+        // switch(phase), incluida la transición a DETENER_ZONA_NEUTRA) y
+        // el robot seguiría de largo. Aquí no hay ese riesgo: en cuanto
+        // ve amarillo una vez, cambia de fase inmediatamente y ya no
+        // vuelve a evaluar esta condición (zona_neutra_detectada nunca
+        // vuelve a false).
+        if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA &&
+            last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
+            zona_neutra_detectada = true;
+            phase = Mission::Phase::DETENER_ZONA_NEUTRA;
+            phase_started_ms = millis();
+        }
+
         // --- 1. PRIORIDAD MÁXIMA: no salirse de la pista -------------------
         // Idéntico a decision.py::_evadir_borde: pisa cualquier otra fase...
-        // EXCEPTO mientras se asegura la llave. Pedido explícito: el gripper
-        // tiene que cerrar ANTES de que el robot se mueva por cualquier
-        // motivo, incluida la evasión de borde. Sin este freno, un umbral de
-        // reflectancia sin calibrar (ver kDarkThreshold) podía hacer que el
-        // robot arrancara moviéndose para atrás desde el segundo 0, sin que
-        // el switch(phase) de más abajo llegara siquiera a mandar
-        // CLOSE_LLAVE (evadiendo=true se salta ese switch por completo).
+        // EXCEPTO mientras se asegura la llave, Y EXCEPTO una vez que ya se
+        // detectó la zona neutra (ver zona_neutra_detectada arriba): a
+        // partir de ahí, parar/retroceder/soltar es una maniobra fija que
+        // no debe interrumpirse por una lectura de reflectancia. Sin el
+        // freno de ASEGURAR_LLAVE, un umbral de reflectancia sin calibrar
+        // (ver kDarkThreshold) podía hacer que el robot arrancara
+        // moviéndose para atrás desde el segundo 0, sin que el
+        // switch(phase) de más abajo llegara siquiera a mandar CLOSE_LLAVE
+        // (evadiendo=true se salta ese switch por completo).
         const bool puede_moverse = (phase != Mission::Phase::ARRANQUE &&
                                      phase != Mission::Phase::ASEGURAR_LLAVE);
+        const bool puede_evadir = puede_moverse && !zona_neutra_detectada;
         bool evadiendo = false;
-        if (puede_moverse) {
+        if (puede_evadir) {
             if (last_reflect.left_on_line && last_reflect.right_on_line) {
                 SetDrive(motor, -Mission::kVelocidadAproximacion, -Mission::kVelocidadAproximacion);
                 evadiendo = true;
@@ -1044,10 +1074,10 @@ void MissionTask(void *pvTeam) {
                 last_reflect_log_ms = millis();
                 DEBUG_LINK.printf(
                     "[Reflect] izq=%u der=%u (umbral=%u) on_line: izq=%d der=%d "
-                    "-> puede_moverse=%d evadiendo=%d\n",
+                    "-> puede_moverse=%d puede_evadir=%d evadiendo=%d zona_neutra_detectada=%d\n",
                     last_reflect.left_raw, last_reflect.right_raw, kDarkThreshold,
                     last_reflect.left_on_line, last_reflect.right_on_line,
-                    puede_moverse, evadiendo);
+                    puede_moverse, puede_evadir, evadiendo, zona_neutra_detectada);
             }
         }
 
@@ -1084,14 +1114,15 @@ void MissionTask(void *pvTeam) {
                 // -- 4. Avanzar hasta pisar la zona amarilla ----------------
                 // Usa el sensor TRASERO: el delantero se retiró por
                 // completo junto con el bus I2C nº0 (ver aviso al
-                // principio del archivo).
+                // principio del archivo). La transición a
+                // DETENER_ZONA_NEUTRA ya no se decide aquí: la maneja el
+                // cerrojo zona_neutra_detectada, más arriba, ANTES de la
+                // evasión de borde -- si se dejara aquí, evadiendo=true
+                // podría saltarse este case entero justo el instante en
+                // que se detecta el amarillo. Si seguimos viendo esta
+                // fase, es que todavía no se detectó: seguir avanzando.
                 case Mission::Phase::BUSCAR_ZONA_NEUTRA: {
-                    if (last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
-                        phase = Mission::Phase::DETENER_ZONA_NEUTRA;
-                        phase_started_ms = millis();
-                    } else {
-                        SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
-                    }
+                    SetDrive(motor, Mission::kVelocidadCrucero, Mission::kVelocidadCrucero);
                     break;
                 }
 
