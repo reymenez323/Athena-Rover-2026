@@ -975,6 +975,10 @@ constexpr uint32_t kRetrocesoZonaNeutraMs = 700;
 // de ajustar en banco según cuánto se pasa/gira de verdad.
 constexpr uint32_t kEvasionRetrocesoMs = 500;
 constexpr uint32_t kEvasionGiroMs      = 500;
+// Velocidad del giro de evasión -- pedido explícito: máxima velocidad
+// (100%), no kVelocidadAproximacion como el resto de las maniobras de
+// borde.
+constexpr int kVelocidadGiroMax = 100;
 // Debounce del borde negro: los QTR tienen que reportar on_line de forma
 // CONTINUA durante al menos este tiempo antes de disparar la maniobra de
 // evasión -- pedido explícito para filtrar falsos positivos (kDarkThreshold
@@ -982,6 +986,10 @@ constexpr uint32_t kEvasionGiroMs      = 500;
 // on_line=true ya no alcanza: si en cualquier momento se deja de detectar,
 // el conteo se reinicia desde cero.
 constexpr uint32_t kBordeDebounceMs = 50;
+// Mismo criterio de debounce que kBordeDebounceMs, pero para la zona
+// amarilla (sensor de color trasero) en vez del borde negro (QTR) -- ver
+// el cerrojo zona_neutra_detectada, más abajo en MissionTask.
+constexpr uint32_t kZonaNeutraDebounceMs = 50;
 // Gracia al ENTRAR a BUSCAR_ZONA_NEUTRA (arranque de la misión, y también
 // cada vez que se vuelve aquí tras un giro de evasión): durante este tiempo
 // se IGNORA por completo la lectura de los QTR y el robot avanza sí o sí.
@@ -1068,6 +1076,10 @@ void MissionTask(void *pvTeam) {
     // detectándose SIN INTERRUPCIÓN, no cuántas veces se detectó.
     uint32_t borde_detectado_desde_ms = 0;
 
+    // Mismo mecanismo de debounce, para la zona amarilla (ver el cerrojo
+    // zona_neutra_detectada más abajo y Mission::kZonaNeutraDebounceMs).
+    uint32_t amarillo_detectado_desde_ms = 0;
+
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
 
@@ -1099,16 +1111,27 @@ void MissionTask(void *pvTeam) {
 
         // --- 0b. Cerrojo de zona neutra: detenerse YA, para siempre -------
         // Se evalúa ANTES del switch(phase) de abajo: en cuanto el sensor
-        // trasero ve amarillo una vez estando en BUSCAR_ZONA_NEUTRA, esto
+        // trasero ve amarillo de forma CONTINUA durante al menos
+        // Mission::kZonaNeutraDebounceMs (mismo criterio de debounce que
+        // el borde negro, ver kBordeDebounceMs -- un instante suelto no
+        // cuenta, y cualquier lectura distinta reinicia el conteo), esto
         // cambia de fase inmediatamente y zona_neutra_detectada nunca
         // vuelve a false -- así el resto de la secuencia (parada,
         // retroceso, soltar la llave) no se puede reabrir por una lectura
         // posterior, sin importar qué color se lea después.
-        if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA &&
-            last_color.back_valid && last_color.back == ColorLabel::YELLOW) {
-            zona_neutra_detectada = true;
-            phase = Mission::Phase::DETENER_ZONA_NEUTRA;
-            phase_started_ms = millis();
+        if (!zona_neutra_detectada && phase == Mission::Phase::BUSCAR_ZONA_NEUTRA) {
+            const bool ve_amarillo = last_color.back_valid && last_color.back == ColorLabel::YELLOW;
+            if (ve_amarillo) {
+                if (amarillo_detectado_desde_ms == 0) {
+                    amarillo_detectado_desde_ms = millis();
+                } else if ((uint32_t)(millis() - amarillo_detectado_desde_ms) >= Mission::kZonaNeutraDebounceMs) {
+                    zona_neutra_detectada = true;
+                    phase = Mission::Phase::DETENER_ZONA_NEUTRA;
+                    phase_started_ms = millis();
+                }
+            } else {
+                amarillo_detectado_desde_ms = 0;
+            }
         }
 
         // DIAGNÓSTICO TEMPORAL: kDarkThreshold nunca se calibró contra el
@@ -1231,19 +1254,26 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
-                // -- 4·ii. Borde negro: girar ~180° y volver a merodear -----
-                // Un lado en sentido "avanza" (negativo) y el otro en
-                // sentido "retrocede" (positivo, sin necesitar
-                // invertir_direccion): con las dos ruedas de un lado
-                // girando al revés que las del otro, el robot rota sobre
-                // su propio eje en vez de desplazarse. Al terminar, vuelve
-                // a BUSCAR_ZONA_NEUTRA a seguir merodeando.
+                // -- 4·ii. Borde negro: gira ~180° SIEMPRE A LA DERECHA -----
+                // Pedido explícito: siempre gira hacia la derecha (nunca
+                // hacia la izquierda, sin importar de qué lado vino el
+                // borde) y a velocidad MÁXIMA en ambos lados
+                // (kVelocidadGiroMax = 100, no kVelocidadAproximacion).
+                // Lado IZQUIERDO en sentido "avanza" (negativo) + lado
+                // DERECHO en sentido "retrocede" (positivo, sin necesitar
+                // invertir_direccion): con un lado empujando hacia adelante
+                // y el otro hacia atrás, el robot rota sobre su propio eje
+                // -- izquierdo adelante + derecho atrás rota hacia la
+                // derecha (mismo principio que un tanque girando: la oruga
+                // izquierda avanza, la derecha retrocede, y el frente
+                // "apunta" hacia la derecha). Al terminar, vuelve a
+                // BUSCAR_ZONA_NEUTRA a seguir merodeando.
                 case Mission::Phase::EVADIR_BORDE_GIRO: {
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kEvasionGiroMs) {
                         phase = Mission::Phase::BUSCAR_ZONA_NEUTRA;
                         phase_started_ms = millis();
                     } else {
-                        SetDrive(motor, -Mission::kVelocidadAproximacion, Mission::kVelocidadAproximacion);
+                        SetDrive(motor, -Mission::kVelocidadGiroMax, Mission::kVelocidadGiroMax);
                     }
                     break;
                 }
