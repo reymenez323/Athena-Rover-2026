@@ -644,7 +644,7 @@ constexpr uint16_t kDistanciaAproximacionMm = 150;
 
 // -- Rango de agarre, confirmado en banco 2026-09-07 -----------------------
 constexpr uint16_t kRangoAgarreMinMm = 56;
-constexpr uint16_t kRangoAgarreMaxMm = 62;
+constexpr uint16_t kRangoAgarreMaxMm = 60;
 
 // -- Ajuste fino: parar, medir, paso chico, repetir ------------------------
 // Ajustado en banco el 2026-09-07, tres vueltas:
@@ -656,7 +656,7 @@ constexpr uint16_t kRangoAgarreMaxMm = 62;
 //                 fricción, no desplazamiento neto.
 //   50%/180ms  -- punto medio entre los dos anteriores, a probar.
 constexpr int kVelocidadPaso = 50;            // % de PWM -- todavía bajo velocidad de crucero
-constexpr uint32_t kPasoDuracionMs = 180;     // un paso chico, no un tramo largo
+constexpr uint32_t kPasoDuracionMs = 140;     // un paso chico, no un tramo largo
 constexpr uint32_t kSettleTrasParoMs = 200;   // asentar el chasis y refrescar el ToF antes de confiar en la lectura
 constexpr int kLecturasConsecutivasRequeridas = 3;   // "constantemente en rango", no una lectura suelta
 // Tope de seguridad: si tras esta cantidad de pasos todavía no confirma
@@ -672,7 +672,7 @@ constexpr uint32_t kGripperSettleMs = 500;
 constexpr float kMsPorGrado = 3000.0f / 180.0f;
 constexpr int kGiroTrasAgarreDeg = 90;
 constexpr int kVelocidadGiroMax = 100;
-constexpr uint32_t kAvanceTrasGiroMs = 2500;
+constexpr uint32_t kAvanceTrasGiroMs = 4000;
 
 enum class Phase : uint8_t {
     ARRANQUE = 0,
@@ -688,6 +688,7 @@ enum class Phase : uint8_t {
 
 inline const char *PhaseName(Phase phase) {
     switch (phase) {
+
         case Phase::ARRANQUE:            return "ARRANQUE";
         case Phase::AVANCE_GRUESO:       return "AVANCE_GRUESO";
         case Phase::DETENER_PARA_MEDIR:  return "DETENER_PARA_MEDIR";
@@ -876,6 +877,10 @@ void MissionTask(void *) {
                 case Mission::Phase::ALEJARSE: {
                     estado_led = EstadoVisible::AGARRADA;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kAvanceTrasGiroMs) {
+                        // Prueba: al cumplirse el tiempo de alejamiento,
+                        // suelta la bandera antes de terminar.
+                        gripper.action = GripperAction::OPEN;
+                        send_gripper = true;
                         phase = Mission::Phase::TERMINADO;
                         phase_started_ms = millis();
                     } else {
