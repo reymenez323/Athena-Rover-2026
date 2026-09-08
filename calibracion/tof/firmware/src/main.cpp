@@ -17,18 +17,22 @@
 //  firmware-esp32/src/main.cpp antes de que el bus I2C nº0 se retirara
 //  anoche (ver git log de ese archivo).
 //
-//  ⚠️ CONFIRMADO EN BANCO 2026-09-07: `VL53L1X::setAddress()` (la
-//  reasignación de 0x29 a 0x30, pensada para poder compartir el bus con el
-//  TCS34725 delantero, que también es 0x29 fijo) NO surte efecto en este
-//  sensor -- un barrido I2C después de llamarla lo sigue mostrando en
-//  0x29. No es un problema de cableado ni de alimentación (el sensor
-//  responde bien en 0x29 antes Y después del intento, y mide perfecto una
-//  vez que se deja `init()` trabajar sobre esa misma dirección de
-//  fábrica). Por eso `setAddress()` está comentada más abajo: **este banco
-//  asume que el VL53L1X es el ÚNICO dispositivo en el bus 0** (sin el
-//  TCS34725 delantero conectado a la vez). Investigar `setAddress()` es
-//  tarea aparte, necesaria recién cuando haga falta compartir el bus de
-//  nuevo.
+//  RESUELTO 2026-09-08 (venía fallando desde 2026-09-07): `VL53L1X::
+//  setAddress()` (la reasignación de 0x29 a 0x30, para poder compartir el
+//  bus con el TCS34725 delantero, que también es 0x29 fijo) no surtía
+//  efecto -- un barrido I2C después de llamarla lo seguía mostrando en
+//  0x29. La causa: se llamaba ANTES de `init()`, apenas 2 ms después de
+//  soltar XSHUT -- el chip todavía no había terminado su arranque interno
+//  de firmware (que es justo lo que `init()` espera antes de devolver),
+//  así que la escritura de reasignación se perdía en silencio contra un
+//  chip que todavía no estaba listo para atenderla.
+//
+//  Arreglo: `init()` corre PRIMERO (contra la dirección de fábrica, ya
+//  confirmada despierta), y `setAddress()` recién DESPUÉS -- más un
+//  respiro corto (10 ms) antes de configurar el modo de medición, porque
+//  configurarlo inmediatamente tras el cambio de dirección daba lecturas
+//  erráticas. Confirmado en banco: el barrido de después ahora muestra el
+//  chip en 0x30, y las mediciones son estables. Ver `TofBringUp()`.
 //
 //  Protocolo por serial:
 //    'O'  -> abre el gripper
@@ -159,13 +163,31 @@ bool g_tofOk = false;
 bool TofBringUp() {
     g_tof.setBus(&Wire);
     g_tof.setTimeout(500);
-    // DIAGNÓSTICO: la reasignación a 0x30 no está surtiendo efecto (ver el
-    // aviso grande arriba) -- sin nada más en el bus ahora mismo, se deja
-    // el sensor en su dirección de fábrica (0x29, la que ya trae la
-    // librería por defecto) para aislar si el problema es SOLO la
-    // reasignación o algo más profundo.
-    // g_tof.setAddress(I2CAddr::VL53L1X);
+
+    // EXPERIMENTO 2026-09-08: orden invertido respecto al intento de ayer.
+    // Antes se llamaba setAddress() ANTES de init(), apenas BOOT_DELAY_MS
+    // (2 ms) después de soltar XSHUT -- probablemente demasiado pronto: el
+    // datasheet documenta ~1.2 ms de arranque de hardware, pero el chip
+    // todavía tiene una secuencia de arranque de firmware interna después
+    // de eso, y es justamente init() quien espera a que el chip confirme
+    // que ya la completó (reintentando la lectura de su registro de
+    // estado hasta el timeout de setTimeout()) antes de hacer cualquier
+    // otra cosa. Al llamar setAddress() ANTES de init(), nos saltábamos
+    // esa espera -- la escritura de reasignación probablemente llegaba
+    // mientras el chip todavía no estaba listo para atenderla, y se
+    // perdía en silencio (setAddress() no devuelve nada que lo delate).
+    //
+    // Ahora: init() corre PRIMERO, contra la dirección de fábrica (0x29,
+    // ya confirmada funcionando) -- así el chip ya demostró estar
+    // despierto de verdad antes de intentar cambiarle la dirección.
     if (!g_tof.init()) return false;
+    g_tof.setAddress(I2CAddr::VL53L1X);
+    // La reasignación en sí YA funciona (confirmado por el barrido: el
+    // chip aparece en 0x30) -- pero configurarlo inmediatamente después
+    // daba mediciones erráticas (rango inválido con números sin patrón).
+    // Un respiro corto antes de seguir, para que el chip termine de
+    // asentarse en la dirección nueva antes del próximo comando.
+    delay(10);
     g_tof.setDistanceMode(VL53L1X::Long);
     g_tof.setMeasurementTimingBudget(Tof::TIMING_BUDGET_US);
     g_tof.startContinuous(Tof::RANGING_PERIOD_MS);
