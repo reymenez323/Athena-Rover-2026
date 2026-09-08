@@ -518,6 +518,8 @@ void TofSensorTask(void *) {
     digitalWrite(Pins::TOF_XSHUT, HIGH);   // fuera de reset; sin la coreografía
                                             // de reasignación (ver aviso arriba)
 
+    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);   // bus 0 -- SOLO el ToF, ver aviso arriba
+
     bool tof_ok = TofBringUp();
     if (!tof_ok) DEBUG_LINK.println("[ToF] VL53L1X no responde. Reintentando en segundo plano.");
 
