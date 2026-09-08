@@ -647,18 +647,16 @@ constexpr uint16_t kRangoAgarreMinMm = 56;
 constexpr uint16_t kRangoAgarreMaxMm = 62;
 
 // -- Ajuste fino: parar, medir, paso chico, repetir ------------------------
-// Ajustado dos veces en banco el 2026-09-07:
-//   30%/150ms  -- no vencía la fricción estática, el motor se oía intentar
-//                 moverse pero no arrancaba.
-//   50%/300ms  -- SÍ arrancaba, pero se pasaba de largo la ventana entera
-//                 de 6 mm (56-62) en un solo paso -- nunca convergía,
-//                 rebotaba de un lado al otro sin lograr 3 lecturas
-//                 seguidas en rango.
-//   50%/100ms  -- misma fuerza (ya vencía la fricción), un tercio del
-//                 tiempo: bastante fuerza para arrancar, poco tiempo para
-//                 recorrer más que unos pocos mm por paso.
+// Ajustado en banco el 2026-09-07, tres vueltas:
+//   30%/150ms  -- no vencía la fricción estática, no arrancaba.
+//   50%/300ms  -- arrancaba, pero se pasaba de largo la ventana entera de
+//                 6 mm (56-62) en un solo paso -- rebotaba sin converger.
+//   50%/100ms  -- ya no vencía la fricción de forma confiable otra vez --
+//                 buena parte de esos 300ms parece que era solo vencer la
+//                 fricción, no desplazamiento neto.
+//   50%/180ms  -- punto medio entre los dos anteriores, a probar.
 constexpr int kVelocidadPaso = 50;            // % de PWM -- todavía bajo velocidad de crucero
-constexpr uint32_t kPasoDuracionMs = 100;     // un paso chico, no un tramo largo
+constexpr uint32_t kPasoDuracionMs = 180;     // un paso chico, no un tramo largo
 constexpr uint32_t kSettleTrasParoMs = 200;   // asentar el chasis y refrescar el ToF antes de confiar en la lectura
 constexpr int kLecturasConsecutivasRequeridas = 3;   // "constantemente en rango", no una lectura suelta
 // Tope de seguridad: si tras esta cantidad de pasos todavía no confirma
