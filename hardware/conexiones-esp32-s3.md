@@ -316,13 +316,32 @@ direcciones 0x29 choquen.
 > responde. El canal B del LED RGB, que antes vivía en este pin, se movió a
 > GPIO 41 (ver la sección del [LED RGB](#led-rgb-indicador-de-equipo)).
 
-### ⚠️ Por qué hace falta XSHUT, y el riesgo que queda sin resolver
+### ⚠️ Por qué hace falta XSHUT — y por qué el "riesgo acotado" de abajo resultó NO estarlo
+
+> **CORREGIDO 2026-09-08** — lo que sigue (numerado 1-4) es el diseño
+> original y la decisión que tomó el equipo en su momento; se deja
+> completo por historial, pero la premisa de "riesgo acotado a una sola
+> transacción" quedó **desmentida en banco**: con el TCS34725 delantero
+> realmente con corriente compartiendo el bus 0x29 con el ToF, el
+> `init()` completo del VL53L1X falló (no solo la reasignación),
+> reproducido dos veces seguidas. El problema no es una ventana corta y
+> acotada — es que DOS dispositivos vivos en la misma dirección corrompen
+> cualquier transacción por ese bus mientras ambos sigan ahí, no solo la
+> del cambio de dirección. Ver el detalle completo y la solución adoptada
+> (separar los buses físicamente: TCS34725 delantero al bus 1 junto al
+> PCA9685, TCS34725 trasero desconectado, ToF solo en el bus 0 sin
+> reasignación) en
+> [`calibracion/tof/README.md`](../calibracion/tof/README.md). Como
+> `firmware-esp32/` hoy no tiene el TCS34725 delantero conectado, esto no
+> cambia el cableado de la misión real todavía -- pero si se reincorpora,
+> **no alcanza con el orden de XSHUT de abajo**: hace falta el cableado
+> de bus separado del banco de pruebas.
 
 El VL53L1X arranca siempre en 0x29. El TCS34725 delantero, en el mismo bus,
 está fijo en esa misma dirección **y no tiene ningún pin de apagado**: en
 cuanto tiene alimentación, responde en 0x29 sin que el firmware pueda
-callarlo. La secuencia de arranque (implementada en `TofSensorTask`,
-`firmware-esp32/src/main.cpp`) es:
+callarlo. La secuencia de arranque que tenía `TofSensorTask` en
+`firmware-esp32/src/main.cpp` (diseño original, ver la corrección arriba):
 
 1. **GPIO 3 en LOW desde `setup()`**, antes de crear ninguna tarea — el
    VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
@@ -333,13 +352,14 @@ callarlo. La secuencia de arranque (implementada en `TofSensorTask`,
 2. GPIO 3 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
 3. Se le reasigna la dirección **0x30** con una única escritura corta a su
    registro de dirección. Este es el único instante en que el VL53L1X sigue
-   en 0x29 mientras el TCS34725 delantero también está vivo ahí — no se puede
-   evitar con el hardware actual sin agregarle un pin de apagado al TCS34725
-   (por ejemplo, cortando su alimentación con un transistor). El equipo
-   decidió aceptar este riesgo acotado (una sola transacción de 3 bytes, no
-   la inicialización completa del sensor) en vez de sumar ese hardware extra.
+   en 0x29 mientras el TCS34725 delantero también está vivo ahí — se pensaba
+   acotado a una sola transacción de 3 bytes, pero en banco el TCS34725 vivo
+   ahí bastó para tumbar el `init()` completo, no solo esta escritura (ver la
+   corrección arriba).
 4. Recién ahora corre la inicialización completa del VL53L1X, ya en 0x30 y
-   sin nadie más escuchando ahí.
+   sin nadie más escuchando ahí -- **en teoría**: el problema real es que
+   pasar por 0x29 compartido en el paso 3 ya alcanza para corromper el chip
+   antes de llegar acá.
 
 **Si el TCS34725 delantero empieza a dar lecturas raras justo después de un
 reset del ESP32 (y no antes), este es el primer sospechoso.** Revisar con un
