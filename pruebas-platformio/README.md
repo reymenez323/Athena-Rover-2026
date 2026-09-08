@@ -19,6 +19,7 @@ se abre y se compila por separado, no como sub-proyecto de otro.
 | [`04-servos-a-cero/`](04-servos-a-cero/) | Solo el PCA9685: manda el servo del gripper a 0°, referencia mecánica fija para montar el cuerno del servo. |
 | [`05-evitador-linea/`](05-evitador-linea/) | Los 2 QTR (con prioridad) + los 2 TCS34725 (de respaldo, solo para NEGRO, umbrales calibrados con datos reales — ver `calibracion/color/detector-tcs/`) + los 2 L298N: evitador reactivo que gira sobre su eje sin temporizadores fijos, siempre dentro del cuadrado. |
 | [`06-calibracion-gripper/`](06-calibracion-gripper/) | Solo el PCA9685: mueve el servo de la pinza (canal 0, o cualquier canal con `scan`) por comandos del monitor serial para encontrar a mano los ángulos que agarran el cilindro (asta de la bandera) y la llave (cubo). Ángulos ya integrados en `firmware-esp32/src/main.cpp` (`GripperTask`: `kClawOpenDeg`, `kClawClosedLlaveDeg`, `kClawClosedBanderaDeg`). |
+| [`07-caracterizacion-motores/`](07-caracterizacion-motores/) | Solo los 2 L298N: acciona cada motor por separado (o los 4 juntos) adelante/atrás por comandos del monitor serial, a cualquier duty, con una rutina `secuencia` que barre los 4 uno a uno. Deja un `.log` (vía `log2file`) para revisar y compartir el comportamiento de cada motor. |
 
 ## Ideas para próximas pruebas
 
