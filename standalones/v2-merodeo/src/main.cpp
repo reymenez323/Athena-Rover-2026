@@ -700,7 +700,7 @@ void MotorTask(void *) {
 //  usa firmware-esp32/.
 
 constexpr int kClawOpenDeg          = 0;
-constexpr int kClawClosedLlaveDeg   = 120;
+constexpr int kClawClosedLlaveDeg   = 128;
 constexpr int kClawClosedBanderaDeg = 65;
 
 void GripperTask(void *) {

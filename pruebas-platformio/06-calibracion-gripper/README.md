@@ -22,7 +22,7 @@ Estos son los ángulos medidos con este sketch, ya copiados a
 | Objeto | Abierto | Cerrado |
 |---|---|---|
 | Cilindro (asta de la bandera) | 0° | 65° |
-| Llave (cubo) | 0° | 120° |
+| Llave (cubo) | 0° | 128° |
 
 Como los dos "cerrado" son distintos, `GripperAction` ya no tiene un `CLOSE`
 genérico: tiene `CLOSE_LLAVE` y `CLOSE_BANDERA` (ver `firmware-esp32/src/
@@ -51,7 +51,7 @@ mecanismo ya acoplado: solo así se siente cuándo la pinza agarra de verdad.
 | Comando | Efecto |
 |---|---|
 | `abrir` | Pinza al ángulo de "abierta" ya calibrado (`Calibrado::ABIERTO`, 0°) |
-| `cerrar llave` | Pinza al ángulo de "cerrada" ya calibrado para la llave (`Calibrado::CERRADO_LLAVE`, 120°) |
+| `cerrar llave` | Pinza al ángulo de "cerrada" ya calibrado para la llave (`Calibrado::CERRADO_LLAVE`, 128°) |
 | `cerrar bandera` | Pinza al ángulo de "cerrada" ya calibrado para la bandera (`Calibrado::CERRADO_BANDERA`, 65°) |
 | `c <grados>` | Servo al ángulo absoluto indicado (0-180), en el canal seleccionado — para seguir afinando a mano |
 | `c+` / `c-` | Nudge de +paso / -paso grados |

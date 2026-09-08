@@ -18,7 +18,7 @@
 //  sesiones: cada vez que encuentres el ángulo correcto, el firmware lo
 //  imprime por consola y TÚ lo anotas a mano. Esos números ya están
 //  integrados en firmware-esp32/src/main.cpp (sección [8.2] GripperTask):
-//  kClawOpenDeg=0, kClawClosedLlaveDeg=120, kClawClosedBanderaDeg=65. Si
+//  kClawOpenDeg=0, kClawClosedLlaveDeg=128, kClawClosedBanderaDeg=65. Si
 //  vuelves a calibrar (otro gripper, otro objeto), actualiza esas constantes
 //  allá también.
 //
@@ -64,8 +64,12 @@
 // ===========================================================================
 
 namespace Pins {
-    constexpr uint8_t I2C0_SDA = 8;   // bus I2C nº0: PCA9685 + TCS34725 delantero
-    constexpr uint8_t I2C0_SCL = 9;
+    // CORREGIDO 2026-09-08: el PCA9685 vive en el bus I2C nº1 (GPIO47/48),
+    // no en el nº0 -- este sketch tenía el pin viejo (GPIO8/9, bus 0, donde
+    // vive el ToF) desde antes de que el proyecto fijara el PCA9685 en el
+    // bus 1 junto al TCS34725 trasero. Ver hardware/conexiones-esp32-s3.md.
+    constexpr uint8_t I2C1_SDA = 47;   // bus I2C nº1: PCA9685 (+ TCS34725 trasero)
+    constexpr uint8_t I2C1_SCL = 48;
 }
 
 namespace I2CAddr {
@@ -88,7 +92,7 @@ constexpr uint8_t PCA9685_CHANNEL_COUNT = 16;
 // actualiza los dos lados.
 namespace Calibrado {
     constexpr int ABIERTO         = 0;
-    constexpr int CERRADO_LLAVE   = 120;
+    constexpr int CERRADO_LLAVE   = 128;
     constexpr int CERRADO_BANDERA = 65;
 }
 
@@ -129,18 +133,18 @@ namespace Pca9685 {
     constexpr uint8_t MODE2_OUTDRV  = 0x04;   // salida totem-pole
 
     bool WriteReg(uint8_t reg, uint8_t value) {
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(reg);
-        Wire.write(value);
-        return Wire.endTransmission() == 0;
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(reg);
+        Wire1.write(value);
+        return Wire1.endTransmission() == 0;
     }
 
     bool ReadReg(uint8_t reg, uint8_t &out) {
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(reg);
-        if (Wire.endTransmission(false) != 0) return false;
-        if (Wire.requestFrom((int)I2CAddr::PCA9685, 1) != 1) return false;
-        out = (uint8_t)Wire.read();
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(reg);
+        if (Wire1.endTransmission(false) != 0) return false;
+        if (Wire1.requestFrom((int)I2CAddr::PCA9685, 1) != 1) return false;
+        out = (uint8_t)Wire1.read();
         return true;
     }
 
@@ -164,13 +168,13 @@ namespace Pca9685 {
         if (channel > 15) return false;
         if (ticks > 4095) ticks = 4095;
 
-        Wire.beginTransmission(I2CAddr::PCA9685);
-        Wire.write(REG_LED0_ON_L + 4 * channel);
-        Wire.write(0x00);                      // ON  low  -> el pulso empieza en 0
-        Wire.write(0x00);                      // ON  high
-        Wire.write((uint8_t)(ticks & 0xFF));   // OFF low
-        Wire.write((uint8_t)(ticks >> 8));     // OFF high
-        return Wire.endTransmission() == 0;
+        Wire1.beginTransmission(I2CAddr::PCA9685);
+        Wire1.write(REG_LED0_ON_L + 4 * channel);
+        Wire1.write(0x00);                      // ON  low  -> el pulso empieza en 0
+        Wire1.write(0x00);                      // ON  high
+        Wire1.write((uint8_t)(ticks & 0xFF));   // OFF low
+        Wire1.write((uint8_t)(ticks >> 8));     // OFF high
+        return Wire1.endTransmission() == 0;
     }
 }
 
@@ -279,7 +283,7 @@ void setup() {
     delay(200);
     DEBUG_LINK.println("\nPrueba 06 - Calibracion interactiva del servo del gripper");
 
-    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
+    Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     Cal::pca_ok = Pca9685::Init(Pwm::SERVO_FREQ_HZ);
     if (!Cal::pca_ok) {

@@ -879,7 +879,7 @@ void MotorTask(void *) {
 //  y por qué GripperAction no tiene un CLOSE genérico.
 
 constexpr int kClawOpenDeg          = 0;
-constexpr int kClawClosedLlaveDeg   = 120;
+constexpr int kClawClosedLlaveDeg   = 128;
 constexpr int kClawClosedBanderaDeg = 65;
 
 void GripperTask(void *) {
