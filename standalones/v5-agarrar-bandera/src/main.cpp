@@ -647,8 +647,12 @@ constexpr uint16_t kRangoAgarreMinMm = 56;
 constexpr uint16_t kRangoAgarreMaxMm = 62;
 
 // -- Ajuste fino: parar, medir, paso chico, repetir ------------------------
-constexpr int kVelocidadPaso = 30;            // % de PWM, mucho más lento que crucero
-constexpr uint32_t kPasoDuracionMs = 150;     // un paso chico, no un tramo largo
+// Subidos 2026-09-07 tras banco: a 30%/150ms el motor se oía intentar
+// moverse pero la fricción física del chasis (con el gripper cargado) no
+// lo dejaba arrancar -- ni fuerza ni tiempo alcanzaban para vencer la
+// fricción estática antes de cortar el pulso.
+constexpr int kVelocidadPaso = 50;            // % de PWM -- todavía bajo velocidad de crucero
+constexpr uint32_t kPasoDuracionMs = 300;     // un paso chico, no un tramo largo
 constexpr uint32_t kSettleTrasParoMs = 200;   // asentar el chasis y refrescar el ToF antes de confiar en la lectura
 constexpr int kLecturasConsecutivasRequeridas = 3;   // "constantemente en rango", no una lectura suelta
 // Tope de seguridad: si tras esta cantidad de pasos todavía no confirma
@@ -658,7 +662,10 @@ constexpr int kMaxPasosSeguridad = 40;
 
 // -- Tras agarrar: asentar, girar, alejarse --------------------------------
 constexpr uint32_t kGripperSettleMs = 500;
-constexpr float kMsPorGrado = 2000.0f / 180.0f;   // misma tasa calibrada que v4-merodeo-color
+// Subido 2026-09-07: la tasa de v4-merodeo-color (2000ms/180°) se quedaba
+// corta por la misma fricción que el paso de ajuste -- ya al 100% de PWM
+// (kVelocidadGiroMax), la única palanca que queda es tiempo, no fuerza.
+constexpr float kMsPorGrado = 3000.0f / 180.0f;
 constexpr int kGiroTrasAgarreDeg = 90;
 constexpr int kVelocidadGiroMax = 100;
 constexpr uint32_t kAvanceTrasGiroMs = 2500;
