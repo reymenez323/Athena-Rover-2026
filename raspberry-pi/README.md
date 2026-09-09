@@ -44,6 +44,7 @@ raspberry-pi/
 ├── scripts/
 │   ├── run_rover.py               EL PROGRAMA DE COMPETENCIA
 │   ├── run_flag_tracker_ei.py     herramienta para calibrar el seguimiento a ojo
+│   ├── visor_camara.py            visor web de la cámara: calibración + dataset, por SSH sin monitor
 │   ├── prueba_deteccion_color.py  experimento aislado del detector color+forma (solo cámara)
 │   └── prueba_enlace.py           prueba de banco del enlace serial (sin cámara)
 ├── models/                 athena_ei_banderas.eim (el modelo entrenado)
@@ -142,6 +143,32 @@ Ya está integrado en `run_rover.py`: si el modelo no ve la bandera en un
 cuadro, se prueba con este detector antes de darse por vencido. El modelo
 manda cuando los dos coinciden -- ver "REPARTO DE SENSORES" en el docstring
 de `run_rover.py`.
+
+### Ver la cámara y armar el dataset sin monitor
+
+`scripts/visor_camara.py` es un visor web mínimo (sin dependencias nuevas,
+solo librería estándar) para calibrar la cámara y sacar fotos malas para
+reentrenar el modelo, todo por SSH:
+
+```bash
+python3 scripts/visor_camara.py --equipo rojo
+```
+
+Abrí `http://<ip-de-la-pi>:8080` desde el navegador de otra máquina en la
+misma red -- no hace falta conectar un monitor a la Pi. Si tu laptop no está
+en la misma red que la Pi, reenviá el puerto por el propio túnel SSH:
+
+```bash
+ssh -L 8080:localhost:8080 tu_usuario@ip-de-la-pi
+```
+
+y abrí `http://localhost:8080` mientras esa sesión siga abierta. El visor
+muestra las cajas de los dos detectores superpuestas (modelo en rojo/azul,
+color+forma en amarillo), la línea central y la zona muerta de centrado, y
+el giro que se simularía -- pero **nunca abre el enlace serial ni manda
+nada al ESP32**, es cámara sola. Los botones de "guardar" bajan el cuadro
+crudo (sin las cajas dibujadas) a `data/raw/<clase>/`, en las mismas 4
+carpetas que ya usa el dataset.
 
 ## El puerto serial
 
