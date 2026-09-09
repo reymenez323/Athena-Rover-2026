@@ -32,6 +32,7 @@ from .protocol import (
     GripperAction,
     ReflectTelemetry,
     TeamColor,
+    ToFTelemetry,
 )
 from .types import Detection, ObjectClass, Perception
 
@@ -115,6 +116,7 @@ class DecisionMaker:
         perception: Perception,
         color: ColorTelemetry | None,
         reflect: ReflectTelemetry | None,
+        tof: ToFTelemetry | None = None,
     ) -> Commands:
         """Decide los comandos de este ciclo y avanza la máquina de estados."""
 
@@ -122,7 +124,7 @@ class DecisionMaker:
         # de la evasión de borde: se calcula una sola vez aquí y se pega a los
         # comandos que salgan, sea cual sea el camino que tomen abajo.
         a_la_vista = perception.best(self.state.bandera_objetivo) is not None
-        return replace(self._decidir(perception, color, reflect),
+        return replace(self._decidir(perception, color, reflect, tof),
                        bandera_a_la_vista=a_la_vista)
 
     def _ir_a_fase(self, phase: Phase, **kwargs) -> None:
@@ -139,6 +141,7 @@ class DecisionMaker:
         perception: Perception,
         color: ColorTelemetry | None,
         reflect: ReflectTelemetry | None,
+        tof: ToFTelemetry | None,
     ) -> Commands:
         # --- Prioridad 1: no salirse de la pista ---------------------------
         evasion = self._evadir_borde(reflect)
@@ -170,7 +173,7 @@ class DecisionMaker:
             return self._buscar_bandera(perception)
 
         if phase is Phase.APROXIMAR_BANDERA:
-            return self._aproximar_bandera(perception)
+            return self._aproximar_bandera(perception, tof)
 
         if phase is Phase.AGARRAR_BANDERA:
             return self._agarrar_bandera()
@@ -316,7 +319,21 @@ class DecisionMaker:
         self.state = replace(self.state, frames_sin_objetivo=frames, sentido_busqueda=sentido)
         return Commands(v * sentido, -v * sentido, motivo="buscando la bandera")
 
-    def _aproximar_bandera(self, perception: Perception) -> Commands:
+    def _aproximar_bandera(
+        self, perception: Perception, tof: ToFTelemetry | None
+    ) -> Commands:
+        """Persigue con la cámara; decide cuándo agarrar con el ToF si puede.
+
+        Reparto de trabajo entre los dos sensores, tal como lo pidió el
+        equipo: la cámara es la que sabe DÓNDE está la bandera en todo
+        momento y dirige al robot hacia allá (``_perseguir``, más abajo, se
+        llama siempre que no se cumplan las condiciones de agarre) — el ToF
+        no puede hacer eso, es un rayo de un solo punto, no un campo de
+        visión. El ToF entra recién al final, solo para la pregunta puntual
+        de "¿ya estoy lo bastante cerca para cerrar la pinza sin fallar?":
+        ahí sí es mejor que la cámara, porque mide la distancia de verdad en
+        vez de estimarla por tamaño aparente.
+        """
         objetivo = perception.best(self.state.bandera_objetivo)
 
         if objetivo is None:
@@ -333,13 +350,17 @@ class DecisionMaker:
 
         centrado = abs(objetivo.angle_deg) < self._cfg.angulo_muerto_deg
 
-        # Antes había un VL53L1X (ToF) delante del gripper que, centrado,
-        # mandaba sobre esta estimación por ser una medición física directa.
-        # Salió del firmware de vuelo (el bus I2C 0 nunca dio una conexión
-        # confiable en este hardware -- ver protocol.py), así que la única
-        # fuente de distancia que queda es el tamaño aparente de la bandera
-        # en el frame.
-        distancia = objetivo.distance_mm
+        # El VL53L1X mide en línea recta frente al gripper, así que su
+        # lectura solo describe a LA BANDERA cuando además está centrada; si
+        # no, el sensor está midiendo cualquier otra cosa que tenga delante
+        # (el piso, el aire) y hay que confiar en la estimación de la cámara.
+        # Cuando aplica, es la fuente de verdad: es una medición física
+        # directa, mucho más confiable a corta distancia que estimar el
+        # tamaño aparente de la bandera en el frame.
+        if tof is not None and tof.valid and centrado:
+            distancia: float | None = float(tof.distance_mm)
+        else:
+            distancia = objetivo.distance_mm
 
         if distancia is not None and distancia <= self._cfg.distancia_agarre_mm and centrado:
             self._ir_a_fase(Phase.AGARRAR_BANDERA)

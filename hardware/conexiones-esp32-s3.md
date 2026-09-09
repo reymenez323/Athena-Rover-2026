@@ -199,11 +199,11 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ## Servos — PCA9685 (I2C, dirección 0x40)
 
-> ⚠️ **El PCA9685 va en el bus I2C nº 1, no en el nº 0.** Decisión del
-> equipo: el bus 0 ya tenía dos dispositivos (TCS34725 delantero + VL53L1X,
-> con su propia coreografía de arranque por XSHUT), así que el servo del
-> gripper se conectó junto al TCS34725 trasero en vez de sumar un tercero
-> al 0. Su dirección (0x40) no choca con la del TCS34725 trasero (0x29).
+> ⚠️ **El PCA9685 va en el bus I2C nº 1, no en el nº 0.** El bus 0 es
+> exclusivo del VL53L1X (ToF) — ver la sección de [ToF](#tof--vl53l1x-distancia-frente-al-gripper)
+> para el porqué de mantenerlo solo. El PCA9685 comparte el bus 1 con el
+> TCS34725 delantero; su dirección (0x40) no choca con la del TCS34725
+> (0x29).
 
 | Pin PCA9685 | Conexión | Cable | Nota |
 |-------------|----------|:---:|------|
@@ -220,34 +220,33 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ---
 
-## Sensores de color — 2× TCS34725
+## Sensores de color — 1× TCS34725 (delantero; el trasero no se usa)
 
-**Los dos sensores tienen la misma dirección fija (0x29) y no se puede cambiar.**
-Por eso van en **buses I2C separados**: el ESP32-S3 tiene dos controladores I2C,
-así te ahorras el multiplexor TCA9548A.
+**Los dos sensores tienen la misma dirección fija (0x29) y no se puede
+cambiar**, y ninguno tiene pin de apagado por software — en cuanto tiene
+corriente, contesta. Compartir bus entre los dos (o con el ToF, que también
+es 0x29 de fábrica) los corrompe mutuamente; separarlos por dirección
+necesitaría un multiplexor I2C (TCA9548A), que el equipo no tiene. Historia
+completa de cómo se descubrió esto, incluido un "resuelto" que no lo era, en
+[`calibracion/tof/README.md`](../calibracion/tof/README.md).
 
-### Sensor DELANTERO — bus I2C nº 0 (compartido con el VL53L1X)
+**Solución adoptada: solo el sensor DELANTERO está conectado**, en el bus
+I2C nº 1 junto al PCA9685 (direcciones distintas — 0x29 y 0x40 — sin
+choque). El TRASERO queda desconectado por completo. Si más adelante se
+consigue un multiplexor I2C, ahí se puede recuperar.
+
+### Sensor DELANTERO — bus I2C nº 1 (compartido con el PCA9685)
 
 | Pin | GPIO ESP32-S3 | Cable |
-|-----|:-------------:|:---:|
-| SDA | **8** | Amarillo |
-| SCL | **9** | Verde |
-| VIN | 3.3 V | Rojo |
-| GND | GND | Negro |
-| LED | **18** | Azul |
-
-### Sensor TRASERO — bus I2C nº 1 (compartido con el PCA9685)
-
-| Pin | GPIO ESP32-S3 / Conexión | Cable |
 |-----|:-------------:|:---:|
 | SDA | **47** | Amarillo |
 | SCL | **48** | Verde |
 | VIN | 3.3 V | Rojo |
 | GND | GND | Negro |
-| LED | **3.3 V directo** (ya no es GPIO 21 — ver más abajo) | Rojo |
+| LED | **18** | Azul |
 
 > Cada bus necesita resistencias de pull-up de 4.7 kΩ a 3.3 V en SDA y SCL.
-> La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones tres
+> La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones dos
 > módulos con pull-ups en el mismo bus, la resistencia equivalente baja
 > demasiado. Si el I2C falla, es lo primero que hay que revisar.
 
@@ -260,37 +259,19 @@ en la placa.
 
 > Confirmado: el equipo usa un clon del diseño de referencia de Adafruit, así
 > que el pin **LED** es activo en alto y trae su propio pull-up hacia VIN —
-> si lo dejas sin conectar, los LED quedan encendidos siempre.
+> si lo dejas sin conectar, el LED queda encendido siempre.
 
-**Solo el sensor DELANTERO controla su LED por GPIO.** El del TRASERO se
-cablea **directo a 3.3V** (no a un GPIO): en la práctica, todo el código del
-repo lo pone en `HIGH` una sola vez al arrancar y nunca lo vuelve a tocar
-(ni para apagarlo ni para evitar que el LED delantero le meta luz al
-trasero — esa mitigación nunca se implementó), así que cablearlo fijo
-reproduce EXACTAMENTE el mismo comportamiento y libera GPIO 21 para el
-[switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo).
-Si algún día se implementa esa mitigación, hace falta volver a pasar este
-LED por un GPIO (cualquiera libre en ese momento).
+El firmware de vuelo (`firmware-esp32/src/main.cpp`) no controla este pin
+por GPIO — lo deja flotando con su propio pull-up, siempre encendido, que es
+el comportamiento que necesita. Si algún día hace falta apagarlo (por
+ejemplo para no meterle luz a un sensor trasero recuperado con
+multiplexor), GPIO 18 está libre para esa señal.
 
-| Señal | GPIO ESP32-S3 / Conexión | Cable |
-|-------|:------------------------:|:---:|
-| LED sensor delantero | **18** | Azul |
-| LED sensor trasero | **3.3V directo** (ya no es un GPIO) | Rojo |
-
-El LED delantero va en cable **azul**, igual que el resto de señales
-digitales de control de este robot (ver el
+El LED va en cable **azul**, igual que el resto de señales digitales de
+control de este robot (ver el
 [código de colores](#código-de-colores-de-cableado)). En este tramo, cada
 cable ya tiene un color distinto (VIN rojo, GND negro, SDA amarillo, SCL
-verde, LED azul), así que no hace falta marquilla adicional — no hay dos
-cables del mismo color conviviendo en el mismo conector.
-
-El LED trasero, al ir directo a 3.3V, se cablea en **rojo** (como cualquier
-otra alimentación de 3.3V de este robot — ver el
-[código de colores](#código-de-colores-de-cableado)) y no en azul: ya no es
-una señal de control, es una línea de potencia como el VIN del propio
-sensor. Márcalo igual que el resto de tramos rojos ("3V3") por la misma
-razón que el resto del esquema: Rojo convive con otros dos dominios de
-voltaje en este robot.
+verde, LED azul), así que no hace falta marquilla adicional.
 
 ---
 
@@ -300,17 +281,16 @@ Mide la distancia a lo que tenga delante del gripper (la bandera) para que la
 Raspberry Pi sepa cuándo cerrar la pinza — la lógica de "cuándo" vive en
 `raspberry-pi/src/athena/decision.py`, el ESP32 solo mide y reporta.
 
-**Dirección I2C fija de fábrica: 0x29 — igual que AMBOS TCS34725.** No hay
-forma de elegir otra dirección desde el pin ni por strapping. Por eso NO va en
-un bus propio: comparte el bus I2C nº0 con el TCS34725 delantero, y su pin
-**XSHUT** es imprescindible (no opcional) para poder arrancar sin que las dos
-direcciones 0x29 choquen.
+**Dirección I2C fija de fábrica: 0x29 — igual que el TCS34725.** Por eso va
+**solo** en su propio bus I2C nº 0: nada de compartir bus (ver la sección de
+sensores de color arriba para el porqué) ni de reasignarle dirección — al no
+tener con quién chocar, se queda en su 0x29 de fábrica.
 
 | Pin VL53L1X | GPIO ESP32-S3 / Conexión | Cable | Nota |
 |-------------|:------------------------:|:---:|------|
-| SDA | **8** | Amarillo | Bus I2C nº 0 — compartido con el TCS34725 delantero |
-| SCL | **9** | Verde | Bus I2C nº 0 — compartido con el TCS34725 delantero |
-| XSHUT | **3** | Azul | Reset por software. Ver la secuencia de arranque abajo, y la nota de JTAG más abajo |
+| SDA | **8** | Amarillo | Bus I2C nº 0, solo |
+| SCL | **9** | Verde | Bus I2C nº 0, solo |
+| XSHUT | **3** | Azul | Reset limpio al arrancar. Ver más abajo, y la nota de JTAG |
 | VIN | 3.3 V | Rojo | |
 | GND | GND común | Negro | |
 
@@ -321,64 +301,32 @@ direcciones 0x29 choquen.
 > la tabla de [pines prohibidos](#pines-prohibidos-del-esp32-s3): "se puede
 > usar, pero mejor no". Su nivel solo importa en el instante de
 > arranque/reset, antes de que corra una sola línea de `setup()`, así que
-> manejarlo como salida normal después no rompe el arranque. Lo único a
-> vigilar: si la placa del VL53L1X trae su propio pull-up en XSHUT (ver el
-> punto 1 de la secuencia abajo), ese pull-up puede dejar JTAG en un estado
-> distinto al esperado — no impide arrancar (JTAG no es un modo de boot como
-> GPIO 0/45/46), pero puede sorprender si esperabas depurar por JTAG y no
-> responde. El canal B del LED RGB, que antes vivía en este pin, se movió a
-> GPIO 41 (ver la sección del [LED RGB](#led-rgb-indicador-de-equipo)).
+> manejarlo como salida normal después no rompe el arranque. El canal B del
+> LED RGB, que antes vivía en este pin, se movió a GPIO 41 (ver la sección
+> del [LED RGB](#led-rgb-indicador-de-equipo)).
 
-### ⚠️ Por qué hace falta XSHUT — y por qué el "riesgo acotado" de abajo resultó NO estarlo
+### El problema del bus compartido, y por qué ya no aplica
 
-> **CORREGIDO 2026-09-08** — lo que sigue (numerado 1-4) es el diseño
-> original y la decisión que tomó el equipo en su momento; se deja
-> completo por historial, pero la premisa de "riesgo acotado a una sola
-> transacción" quedó **desmentida en banco**: con el TCS34725 delantero
-> realmente con corriente compartiendo el bus 0x29 con el ToF, el
-> `init()` completo del VL53L1X falló (no solo la reasignación),
-> reproducido dos veces seguidas. El problema no es una ventana corta y
-> acotada — es que DOS dispositivos vivos en la misma dirección corrompen
-> cualquier transacción por ese bus mientras ambos sigan ahí, no solo la
-> del cambio de dirección. Ver el detalle completo y la solución adoptada
-> (separar los buses físicamente: TCS34725 delantero al bus 1 junto al
-> PCA9685, TCS34725 trasero desconectado, ToF solo en el bus 0 sin
-> reasignación) en
-> [`calibracion/tof/README.md`](../calibracion/tof/README.md). Como
-> `firmware-esp32/` hoy no tiene el TCS34725 delantero conectado, esto no
-> cambia el cableado de la misión real todavía -- pero si se reincorpora,
-> **no alcanza con el orden de XSHUT de abajo**: hace falta el cableado
-> de bus separado del banco de pruebas.
+**Investigación completa en [`calibracion/tof/README.md`](../calibracion/tof/README.md)
+(resuelto el 2026-09-08, con un "resuelto" previo que no lo era — vale la
+pena leerlo si algún día se toca este cableado de nuevo).** Resumen: el
+diseño original ponía el ToF y el TCS34725 delantero en el mismo bus, con el
+ToF reasignándose a `0x30` vía XSHUT para dejarle 0x29 libre al color. Se
+probó y pareció funcionar — pero esa prueba tenía el TCS34725 sin corriente
+por accidente, así que nunca hubo un segundo dispositivo real compitiendo en
+0x29. Con el TCS34725 de verdad energizado, el `init()` completo del ToF
+fallaba: como el TCS no tiene pin de apagado, los dos chips contestaban 0x29
+a la vez y se corrompían mutuamente — el orden de las llamadas nunca fue el
+problema real.
 
-El VL53L1X arranca siempre en 0x29. El TCS34725 delantero, en el mismo bus,
-está fijo en esa misma dirección **y no tiene ningún pin de apagado**: en
-cuanto tiene alimentación, responde en 0x29 sin que el firmware pueda
-callarlo. La secuencia de arranque que tenía `TofSensorTask` en
-`firmware-esp32/src/main.cpp` (diseño original, ver la corrección arriba):
-
-1. **GPIO 3 en LOW desde `setup()`**, antes de crear ninguna tarea — el
-   VL53L1X queda en reset y no contesta en el bus. Esto es importante hacerlo
-   ANTES de arrancar cualquier tarea: algunas placas del sensor traen un
-   pull-up en XSHUT que lo deja activo apenas se energiza, así que si el
-   firmware tardara en ponerlo en LOW, habría una ventana de arranque con los
-   dos chips respondiendo en 0x29 a la vez.
-2. GPIO 3 a HIGH: el sensor sale de reset y arranca (~1.2 ms).
-3. Se le reasigna la dirección **0x30** con una única escritura corta a su
-   registro de dirección. Este es el único instante en que el VL53L1X sigue
-   en 0x29 mientras el TCS34725 delantero también está vivo ahí — se pensaba
-   acotado a una sola transacción de 3 bytes, pero en banco el TCS34725 vivo
-   ahí bastó para tumbar el `init()` completo, no solo esta escritura (ver la
-   corrección arriba).
-4. Recién ahora corre la inicialización completa del VL53L1X, ya en 0x30 y
-   sin nadie más escuchando ahí -- **en teoría**: el problema real es que
-   pasar por 0x29 compartido en el paso 3 ya alcanza para corromper el chip
-   antes de llegar acá.
-
-**Si el TCS34725 delantero empieza a dar lecturas raras justo después de un
-reset del ESP32 (y no antes), este es el primer sospechoso.** Revisar con un
-analizador lógico si se repite: se vería como una transacción I2C corta a
-0x29 justo después del arranque, seguida de dos direcciones I2C distintas
-conviviendo en el mismo bus.
+**El fix, ya aplicado en `firmware-esp32/` (no solo en el banco de
+pruebas):** separar los buses físicamente en vez de por dirección. ToF solo
+en el bus 0 (esta sección), TCS34725 delantero + PCA9685 juntos en el bus 1
+(ver la sección de arriba), TCS34725 trasero desconectado. Con esto, XSHUT
+ya NO necesita la coreografía de reasignación de dirección — solo mantiene
+al sensor en un estado de arranque conocido (GPIO 3 en LOW antes de
+`Wire.begin()`, HIGH después, mismo criterio que cualquier reset por
+hardware) y el VL53L1X se queda en su 0x29 de fábrica.
 
 > El VL53L1X se inicializa con la librería de PlatformIO `pololu/VL53L1X`
 > (ver `firmware-esp32/platformio.ini`) — es la única dependencia externa de
@@ -562,11 +510,11 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 5 | L298N‑I IN2 | 21 | Switch equipo — tiro ROJO |
 | 6 | L298N‑I ENA | 38 | LED RGB — canal G |
 | 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
-| 8 | I2C0 SDA (TCS34725 delantero + VL53L1X) | 40 | Switch equipo — tiro AZUL |
-| 9 | I2C0 SCL (TCS34725 delantero + VL53L1X) | 41 | LED RGB — canal B |
+| 8 | I2C0 SDA (VL53L1X, solo) | 40 | Switch equipo — tiro AZUL |
+| 9 | I2C0 SCL (VL53L1X, solo) | 41 | LED RGB — canal B |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
-| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 trasero + PCA9685) |
-| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 trasero + PCA9685) |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 delantero + PCA9685) |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 delantero + PCA9685) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 

@@ -55,6 +55,7 @@ from athena.protocol import (  # noqa: E402
     TeamColor,
     TeamSwitchTelemetry,
     Telemetry,
+    ToFTelemetry,
 )
 
 EQUIPOS = {"rojo": TeamColor.RED, "azul": TeamColor.BLUE}
@@ -62,6 +63,7 @@ EQUIPOS = {"rojo": TeamColor.RED, "azul": TeamColor.BLUE}
 NOMBRE_TELEMETRIA = {
     ColorTelemetry: "TLM_COLOR   (sensores de color)",
     ReflectTelemetry: "TLM_REFLECT (reflectancia QTR)",
+    ToFTelemetry: "TLM_TOF     (distancia VL53L1X)",
     HealthTelemetry: "TLM_HEALTH  (salud de tareas)",
     TeamSwitchTelemetry: "TLM_TEAM_SWITCH (switch fisico de equipo)",
 }
@@ -72,6 +74,7 @@ NOMBRE_TELEMETRIA = {
 HZ_ESPERADO = {
     ColorTelemetry: 10.0,
     ReflectTelemetry: 50.0,
+    ToFTelemetry: 20.0,
     HealthTelemetry: 5.0,
     TeamSwitchTelemetry: 4.0,   # LedTask, TaskPeriodMs::LED_STATUS = 250 ms
 }
@@ -138,6 +141,9 @@ def _describir(paquete: Telemetry) -> str:
     if isinstance(paquete, ReflectTelemetry):
         return (f"izq={paquete.left_raw} der={paquete.right_raw} "
                 f"(sobre línea: izq={paquete.left_on_line} der={paquete.right_on_line})")
+    if isinstance(paquete, ToFTelemetry):
+        return (f"{paquete.distance_mm} mm "
+                f"({'medición válida' if paquete.valid else 'sin medición válida'})")
     if isinstance(paquete, HealthTelemetry):
         caidas = paquete.faulted_tasks
         return f"tareas colgadas: {', '.join(caidas) if caidas else 'ninguna'}"
@@ -186,7 +192,9 @@ def _resumen(link: EspLink, stats: Estadisticas) -> None:
 
     print("""
 NOTA sobre sensores no conectados: es NORMAL y esperado ver
-  · TLM_COLOR  con 'sin lectura' en los dos sensores,
+  · TLM_COLOR  con 'sin lectura' en el delantero (el trasero SIEMPRE sale
+    así: no está cableado, ver hardware/conexiones-esp32-s3.md),
+  · TLM_TOF    con 'sin medición válida',
   · TLM_REFLECT con valores de ruido (los pines del ADC quedan al aire),
 si esos sensores todavía no están cableados. Lo que importa en esta prueba es
 que las tramas LLEGUEN, con el largo correcto y sin descartes.""")
