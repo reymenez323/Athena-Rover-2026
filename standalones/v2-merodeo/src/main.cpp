@@ -233,7 +233,8 @@ enum class TaskId : uint8_t {
     COUNT   // siempre el último
 };
 
-#define DEBUG_LINK Serial   // USB nativo: sin Raspberry Pi, no hace falta reservarlo aparte
+#define DEBUG_LINK Serial0   // consola por el puerto UART del DevKit -- así flashear y
+                              // monitorear usan el mismo cable, sin cambiar de puerto
 
 // ===========================================================================
 //  [2] TIPOS COMPARTIDOS ENTRE TAREAS

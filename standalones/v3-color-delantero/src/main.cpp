@@ -197,7 +197,8 @@ enum class TaskId : uint8_t {
     COUNT
 };
 
-#define DEBUG_LINK Serial
+#define DEBUG_LINK Serial0   // consola por el puerto UART del DevKit -- así flashear y
+                              // monitorear usan el mismo cable, sin cambiar de puerto
 
 // ===========================================================================
 //  [2] TIPOS COMPARTIDOS ENTRE TAREAS
