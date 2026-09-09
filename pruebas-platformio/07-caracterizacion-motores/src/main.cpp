@@ -80,14 +80,21 @@ struct Motor {
     const char *nombre;
 };
 
-// kMotorFL: con el cableado físico actual, la rueda conectada a OUT1/OUT2
-// del L298N izquierdo (la trasera izquierda del chasis) gira al revés
-// respecto a las otras tres. Se resuelve intercambiando el ORDEN de los dos
-// GPIO aquí mismo (ver la nota completa en 03-motores-adelante/src/main.cpp
-// y en hardware/conexiones-esp32-s3.md). Si se recablea este motor para que
+// kMotorRL: con el cableado físico actual, la rueda trasera izquierda del
+// chasis (conectada a OUT1/OUT2 del L298N izquierdo) gira al revés respecto
+// a las otras tres. Se resuelve intercambiando el ORDEN de los dos GPIO
+// aquí mismo (ver la nota completa en 03-motores-adelante/src/main.cpp y en
+// hardware/conexiones-esp32-s3.md). Si se recablea este motor para que
 // coincida con los otros tres, basta con volver a poner IN1, IN2 en orden.
-constexpr Motor kMotorFL = {Pins::L298N_L_IN2, Pins::L298N_L_IN1, Pins::L298N_L_ENA, 0, "FL"};
-constexpr Motor kMotorRL = {Pins::L298N_L_IN3, Pins::L298N_L_IN4, Pins::L298N_L_ENB, 1, "RL"};
+//
+// OUT1/OUT2 es físicamente la rueda TRASERA izq. (no la delantera, pese a
+// como la nombra la tabla de hardware/conexiones-esp32-s3.md) y OUT3/OUT4
+// es la DELANTERA izq. — al revés de lo que sugieren los nombres GPIO. Este
+// sketch es el único que controla cada motor por separado y expone su
+// nombre en el log, así que aquí es donde el nombre importa: se asigna por
+// posición física real, no por el orden IN1..IN4 de la tabla.
+constexpr Motor kMotorRL = {Pins::L298N_L_IN2, Pins::L298N_L_IN1, Pins::L298N_L_ENA, 0, "RL"};
+constexpr Motor kMotorFL = {Pins::L298N_L_IN3, Pins::L298N_L_IN4, Pins::L298N_L_ENB, 1, "FL"};
 constexpr Motor kMotorFR = {Pins::L298N_R_IN1, Pins::L298N_R_IN2, Pins::L298N_R_ENA, 2, "FR"};
 constexpr Motor kMotorRR = {Pins::L298N_R_IN3, Pins::L298N_R_IN4, Pins::L298N_R_ENB, 3, "RR"};
 

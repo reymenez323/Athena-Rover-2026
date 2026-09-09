@@ -3,11 +3,17 @@
 //  Athena Rover 2026 · Retos del Rover H07 · INTEC · Reymildo & Montse
 // ===========================================================================
 //
-//  Lee los DOS TCS34725 (delantero y trasero) y clasifica cada uno, por
-//  separado, entre AZUL / ROJO / AMARILLO / NEGRO / GRIS. Imprime el
-//  resultado de ambos por consola cada 200 ms. El LED RGB de equipo (uno
-//  solo, compartido) muestra la clasificación del sensor DELANTERO — no
-//  hay forma de mostrar los dos color a la vez con un solo LED.
+//  Lee el TCS34725 DELANTERO (único que queda conectado) y clasifica entre
+//  AZUL / ROJO / AMARILLO / NEGRO / GRIS. Imprime el resultado por consola
+//  cada 200 ms y lo muestra en el LED RGB de equipo.
+//
+//  ACTUALIZADO 2026-09-09 al cableado real vigente (ver
+//  ../../tof/README.md, "RESUELTO 2026-09-08 (de verdad)"): el TCS34725
+//  delantero se recableó al bus I2C nº1 (GPIO47/48, junto al PCA9685) y el
+//  TCS34725 trasero quedó desconectado por completo -- ya no compite por
+//  el bus ni añade su propia luz de iluminación como interferencia. Este
+//  archivo antes leía dos sensores (delantero en bus0, trasero en bus1);
+//  ahora solo existe uno.
 //
 //  UMBRALES RECALIBRADOS 2026-08-28 contra 970 muestras reales del sensor
 //  DELANTERO (ver ../analizar_umbrales_tcs.py y el comentario junto a
@@ -17,24 +23,16 @@
 //  estructural de esta clasificación por umbrales encadenados, no algo que
 //  se arregle recalibrando de nuevo; ver la explicación junto a Umbral::.
 //
-//  ⚠️ TODAVÍA sin calibrar el sensor TRASERO: estos umbrales solo se
-//  probaron contra datos del DELANTERO (../data_logs/ solo tiene corridas
-//  DELANTERO por ahora, ver ../calibrar_color.py). Un solo juego de
-//  umbrales compartido entre los dos sensores sigue siendo un supuesto sin
-//  verificar (ver ../README.md, sección "¿Calibrar los dos sensores por
-//  separado...?") — cuando existan capturas del trasero, correr
-//  ../analizar_umbrales_tcs.py de nuevo con ambos datasets y comparar. Si
-//  no se separan igual de limpio, este archivo necesita DOS structs
-//  Umbral (uno por sensor), no uno.
+//  Esos umbrales se calibraron con el delantero en su bus VIEJO (bus0). Si
+//  el bus nuevo (bus1, junto al PCA9685) le cambia el ruido eléctrico
+//  percibido, la primera señal de alerta sería confusiones entre GRIS y
+//  AMARILLO -- compara lo que veas aquí contra la calibración original
+//  antes de asumir que sigue sirviendo tal cual.
 //
 //  Driver TCS34725 copiado TAL CUAL de firmware-esp32/ y de ../firmware/
 //  (mismo ATIME/GAIN) — mismo motivo que en ../firmware/src/main.cpp: si
 //  este banco leyera con una configuración distinta a la del robot real,
 //  ni los datos ni la clasificación en vivo servirían para nada.
-//
-//  Pines: igual que ../firmware/src/main.cpp — ver hardware/conexiones-
-//  esp32-s3.md — más el LED RGB en los mismos GPIO que usa el diseño final
-//  (firmware-esp32/, pruebas-platformio/02-cuadro-color-rgb/).
 //
 // ===========================================================================
 
@@ -42,42 +40,27 @@
 #include <Wire.h>
 
 // ===========================================================================
-//  PINES — idénticos a ../firmware/src/main.cpp y a firmware-esp32
+//  PINES — bus I2C nº1 (GPIO47/48), igual que ../../tof/firmware/src/main.cpp
 // ===========================================================================
 
 namespace Pins {
-    constexpr uint8_t I2C0_SDA = 8;    // TCS34725 delantero
-    constexpr uint8_t I2C0_SCL = 9;
-    constexpr uint8_t I2C1_SDA = 47;   // TCS34725 trasero (bus dedicado, ver nota de direccion fija)
+    // TCS34725 delantero: bus I2C nº1, junto al PCA9685 (0x40, sin choque
+    // con 0x29). El bus I2C nº0 (GPIO8/9) queda para el VL53L1X solo -- este
+    // sketch no lo toca porque no necesita distancia, solo color.
+    constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
-    // Solo el delantero pasa por GPIO: el trasero se cableó directo a 3.3V
-    // (ver hardware/conexiones-esp32-s3.md) -- GPIO21 quedó libre para el
-    // switch de equipo.
     constexpr uint8_t TCS_LED_FRONT = 18;
-
-    // XSHUT del VL53L1X — este sketch no lo usa para nada, pero comparte el
-    // bus I2C nº0 con el TCS34725 DELANTERO en el robot real, y arranca
-    // SIEMPRE respondiendo en 0x29 -- la MISMA dirección fija del TCS34725
-    // (ver I2CAddr::TCS34725 abajo). Si sigue conectado y este pin se deja
-    // flotando, el delantero da lecturas corrompidas mientras el trasero
-    // (solo en su bus, sin nadie con quien chocar) sigue viéndose bien —
-    // mismo bug ya encontrado y arreglado en ../firmware/src/main.cpp, ver
-    // la nota larga ahí. Se mantiene en LOW (reset) todo el tiempo.
-    constexpr uint8_t TOF_XSHUT = 3;
 
     constexpr uint8_t RGB_R = 39;
     constexpr uint8_t RGB_G = 38;
     // GPIO 41, NO el 3: el diseño final le cedió el 3 al XSHUT del VL53L1X
-    // (ver hardware/conexiones-esp32-s3.md, sección del LED RGB) -- este
-    // sketch se había quedado con la asignación vieja, de antes de ese
-    // cambio, y con el 3 ocupado por dos cosas a la vez (RGB azul Y XSHUT)
-    // ninguna de las dos habría funcionado bien.
+    // (ver hardware/conexiones-esp32-s3.md, sección del LED RGB).
     constexpr uint8_t RGB_B = 41;
 }
 
 namespace I2CAddr {
-    constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar — por eso 2 buses
+    constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar
 }
 
 // ===========================================================================
@@ -234,7 +217,7 @@ ColorLabel Clasificar(const Tcs34725::Rgbc &s) {
 }
 
 // ===========================================================================
-//  LED RGB — muestra la clasificación del sensor DELANTERO únicamente
+//  LED RGB — muestra la clasificación del sensor delantero
 // ===========================================================================
 //
 // POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty alto
@@ -305,21 +288,14 @@ namespace RgbLed {
 // ===========================================================================
 
 bool g_frontOk = false;
-bool g_backOk  = false;
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\nDetector TCS34725 - clasificador de color (banco)");
+    Serial.println("Solo sensor delantero (bus I2C 1, GPIO47/48) -- trasero desconectado.");
     Serial.println("Umbrales recalibrados 2026-08-28 (delantero) -- NEGRO es el mas debil, ver encabezado.\n");
 
-    // VL53L1X en reset ANTES de abrir el bus I2C0 -- ver la nota larga junto
-    // a Pins::TOF_XSHUT sobre por qué, si sigue conectado, corrompe las
-    // lecturas del TCS34725 delantero (misma dirección fija 0x29).
-    pinMode(Pins::TOF_XSHUT, OUTPUT);
-    digitalWrite(Pins::TOF_XSHUT, LOW);
-
-    Wire.begin(Pins::I2C0_SDA, Pins::I2C0_SCL);
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
@@ -328,10 +304,8 @@ void setup() {
     RgbLed::Setup();
     RgbLed::SetRaw(0, 0, 0);
 
-    g_frontOk = Tcs34725::Init(Wire);
-    g_backOk  = Tcs34725::Init(Wire1);
-    if (!g_frontOk) Serial.println("[Setup] TCS34725 DELANTERO no responde (bus I2C 0).");
-    if (!g_backOk)  Serial.println("[Setup] TCS34725 TRASERO no responde (bus I2C 1).");
+    g_frontOk = Tcs34725::Init(Wire1);
+    if (!g_frontOk) Serial.println("[Setup] TCS34725 delantero no responde (bus I2C 1).");
 
     Serial.println("Listo.\n");
 }
@@ -341,45 +315,32 @@ void setup() {
 // ===========================================================================
 
 void loop() {
-    // Reintento perezoso de los sensores caídos, sin bloquear el resto —
-    // mismo patrón que ColorSensorTask en firmware-esp32/.
+    // Reintento perezoso del sensor si no respondió al arrancar, sin
+    // bloquear el resto — mismo patrón que ColorSensorTask en firmware-esp32/.
     static uint32_t lastRetryMs = 0;
     const uint32_t now = millis();
-    if ((!g_frontOk || !g_backOk) && (uint32_t)(now - lastRetryMs) > 1000) {
+    if (!g_frontOk && (uint32_t)(now - lastRetryMs) > 1000) {
         lastRetryMs = now;
-        if (!g_frontOk) g_frontOk = Tcs34725::Init(Wire);
-        if (!g_backOk)  g_backOk  = Tcs34725::Init(Wire1);
+        g_frontOk = Tcs34725::Init(Wire1);
     }
 
-    Tcs34725::Rgbc front, back;
-    bool frontValid = false, backValid = false;
+    Tcs34725::Rgbc front;
+    bool frontValid = false;
     ColorLabel frontLabel = ColorLabel::GRIS;
-    ColorLabel backLabel  = ColorLabel::GRIS;
 
-    if (g_frontOk && Tcs34725::Read(Wire, front)) {
+    if (g_frontOk && Tcs34725::Read(Wire1, front)) {
         frontLabel = Clasificar(front);
         frontValid = true;
     } else {
         g_frontOk = false;
     }
 
-    if (g_backOk && Tcs34725::Read(Wire1, back)) {
-        backLabel = Clasificar(back);
-        backValid = true;
-    } else {
-        g_backOk = false;
-    }
-
-    // El LED solo puede mostrar un color a la vez: se queda con el
-    // delantero. Si no hay lectura válida, se apaga (no "NEGRO", que sería
-    // engañoso -- son cosas distintas).
     RgbLed::SetRaw(0, 0, 0);
     if (frontValid) RgbLed::ApplyLabel(frontLabel);
 
     Serial.printf(
-        "delantero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s   trasero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s\n",
-        frontValid ? LabelName(frontLabel) : "?", front.c, front.r, front.g, front.b, frontValid ? "" : " SIN LEER",
-        backValid  ? LabelName(backLabel)  : "?", back.c,  back.r,  back.g,  back.b,  backValid  ? "" : " SIN LEER");
+        "delantero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s\n",
+        frontValid ? LabelName(frontLabel) : "?", front.c, front.r, front.g, front.b, frontValid ? "" : " SIN LEER");
 
     delay(200);
 }
