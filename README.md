@@ -46,7 +46,7 @@ tocar cualquier código:
 | Reto de la demostración | Quién lo resuelve |
 |---|---|
 | Distinguir el **borde negro** del **fondo gris** de la pista | Los 2 sensores de **reflectancia** (QTR) |
-| Identificar las **zonas de color** (negro, amarillo, rojo, azul) | Los 2 sensores de **color** (TCS34725) |
+| Identificar las **zonas de color** (negro, amarillo, rojo, azul) | El sensor de **color** delantero (TCS34725) -- el trasero no está conectado (choque de dirección I2C, ver `hardware/conexiones-esp32-s3.md`) |
 | Saber cuándo **cerrar la pinza** sobre la bandera cilíndrica | El **ToF** (VL53L1X) montado delante del gripper |
 | **Detectar la bandera del oponente y señalizar** su detección | La **cámara** de la Pi → `CMD_FLAG_SIGNAL` → destella el LED del ESP32 |
 | **Cargar y depositar la llave** | El **servo** del gripper (uno solo: agarra o suelta) |
@@ -149,10 +149,26 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 
 - [ ] Calibrar la focal de la cámara (`GeometryConfig.focal_px` es una
       estimación; el procedimiento de 5 minutos está en su docstring)
-- [ ] Calibrar el sensor de color **trasero** (hoy comparte los umbrales del delantero)
 - [ ] Resolver el retorno a la zona propia: hoy el robot avanza recto y solo
       reconoce su zona al pisarla. Necesita odometría o referencia visual. **Es
       el hueco más grande que queda.**
+
+## Código principal vs. bancos de prueba
+
+**`firmware-esp32/` y `raspberry-pi/` son el código que va a la competencia**
+-- lo que implementa la lógica completa del reto (ver
+[`docs/handoff-vision-edge-impulse.md`](docs/handoff-vision-edge-impulse.md)
+y el resto de `docs/`). `standalones/`, `calibracion/`,
+`pruebas-platformio/` y `raspberry-pi-pruebas/` son bancos de prueba: ahí se
+afinan sensores, se prueban maniobras nuevas y se caracteriza hardware antes
+de tocar el código real.
+
+**Regla:** nada se cambia en `firmware-esp32/` ni en `raspberry-pi/` sin
+haber pasado antes por pruebas en uno de esos bancos. Cuando algo ya se
+probó y funciona ahí, se decide aparte si conviene incorporarlo (a veces es
+solo un parámetro -- un ángulo, un umbral, un pin -- no todo el enfoque).
+Así el código principal se mantiene siempre en un estado que se puede llevar
+a competir, mientras la exploración sigue en paralelo sin arriesgarlo.
 
 ## Cómo colaborar
 
