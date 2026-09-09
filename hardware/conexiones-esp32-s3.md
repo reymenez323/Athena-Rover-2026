@@ -179,6 +179,19 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 | GND | GND | Negro | Masa común (obligatorio) |
 | 12 V | Batería de motores | Rojo | Alimentación de potencia — ver el aviso de Rojo compartido |
 
+> ⚠️ **2026-09-08 — motor trasero derecho reemplazado**: el motor amarillo
+> original perdió un engranaje y se cambió por otro. El reemplazo sigue en
+> OUT3/OUT4 del driver derecho (mismo IN3/IN4 = GPIO 13/14, sin cambios de
+> pines) — lo que puede haber cambiado es la POLARIDAD: el cable **rojo**
+> del motor nuevo quedó en OUT3 y el **negro** en OUT4. Todavía sin
+> confirmar si gira en el mismo sentido que los otros tres para "adelante"
+> — pendiente de probar con
+> [`pruebas-platformio/07-caracterizacion-motores/`](../pruebas-platformio/07-caracterizacion-motores/README.md).
+> Si resulta invertido, el arreglo es el mismo que ya tiene el motor
+> trasero izquierdo (ver el aviso en la sección de arriba): intercambiar
+> IN3/IN4 en la definición de `kMotorRR`, replicado en los mismos 5
+> archivos que esa nota ya lista.
+
 > PWM a **1 kHz**. El L298N es un driver bipolar antiguo: a 20 kHz calienta y
 > pierde par. A 1 kHz se oye un zumbido agudo — es normal, no está fallando.
 
