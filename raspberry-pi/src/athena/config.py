@@ -38,10 +38,13 @@ class CameraConfig:
 class GeometryConfig:
     """Calibración de la cámara, para estimar distancia y ángulo a la bandera.
 
-    Sirve para decidir cuándo frenar y acercarse. La distancia FINA, la que
-    dispara el cierre de la pinza, no sale de aquí sino del ToF (VL53L1X) del
-    ESP32, que mide de verdad en vez de estimar por tamaño aparente. O sea:
-    que ``focal_px`` esté sin calibrar degrada el control, no lo rompe.
+    Es la ÚNICA fuente de distancia que usa ``decision._aproximar_bandera``
+    para decidir cuándo frenar y cerrar la pinza -- el VL53L1X (ToF) que
+    hacía esa medición físicamente salió del firmware de vuelo (el bus I2C 0
+    nunca dio una conexión confiable en este hardware, ver
+    ``athena.protocol``), así que calibrar bien ``focal_px`` importa más que
+    antes: si está mal, el control de acercamiento se degrada de verdad, no
+    solo un poco.
 
     LA CÁMARA
     ---------

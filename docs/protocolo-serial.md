@@ -80,8 +80,13 @@ cuando el switch está en la posición central, el ESP32 respeta el último
 | `0x10` | `TLM_COLOR` | 7 | `[0..3]` timestamp_ms `u32` · `[4]` color delantero · `[5]` color trasero · `[6]` flags: bit0 delantero válido, bit1 trasero válido |
 | `0x11` | `TLM_REFLECT` | 9 | `[0..3]` timestamp_ms `u32` · `[4..5]` izq. crudo `u16` · `[6..7]` der. crudo `u16` · `[8]` flags: bit0 izq. sobre línea, bit1 der. sobre línea |
 | `0x12` | `TLM_HEALTH` | 5 | `[0..3]` timestamp_ms `u32` · `[4]` bitmask de tareas colgadas |
-| `0x13` | `TLM_TOF` | 7 | `[0..3]` timestamp_ms `u32` · `[4..5]` distancia_mm `u16` · `[6]` flags: bit0 válido |
 | `0x14` | `TLM_TEAM_SWITCH` | 5 | `[0..3]` timestamp_ms `u32` · `[4]` equipo (0=NONE, 1=RED, 2=BLUE), leído del switch físico de 3 posiciones |
+
+> `0x13` (`TLM_TOF`) no está: el VL53L1X salió del firmware de vuelo (el bus
+> I2C 0 nunca dio una conexión confiable en este hardware). La distancia a
+> la bandera para decidir cuándo cerrar la pinza sale solo de la cámara
+> (tamaño aparente en el frame, ver `GeometryConfig` en
+> `raspberry-pi/src/athena/config.py`).
 
 ### Valores de `ColorLabel` (en `TLM_COLOR`)
 
@@ -143,7 +148,7 @@ se apoya en un sensor concreto, y ninguno hace el trabajo de otro:
 |---|---|---|
 | Distinguir el borde negro del fondo gris | **Reflectancia (QTR ×2)** | `TLM_REFLECT` → prioridad absoluta en `decision.py`: si ve borde, retrocede pase lo que pase |
 | Identificar las zonas de color (negro, amarillo, rojo, azul) | **Sensores de color (TCS34725 ×2)** | `TLM_COLOR` → dispara soltar la llave (amarillo) y terminar la misión (color propio) |
-| Saber cuándo cerrar la pinza sobre la bandera | **ToF delantero (VL53L1X)** | `TLM_TOF` → medición física real, más confiable de cerca que estimar por tamaño en la imagen |
+| Saber cuándo cerrar la pinza sobre la bandera | **Cámara USB** (antes: ToF delantero, retirado) | Tamaño aparente de la bandera en el frame, ver `GeometryConfig` |
 | Detectar la bandera del oponente y señalizarla | **Cámara USB + modelo de Edge Impulse** | Solo la Pi la ve → `CMD_FLAG_SIGNAL` → el LED del ESP32 destella |
 | Cargar y depositar la llave | **Un servo de gripper** | `CMD_GRIPPER` con `CLOSE_LLAVE` / `OPEN` |
 | Saber a qué equipo pertenece el robot, sin depender de software | **Switch físico de 3 posiciones** | `TLM_TEAM_SWITCH` → `run_rover.py` espera esta señal antes de empezar; el ESP32 no mueve motores mientras reporte posición central |

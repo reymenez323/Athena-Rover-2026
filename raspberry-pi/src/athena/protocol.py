@@ -35,10 +35,15 @@ class PacketType(IntEnum):
     CMD_LED = 0x03
     CMD_FLAG_SIGNAL = 0x04
     # ESP32 -> RPi
+    #
+    # 0x13 (TLM_TOF) no está: el VL53L1X salió del firmware de vuelo (ver
+    # firmware-esp32/src/main.cpp, commit f695a43 -- el bus I2C 0 nunca dio
+    # una conexión confiable en este hardware). El robot sigue midiendo la
+    # distancia a la bandera, pero por tamaño aparente en cámara
+    # (Detection.distance_mm en decision.py), no por este sensor.
     TLM_COLOR = 0x10
     TLM_REFLECT = 0x11
     TLM_HEALTH = 0x12
-    TLM_TOF = 0x13
     TLM_TEAM_SWITCH = 0x14
 
 
@@ -49,7 +54,6 @@ LEN_CMD_FLAG_SIGNAL = 1
 LEN_TLM_COLOR = 7
 LEN_TLM_REFLECT = 9
 LEN_TLM_HEALTH = 5
-LEN_TLM_TOF = 7
 LEN_TLM_TEAM_SWITCH = 5
 
 
@@ -101,14 +105,13 @@ RECEIVABLE_TYPES = frozenset(
         PacketType.TLM_COLOR,
         PacketType.TLM_REFLECT,
         PacketType.TLM_HEALTH,
-        PacketType.TLM_TOF,
         PacketType.TLM_TEAM_SWITCH,
     }
 )
 
 
-# Mismo orden que el enum TaskId en main.cpp. TOF_SENSOR se agregó al final
-# allá a propósito (no mueve el bit de nadie más), así que va al final aquí.
+# Mismo orden que el enum TaskId en main.cpp. Sin tof_sensor: TofSensorTask
+# salió del firmware de vuelo junto con TLM_TOF (ver PacketType más arriba).
 TASK_NAMES = (
     "serial_comm",
     "motor_control",
@@ -116,7 +119,6 @@ TASK_NAMES = (
     "color_sensor",
     "reflectance",
     "led_status",
-    "tof_sensor",
 )
 
 
@@ -142,20 +144,6 @@ class ReflectTelemetry:
     left_on_line: bool
     right_on_line: bool
 
-
-@dataclass(frozen=True)
-class ToFTelemetry:
-    """Distancia del VL53L1X montado delante del gripper.
-
-    ``valid`` es False cuando el sensor no responde o cuando la última
-    medición no fue confiable (fuera de rango, señal débil, etc. — lo que el
-    firmware traduce de ``VL53L1X::RangeStatus``). No confundir con "no hay
-    nada delante": eso da una distancia válida, solo que grande.
-    """
-
-    timestamp_ms: int
-    distance_mm: int
-    valid: bool
 
 
 @dataclass(frozen=True)
@@ -190,7 +178,7 @@ class TeamSwitchTelemetry:
     team: TeamColor
 
 
-Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry | ToFTelemetry | TeamSwitchTelemetry
+Telemetry = ColorTelemetry | ReflectTelemetry | HealthTelemetry | TeamSwitchTelemetry
 
 
 # ---------------------------------------------------------------------------
@@ -344,14 +332,6 @@ def _decode_payload(packet_type: int, payload: bytes) -> Telemetry | None:
     if packet_type == PacketType.TLM_HEALTH and len(payload) == LEN_TLM_HEALTH:
         timestamp, bitmask = struct.unpack("<IB", payload)
         return HealthTelemetry(timestamp_ms=timestamp, faulted_bitmask=bitmask)
-
-    if packet_type == PacketType.TLM_TOF and len(payload) == LEN_TLM_TOF:
-        timestamp, distance, flags = struct.unpack("<IHB", payload)
-        return ToFTelemetry(
-            timestamp_ms=timestamp,
-            distance_mm=distance,
-            valid=bool(flags & 0x01),
-        )
 
     if packet_type == PacketType.TLM_TEAM_SWITCH and len(payload) == LEN_TLM_TEAM_SWITCH:
         timestamp, team = struct.unpack("<IB", payload)

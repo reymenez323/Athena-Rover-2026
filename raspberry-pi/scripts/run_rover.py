@@ -51,8 +51,12 @@ REPARTO DE SENSORES (quién resuelve qué):
 * **Sensores de reflectancia (QTR)** -> distinguir el borde negro de la pista
   del fondo gris. Llegan como ``ReflectTelemetry`` y tienen prioridad
   absoluta: salirse pierde la ronda.
-* **ToF (VL53L1X) delantero** -> distancia real hasta la bandera cilíndrica,
-  para saber cuándo cerrar la pinza. Llega como ``ToFTelemetry``.
+
+Hubo un ToF (VL53L1X) delantero que medía la distancia real a la bandera
+para saber cuándo cerrar la pinza; salió del firmware de vuelo (el bus I2C 0
+nunca dio una conexión confiable en este hardware, ver
+``athena.protocol``), así que esa distancia ahora sale solo de la cámara
+(tamaño aparente de la bandera en el frame, ver ``GeometryConfig``).
 
 La llave y el retorno a zona NO dependen de la cámara en absoluto, así que
 cambiar el detector de bandera no les afecta. ``decision.py`` sigue siendo
@@ -97,7 +101,6 @@ from athena.protocol import (  # noqa: E402
     ReflectTelemetry,
     TeamColor,
     TeamSwitchTelemetry,
-    ToFTelemetry,
 )
 from athena.types import BBox, Detection, ObjectClass, Perception  # noqa: E402
 
@@ -339,7 +342,6 @@ def main() -> int:
 
     ultimo_color: ColorTelemetry | None = None
     ultimo_reflect: ReflectTelemetry | None = None
-    ultimo_tof: ToFTelemetry | None = None
     ultima_fase = None
     # Se manda CMD_FLAG_SIGNAL solo cuando el estado CAMBIA, no en cada
     # cuadro: el LED del ESP32 conserva el último valor recibido, así que
@@ -403,8 +405,6 @@ def main() -> int:
                         ultimo_color = paquete
                     elif isinstance(paquete, ReflectTelemetry):
                         ultimo_reflect = paquete
-                    elif isinstance(paquete, ToFTelemetry):
-                        ultimo_tof = paquete
                     elif isinstance(paquete, TeamSwitchTelemetry):
                         # El switch volviendo al CENTRO después de haber
                         # estado en un equipo real es la señal de "ya
@@ -500,7 +500,7 @@ def main() -> int:
                 ultima_fuente_deteccion = fuente_deteccion
 
                 # --- 3. Decisión --------------------------------------------
-                comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect, ultimo_tof)
+                comandos = decisor.step(percepcion, ultimo_color, ultimo_reflect)
 
                 if decisor.state.phase is not ultima_fase:
                     log.info("Fase -> %s (%s)", decisor.state.phase.name, comandos.motivo)
@@ -589,10 +589,6 @@ def main() -> int:
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
                     cv2.putText(vista, f"{decisor.state.phase.name} | {ei_detector.last_timing_ms:.0f}ms",
                                 (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    if ultimo_tof is not None:
-                        tof_txt = f"{ultimo_tof.distance_mm}mm" if ultimo_tof.valid else "ToF invalido"
-                        cv2.putText(vista, f"ToF: {tof_txt}", (8, 32),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     cv2.imshow("Athena Rover", vista)
                     if (cv2.waitKey(1) & 0xFF) == ord("q"):
                         break
