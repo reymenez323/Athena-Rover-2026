@@ -44,7 +44,8 @@ mitad de giro con otro comando; espera a que termine).
 | `calibrar <ms> <grados>` | Fija `ms_por_grado = ms / grados`, a partir de una corrida de `girarms` ya medida con transportador o marcas en el piso. |
 | `girar <izq\|der> <grados>` | Gira esa cantidad de grados usando la calibración actual (`ms_por_grado * grados`) — para confirmar que la calibración da el ángulo esperado. |
 | `msgrado <valor>` | Fija `ms_por_grado` directo, si ya lo sabes de una sesión anterior. |
-| `duty <n>` | Cambia el duty (0-255, arranca en 255 — a fondo, mismo criterio que v5: al girar la única palanca que queda es tiempo, no fuerza). |
+| `duty <n>` | Cambia el duty de AMBOS lados (0-255, arranca en 255/255 — a fondo, mismo criterio que v5: al girar la única palanca que queda es tiempo, no fuerza). |
+| `dutylados <izq> <der>` | Duty INDEPENDIENTE por lado físico (izq = FL+RL, der = FR+RR) — para cuando un lado es mecánicamente más débil que el otro y el giro sale desparejo. Bajarle al lado fuerte a veces empareja mejor que subirle al débil, que ya puede estar a fondo. |
 | `alto` | Detiene los 4 motores. |
 | `?` | Reimprime el menú de ayuda. |
 | *(línea vacía)* | Reimprime `ms_por_grado` y `duty` actuales. |

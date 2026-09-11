@@ -26,10 +26,15 @@
 //    calibrar <ms> <grados>      fija ms_por_grado = ms / grados (a partir
 //                                 de una corrida de "girarms" ya medida)
 //    msgrado <valor>             fija ms_por_grado directo, si ya lo sabes
-//    duty <n>                    cambia el duty (0-255, arranca en 255 --
-//                                 a fondo, mismo criterio que v5: al girar
-//                                 la única palanca que queda es tiempo, no
-//                                 fuerza)
+//    duty <n>                    cambia el duty de AMBOS lados (0-255,
+//                                 arranca en 255/255 -- a fondo, mismo
+//                                 criterio que v5)
+//    dutylados <izq> <der>       duty INDEPENDIENTE por lado físico (izq =
+//                                 FL+RL, der = FR+RR) -- útil si un lado es
+//                                 mecánicamente más débil que el otro y el
+//                                 giro sale desparejo; bajarle al lado
+//                                 fuerte a veces empareja mejor que subirle
+//                                 al débil, que ya puede estar a fondo
 //    alto                        detiene los 4 motores
 //    ?                           reimprime el menú de ayuda
 //    (línea vacía)               reimprime el estado actual
@@ -152,15 +157,19 @@ void DetenerTodos() {
     for (uint8_t i = 0; i < 4; ++i) MotorAplicar(kMotores[i], Dir::ALTO, 0);
 }
 
-// Pivotea sobre su propio eje: un lado ADELANTE, el otro ATRAS, mismo duty
-// -- mismo primitivo que Phase::GIRAR en v5-agarrar-bandera
-// (SetDrive(motor, +kVelocidadGiroMax, -kVelocidadGiroMax)).
-void AplicarGiro(char sentido, uint8_t duty) {
+// Pivotea sobre su propio eje: un lado ADELANTE, el otro ATRAS -- duty
+// INDEPENDIENTE por lado físico (izq = FL+RL, der = FR+RR), no por sentido
+// de giro -- así el lado mecánicamente más débil (o el que hay que frenar
+// un poco para que el giro no salga desparejo) se ajusta igual sin
+// importar si esta vez le toca ir ADELANTE o ATRAS. Mismo primitivo base
+// que Phase::GIRAR en v5-agarrar-bandera (SetDrive(motor,
+// +kVelocidadGiroMax, -kVelocidadGiroMax)), pero con dos duty en vez de uno.
+void AplicarGiro(char sentido, uint8_t duty_izq, uint8_t duty_der) {
     const bool derecha = (sentido == 'd');
-    MotorAplicar(kMotorFL, derecha ? Dir::ADELANTE : Dir::ATRAS, duty);
-    MotorAplicar(kMotorRL, derecha ? Dir::ADELANTE : Dir::ATRAS, duty);
-    MotorAplicar(kMotorFR, derecha ? Dir::ATRAS : Dir::ADELANTE, duty);
-    MotorAplicar(kMotorRR, derecha ? Dir::ATRAS : Dir::ADELANTE, duty);
+    MotorAplicar(kMotorFL, derecha ? Dir::ADELANTE : Dir::ATRAS, duty_izq);
+    MotorAplicar(kMotorRL, derecha ? Dir::ADELANTE : Dir::ATRAS, duty_izq);
+    MotorAplicar(kMotorFR, derecha ? Dir::ATRAS : Dir::ADELANTE, duty_der);
+    MotorAplicar(kMotorRR, derecha ? Dir::ATRAS : Dir::ADELANTE, duty_der);
 }
 
 // ===========================================================================
@@ -172,27 +181,31 @@ namespace Cal {
     // (2026-09-07), de ANTES del fix FL/RL y del reemplazo del motor RR --
     // tratar como referencia, no como calibrado para el chasis actual.
     float   ms_por_grado = 3000.0f / 180.0f;
-    uint8_t duty          = 255;   // a fondo por defecto -- ver comentario arriba
+    // Duty por lado físico (izq = FL+RL, der = FR+RR), no por sentido de
+    // giro -- ver AplicarGiro(). Arrancan iguales, a fondo; "dutylados" los
+    // desacopla para compensar un lado más débil que el otro.
+    uint8_t duty_izq = 255;
+    uint8_t duty_der = 255;
 }
 
 void ImprimirEstado() {
-    DEBUG_LINK.printf("[Estado] ms_por_grado=%.3f (90 grados = %lu ms)   duty=%u/255\n",
-        Cal::ms_por_grado, (unsigned long)(90.0f * Cal::ms_por_grado), Cal::duty);
+    DEBUG_LINK.printf("[Estado] ms_por_grado=%.3f (90 grados = %lu ms)   duty_izq=%u/255  duty_der=%u/255\n",
+        Cal::ms_por_grado, (unsigned long)(90.0f * Cal::ms_por_grado), Cal::duty_izq, Cal::duty_der);
 }
 
 void ImprimirAyuda() {
-    DEBUG_LINK.println("Comandos: girar <izq|der> <grados> | girarms <izq|der> <ms> | calibrar <ms> <grados> | msgrado <valor> | duty <n> | alto | ?");
+    DEBUG_LINK.println("Comandos: girar <izq|der> <grados> | girarms <izq|der> <ms> | calibrar <ms> <grados> | msgrado <valor> | duty <n> | dutylados <izq> <der> | alto | ?");
 }
 
-void ImprimirLogGiro(const char *modo, char sentido, uint32_t ms, uint8_t duty) {
-    DEBUG_LINK.printf("[LOG] t_ms=%lu %s sentido=%s duracion_ms=%lu duty=%u/255\n",
+void ImprimirLogGiro(const char *modo, char sentido, uint32_t ms, uint8_t duty_izq, uint8_t duty_der) {
+    DEBUG_LINK.printf("[LOG] t_ms=%lu %s sentido=%s duracion_ms=%lu duty_izq=%u/255 duty_der=%u/255\n",
         (unsigned long)millis(), modo, (sentido == 'd') ? "DERECHA" : "IZQUIERDA",
-        (unsigned long)ms, duty);
+        (unsigned long)ms, duty_izq, duty_der);
 }
 
-void EjecutarGiro(const char *modo, char sentido, uint32_t ms, uint8_t duty) {
-    ImprimirLogGiro(modo, sentido, ms, duty);
-    AplicarGiro(sentido, duty);
+void EjecutarGiro(const char *modo, char sentido, uint32_t ms, uint8_t duty_izq, uint8_t duty_der) {
+    ImprimirLogGiro(modo, sentido, ms, duty_izq, duty_der);
+    AplicarGiro(sentido, duty_izq, duty_der);
     delay(ms);
     DetenerTodos();
     DEBUG_LINK.println("[Giro] listo, motores detenidos.");
@@ -218,7 +231,23 @@ void ManejarComando(String line) {
     }
 
     if (line.startsWith("duty ")) {
-        Cal::duty = (uint8_t)constrain(line.substring(5).toInt(), 0, 255);
+        const uint8_t d = (uint8_t)constrain(line.substring(5).toInt(), 0, 255);
+        Cal::duty_izq = d;
+        Cal::duty_der = d;
+        ImprimirEstado();
+        return;
+    }
+
+    if (line.startsWith("dutylados ")) {
+        String args = line.substring(10);
+        args.trim();
+        int espacio = args.indexOf(' ');
+        if (espacio < 0) {
+            DEBUG_LINK.println("[Error] uso: dutylados <izq> <der>");
+            return;
+        }
+        Cal::duty_izq = (uint8_t)constrain(args.substring(0, espacio).toInt(), 0, 255);
+        Cal::duty_der = (uint8_t)constrain(args.substring(espacio + 1).toInt(), 0, 255);
         ImprimirEstado();
         return;
     }
@@ -271,7 +300,7 @@ void ManejarComando(String line) {
             return;
         }
         uint32_t ms = (uint32_t)max(0L, args.substring(espacio + 1).toInt());
-        EjecutarGiro("girarms", sentidoStr[0], ms, Cal::duty);
+        EjecutarGiro("girarms", sentidoStr[0], ms, Cal::duty_izq, Cal::duty_der);
         DEBUG_LINK.println("[Giro] mide el angulo real (transportador o marcas en el piso) y usa \"calibrar <ms> <grados_medidos>\" para fijar la calibracion.");
         return;
     }
@@ -297,7 +326,7 @@ void ManejarComando(String line) {
             return;
         }
         uint32_t ms = (uint32_t)(grados * Cal::ms_por_grado);
-        EjecutarGiro("girar", sentidoStr[0], ms, Cal::duty);
+        EjecutarGiro("girar", sentidoStr[0], ms, Cal::duty_izq, Cal::duty_der);
         return;
     }
 
