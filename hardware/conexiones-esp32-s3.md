@@ -195,6 +195,17 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 > PWM a **1 kHz**. El L298N es un driver bipolar antiguo: a 20 kHz calienta y
 > pierde par. A 1 kHz se oye un zumbido agudo — es normal, no está fallando.
 
+> ⚠️ **Voltaje de prueba actual: 6.60 V en los motores (2026-09-11), no el
+> máximo de la batería.** Deliberadamente bajo mientras no se mida cuánto
+> consume la Raspberry Pi del mismo riel — se prefiere dejar margen a subir
+> a 7-8 V a ciegas. Todo parámetro calibrado por TIEMPO en cualquier
+> firmware/prueba (giros, pasos de ajuste, velocidades de avance) está
+> medido a este voltaje — más voltaje es más torque al mismo % de PWM, así
+> que el mismo ms ya no mueve/gira lo mismo. Si el voltaje real sube más
+> adelante, hay que recalibrar todo lo de tiempo otra vez (ver
+> `pruebas-platformio/08-calibracion-giro/` para el giro), no solo la
+> primera vez.
+
 ---
 
 ## Servos — PCA9685 (I2C, dirección 0x40)
