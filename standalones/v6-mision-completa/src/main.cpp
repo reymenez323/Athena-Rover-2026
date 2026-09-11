@@ -15,10 +15,11 @@
 //       se asume ya puesta bajo el gripper al arrancar, igual que v3.
 //    3. Avanza recto hasta ver AMARILLO con el sensor de color delantero
 //       (zona de depósito) -- full stop, y suelta la caja.
-//    4. RETROCEDE un poco, GIRA para esquivar la caja recién soltada, y
-//       GIRA otra vez para recentrarse hacia donde va a estar la bandera
-//       (ver "GIRO DE ESQUIVE Y RECENTRADO TRAS LA CAJA" más abajo) -- no
-//       seguir de largo por encima de la caja.
+//    4. RETROCEDE, GIRA para esquivar la caja recién soltada, AVANZA un
+//       poco para terminar de salir de la zona amarilla, y GIRA otra vez
+//       para recentrarse hacia donde va a estar la bandera (ver "GIRO DE
+//       ESQUIVE Y RECENTRADO TRAS LA CAJA" más abajo) -- no seguir de largo
+//       por encima de la caja.
 //    5. ESPERA MEDIA (no muy corta, no muy larga -- pensada para que una
 //       persona ponga la bandera al frente del robot, a la vista del ToF,
 //       ya con la caja fuera del camino gracias a los giros del paso
@@ -50,28 +51,33 @@
 //  en tu robot, hace falta recablearlo al bus 1 (GPIO47/48) antes de usar
 //  este firmware.
 //
-//  ⚠️ VOLTAJE DE PRUEBA: 6.60 V EN LOS MOTORES (2026-09-11)
+//  ⚠️ VOLTAJE DE PRUEBA: 7.60 V EN LOS MOTORES (subido de 6.60 V el 2026-09-11)
 //  ----------------------------------------------------------------------
-//  Todas las pruebas de esquive/giro de esta variante se corrieron con los
-//  motores a 6.60 V, deliberadamente bajo -- todavía no se ha medido
-//  cuánto consume la Raspberry Pi del mismo riel, así que se prefiere dejar
-//  margen hasta medirlo en vez de subir a 7-8 V a ciegas. TODOS los
-//  parámetros de esta variante que dependen de tiempo (los giros de
-//  esquive/recentrado, el paso de ajuste del ToF, kVelocidadCrucero) están
-//  calibrados a ESE voltaje -- más voltaje es más torque al mismo % de
-//  PWM, así que el mismo ms ya no mueve/gira lo mismo. Si el voltaje real
-//  cambia más adelante, hay que recalibrar todo lo de tiempo otra vez, no
-//  solo la primera vez.
+//  Empezó en 6.60 V, deliberadamente bajo -- todavía no se ha medido cuánto
+//  consume la Raspberry Pi del mismo riel, así que se prefería dejar margen
+//  en vez de subir a ciegas. Se subió a 7.60 V el mismo día porque a
+//  6.60 V los pasos chicos de ajuste del ToF (Phase::PASO_AJUSTE) no tenían
+//  fuerza suficiente para moverse -- a 7.60 V sí funcionan. Los ángulos de
+//  giro no cambiaron mucho con la subida (quedaron en los mismos 130°/190°,
+//  ver abajo), pero eso fue lo que se observó esta vez, no una garantía:
+//  TODOS los parámetros de esta variante que dependen de tiempo (giros,
+//  paso de ajuste, kVelocidadCrucero) están calibrados a ESE voltaje --
+//  más voltaje es más torque al mismo % de PWM, así que el mismo ms ya no
+//  mueve/gira necesariamente lo mismo. Si el voltaje real cambia de nuevo,
+//  hay que revisar todo lo de tiempo otra vez, no solo la primera vez --
+//  con pruebas-platformio/08-calibracion-giro/ para los giros.
 //
-//  GIRO DE ESQUIVE Y RECENTRADO TRAS LA CAJA (2026-09-09, ángulos
-//  actualizados 2026-09-11)
+//  GIRO DE ESQUIVE Y RECENTRADO TRAS LA CAJA (2026-09-09, ajustado
+//  2026-09-11)
 //  ----------------------------------------------------------------------
-//  Tras soltar la caja en la zona amarilla, el robot retrocede un poco
+//  Tras soltar la caja en la zona amarilla, el robot retrocede
 //  (Phase::RETROCEDER_TRAS_CAJA, para que el pivote no arrastre la caja),
-//  gira para esquivarla (Phase::ESQUIVAR_CAJA) y gira de nuevo para
-//  reapuntar hacia donde va a estar la bandera (Phase::GIRO_RECENTRAR) --
-//  mismo primitivo de giro que v5-agarrar-bandera (un lado ADELANTE, el
-//  otro ATRAS), calibrado con pruebas-platformio/08-calibracion-giro/.
+//  gira para esquivarla (Phase::ESQUIVAR_CAJA), avanza un poco para
+//  terminar de salir de la zona amarilla (Phase::AVANZAR_TRAS_ESQUIVE), y
+//  gira de nuevo para reapuntar hacia donde va a estar la bandera
+//  (Phase::GIRO_RECENTRAR) -- mismo primitivo de giro que v5-agarrar-
+//  bandera (un lado ADELANTE, el otro ATRAS), calibrado con
+//  pruebas-platformio/08-calibracion-giro/.
 //
 //  Los ángulos (Mission::kGiroEsquiveCajaDeg = 130°,
 //  Mission::kGiroRecentrarDeg = 190°) son de banco 2026-09-11 con el robot
@@ -126,6 +132,11 @@
 //    [10] MissionTask — el cerebro: caja, zona amarilla, bandera, zona enemiga
 //    [11] SupervisorTask, setup() / loop()
 //
+//  TODOS los parámetros que se han estado ajustando a mano en banco (giros,
+//  tiempos, velocidades, umbrales del ToF) están juntos en [0] PARÁMETROS
+//  AJUSTABLES, justo abajo -- para poder tocarlos y reflashear sin tener
+//  que buscar entre las tareas/drivers de más abajo.
+//
 // ===========================================================================
 
 #include <Arduino.h>
@@ -133,6 +144,172 @@
 #include <VL53L1X.h>
 #include <freertos/semphr.h>
 #include <esp_system.h>
+
+// ===========================================================================
+//  [0] PARÁMETROS AJUSTABLES — todo lo que se ha estado calibrando a mano
+//  en banco vive acá, junto, para poder tocarlo sin buscar en el resto del
+//  archivo. Las fases de Mission::Phase que usa cada constante están
+//  documentadas junto a la constante misma.
+// ===========================================================================
+
+namespace Mission {
+
+constexpr bool kMotionEnabled = true;
+
+constexpr int kVelocidadCrucero = 60;   // % de PWM al avanzar recto
+
+// -- Arranque / caja --------------------------------------------------------
+constexpr uint32_t kStartupDelayMs = 3000;   // tiempo para ubicar el robot y la caja
+constexpr uint32_t kGripperSettleCajaMs = 400;         // tiempo mecánico para que el servo llegue
+constexpr uint32_t kDelayTrasAsegurarCajaMs = 600;     // margen extra para que el agarre quede firme
+
+// -- Zona amarilla (depósito de la caja) ------------------------------------
+constexpr uint32_t kFullStopAntesDeSoltarCajaMs = 400;   // full stop antes de soltar, no se desliza
+constexpr uint32_t kGripperSettleAperturaCajaMs = 400;
+
+// -- Giro de esquive tras soltar la caja -------------------------------------
+// Ver "GIRO DE ESQUIVE Y RECENTRADO TRAS LA CAJA" al principio del archivo.
+//
+// ⚠️ TODO LO DE ACÁ (incluido kMsPorGradoEsquive) SE MIDIÓ A 7.60 V EN LOS
+// MOTORES (subido de 6.60 V el 2026-09-11 -- ver el aviso grande al
+// principio del archivo). Si el voltaje real cambia de nuevo, TODOS los
+// valores de aquí basados en tiempo (estos giros, el avance intermedio, el
+// paso de ajuste del ToF, kVelocidadCrucero) quedan en duda -- más voltaje
+// es más torque en el mismo % de PWM, así que el mismo ms ya no gira/
+// avanza necesariamente lo mismo. Revisar con 08-calibracion-giro/ (y
+// re-verificar el resto) cada vez que cambie el voltaje real de los
+// motores, no solo la primera vez.
+//
+// kMsPorGradoEsquive es el valor heredado de v5-agarrar-bandera (3000ms/
+// 180°, bench-confirmado 2026-09-07 a OTRO voltaje) -- solo un punto de
+// partida para no arrancar de cero, no una calibración real. Los ángulos
+// de abajo SÍ son de banco (2026-09-11, robot completo, pista real): en la
+// práctica el robot nunca gira los grados "de libro" que indicaría
+// kMsPorGradoEsquive -- la fricción de la pista y lo irregular del terreno
+// hacen que el mismo comando dé un ángulo distinto según en qué punto de
+// la pista esté. Por eso los rangos de abajo son anchos: no vale la pena
+// perseguir un ángulo exacto en esta superficie, ver
+// pruebas-platformio/08-calibracion-giro/README.md.
+constexpr float kMsPorGradoEsquive = 3000.0f / 180.0f;
+constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v5 (la única palanca es tiempo)
+
+// Retrocede antes de girar, para que el pivote no arrastre/empuje la caja
+// recién soltada (las ruedas barren un arco al pivotear, no giran en el
+// sitio exacto donde quedó la caja). Subido de 500 a 900 ms el 2026-09-11
+// (500 no bastaba, según lo visto en banco) -- seguir ajustando según lo
+// que se vea, esto no está calibrado con precisión.
+constexpr uint32_t kRetrocesoTrasCajaMs = 900;
+constexpr int kVelocidadRetrocesoTrasCaja = 40;   // % de PWM, moderado -- no es un tramo largo
+
+// Primer giro: esquivar la zona amarilla. Medido en banco 2026-09-11:
+// 120-140° de comando hacen falta para despejar la caja (no 90° como se
+// había puesto de entrada) -- 130° es el punto medio, punto de partida.
+constexpr int kGiroEsquiveCajaDeg = 130;
+// true = gira hacia la derecha (visto desde arriba) al esquivar; false =
+// hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
+// respecto al robot -- ajustar según la pista real, no es simétrico.
+constexpr bool kGiroEsquiveHaciaDerecha = true;
+constexpr uint32_t kDuracionGiroEsquiveMs = (uint32_t)(kGiroEsquiveCajaDeg * kMsPorGradoEsquive);
+
+// Tras el giro de esquive, avanza un poco en línea recta para terminar de
+// salir de la huella de la zona amarilla antes de girar otra vez -- sin
+// esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
+// Sin medir en banco todavía, punto de partida conservador.
+constexpr uint32_t kAvanceTrasEsquiveMs = 500;
+constexpr int kVelocidadAvanceTrasEsquive = 50;   // % de PWM, moderado
+
+// Segundo giro: volver a centrarse hacia donde va a estar la bandera,
+// tras haberse desviado con el giro de esquive. Medido en banco
+// 2026-09-11: 170-210° de comando -- 190° es el punto medio. Gira para el
+// lado CONTRARIO al de esquive por defecto (deshace parte del desvío y
+// sigue de largo hacia el otro lado) -- confirmar con la pista real cuál
+// sentido deja al robot mejor apuntado hacia donde va a estar la bandera.
+constexpr int kGiroRecentrarDeg = 190;
+constexpr bool kGiroRecentrarHaciaDerecha = !kGiroEsquiveHaciaDerecha;
+constexpr uint32_t kDuracionGiroRecentrarMs = (uint32_t)(kGiroRecentrarDeg * kMsPorGradoEsquive);
+
+// -- Espera media entre caja y bandera ---------------------------------------
+// Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
+// persona ponga la bandera al frente del robot (ya reorientado por el giro
+// de esquive), a la vista del ToF. Ajustar acá si 6 s se queda corto/largo.
+constexpr uint32_t kEsperaReacomodoMs = 6000;
+
+// -- Acercamiento a la bandera (ToF) -- MISMOS valores que v5-agarrar-bandera,
+// confirmados en banco 2026-09-07 -----------------------------------------
+constexpr uint16_t kDistanciaAproximacionMm = 150;
+constexpr uint16_t kRangoAgarreMinMm = 56;
+constexpr uint16_t kRangoAgarreMaxMm = 60;
+constexpr int kVelocidadPaso = 50;
+constexpr uint32_t kPasoDuracionMs = 140;
+constexpr uint32_t kSettleTrasParoMs = 200;
+constexpr int kLecturasConsecutivasRequeridas = 3;
+constexpr int kMaxPasosSeguridad = 40;
+constexpr uint32_t kGripperSettleBanderaMs = 500;
+
+// -- Tras agarrar la bandera: SIN GIRO, pedido explícito (distinto de los
+// giros de esquive/recentrado tras la caja, que sí están habilitados) --
+// solo un respiro corto y sigue recto.
+constexpr uint32_t kEsperaTrasAgarrarBanderaMs = 600;
+
+// -- Zona enemiga (depósito de la bandera) -----------------------------------
+constexpr uint32_t kFullStopZonaEnemigaMs = 700;   // "espere un poco" antes de soltar
+constexpr uint32_t kGripperSettleSueltaBanderaMs = 400;
+
+// -- Fases de la misión -------------------------------------------------------
+// (no son "parámetros" en sí, pero viven acá junto con todo lo demás de
+// Mission:: para no partir el namespace en dos mitades del archivo)
+enum class Phase : uint8_t {
+    ARRANQUE = 0,
+    ASEGURAR_CAJA,
+    ESPERAR_ANTES_DE_AVANZAR,
+    BUSCAR_ZONA_AMARILLA,
+    DETENER_ZONA_AMARILLA,
+    DEPOSITAR_CAJA,
+    RETROCEDER_TRAS_CAJA,
+    ESQUIVAR_CAJA,
+    AVANZAR_TRAS_ESQUIVE,
+    GIRO_RECENTRAR,
+    ESPERAR_REACOMODO,
+    AVANCE_GRUESO_BANDERA,
+    DETENER_PARA_MEDIR,
+    PASO_AJUSTE,
+    CERRAR_GRIPPER_BANDERA,
+    ESPERAR_TRAS_AGARRE,
+    AVANZAR_ZONA_ENEMIGA,
+    DETENER_ZONA_ENEMIGA,
+    SOLTAR_BANDERA,
+    TERMINADO,
+    FALLO_AJUSTE,
+};
+
+inline const char *PhaseName(Phase phase) {
+    switch (phase) {
+        case Phase::ARRANQUE:                  return "ARRANQUE";
+        case Phase::ASEGURAR_CAJA:              return "ASEGURAR_CAJA";
+        case Phase::ESPERAR_ANTES_DE_AVANZAR:   return "ESPERAR_ANTES_DE_AVANZAR";
+        case Phase::BUSCAR_ZONA_AMARILLA:       return "BUSCAR_ZONA_AMARILLA";
+        case Phase::DETENER_ZONA_AMARILLA:      return "DETENER_ZONA_AMARILLA";
+        case Phase::DEPOSITAR_CAJA:             return "DEPOSITAR_CAJA";
+        case Phase::RETROCEDER_TRAS_CAJA:       return "RETROCEDER_TRAS_CAJA";
+        case Phase::ESQUIVAR_CAJA:              return "ESQUIVAR_CAJA";
+        case Phase::AVANZAR_TRAS_ESQUIVE:       return "AVANZAR_TRAS_ESQUIVE";
+        case Phase::GIRO_RECENTRAR:             return "GIRO_RECENTRAR";
+        case Phase::ESPERAR_REACOMODO:          return "ESPERAR_REACOMODO";
+        case Phase::AVANCE_GRUESO_BANDERA:      return "AVANCE_GRUESO_BANDERA";
+        case Phase::DETENER_PARA_MEDIR:         return "DETENER_PARA_MEDIR";
+        case Phase::PASO_AJUSTE:                return "PASO_AJUSTE";
+        case Phase::CERRAR_GRIPPER_BANDERA:     return "CERRAR_GRIPPER_BANDERA";
+        case Phase::ESPERAR_TRAS_AGARRE:        return "ESPERAR_TRAS_AGARRE";
+        case Phase::AVANZAR_ZONA_ENEMIGA:       return "AVANZAR_ZONA_ENEMIGA";
+        case Phase::DETENER_ZONA_ENEMIGA:       return "DETENER_ZONA_ENEMIGA";
+        case Phase::SOLTAR_BANDERA:             return "SOLTAR_BANDERA";
+        case Phase::TERMINADO:                  return "TERMINADO";
+        case Phase::FALLO_AJUSTE:               return "FALLO_AJUSTE";
+        default:                                return "DESCONOCIDA";
+    }
+}
+
+} // namespace Mission
 
 // ===========================================================================
 //  [1] CONFIGURACIÓN
@@ -908,153 +1085,9 @@ void LedTask(void *) {
 
 // ===========================================================================
 //  [10] MISSIONTASK — caja, zona amarilla, bandera, zona enemiga
+//  (los parámetros ajustables de Mission:: y las fases viven en la sección
+//  [0] PARÁMETROS AJUSTABLES, al principio del archivo)
 // ===========================================================================
-
-namespace Mission {
-
-constexpr bool kMotionEnabled = true;
-
-constexpr int kVelocidadCrucero = 60;   // % de PWM al avanzar recto
-
-// -- Arranque / caja --------------------------------------------------------
-constexpr uint32_t kStartupDelayMs = 3000;   // tiempo para ubicar el robot y la caja
-constexpr uint32_t kGripperSettleCajaMs = 400;         // tiempo mecánico para que el servo llegue
-constexpr uint32_t kDelayTrasAsegurarCajaMs = 600;     // margen extra para que el agarre quede firme
-
-// -- Zona amarilla (depósito de la caja) ------------------------------------
-constexpr uint32_t kFullStopAntesDeSoltarCajaMs = 400;   // full stop antes de soltar, no se desliza
-constexpr uint32_t kGripperSettleAperturaCajaMs = 400;
-
-// -- Giro de esquive tras soltar la caja -------------------------------------
-// Ver "GIRO DE ESQUIVE TRAS LA CAJA" al principio del archivo.
-//
-// ⚠️ TODO LO DE ACÁ (incluido kMsPorGradoEsquive) SE MIDIÓ A 6.60 V EN LOS
-// MOTORES -- voltaje de banco deliberadamente bajo, ver el aviso grande al
-// principio del archivo sobre el consumo de la Raspberry Pi todavía sin
-// medir. Si más adelante se sube el voltaje (7-8 V u otro), TODOS los
-// valores de aquí basados en tiempo (este giro, el paso de ajuste del ToF,
-// kVelocidadCrucero) quedan inválidos -- más voltaje es más torque en el
-// mismo % de PWM, así que el mismo ms ya no gira/avanza lo mismo. Hay que
-// recalibrar con 08-calibracion-giro/ (y re-verificar el resto) cada vez
-// que cambie el voltaje real de los motores, no solo la primera vez.
-//
-// kMsPorGradoEsquive es el valor heredado de v5-agarrar-bandera (3000ms/
-// 180°, bench-confirmado 2026-09-07 a OTRO voltaje) -- solo un punto de
-// partida para no arrancar de cero, no una calibración real. Los ángulos
-// de abajo SÍ son de banco (2026-09-11, robot completo, pista real, a
-// 6.60 V): en la práctica el robot nunca gira los grados "de libro" que
-// indicaría kMsPorGradoEsquive -- la fricción de la pista y lo irregular
-// del terreno hacen que el mismo comando dé un ángulo distinto según en
-// qué punto de la pista esté. Por eso los rangos de abajo son anchos: no
-// vale la pena perseguir un ángulo exacto en esta superficie, ver
-// pruebas-platformio/08-calibracion-giro/README.md.
-constexpr float kMsPorGradoEsquive = 3000.0f / 180.0f;
-constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v5 (la única palanca es tiempo)
-
-// Retrocede un poco antes de girar, para que el pivote no arrastre/empuje
-// la caja recién soltada (las ruedas barren un arco al pivotear, no giran
-// en el sitio exacto donde quedó la caja). Duración/velocidad de partida,
-// sin medir en banco todavía -- ajustar según lo que se vea.
-constexpr uint32_t kRetrocesoTrasCajaMs = 500;
-constexpr int kVelocidadRetrocesoTrasCaja = 40;   // % de PWM, moderado -- no es un tramo largo
-
-// Primer giro: esquivar la zona amarilla. Medido en banco 2026-09-11:
-// 120-140° de comando hacen falta para despejar la caja (no 90° como se
-// había puesto de entrada) -- 130° es el punto medio, punto de partida.
-constexpr int kGiroEsquiveCajaDeg = 130;
-// true = gira hacia la derecha (visto desde arriba) al esquivar; false =
-// hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
-// respecto al robot -- ajustar según la pista real, no es simétrico.
-constexpr bool kGiroEsquiveHaciaDerecha = true;
-constexpr uint32_t kDuracionGiroEsquiveMs = (uint32_t)(kGiroEsquiveCajaDeg * kMsPorGradoEsquive);
-
-// Segundo giro: volver a centrarse hacia donde va a estar la bandera,
-// tras haberse desviado con el giro de esquive. Medido en banco
-// 2026-09-11: 170-210° de comando -- 190° es el punto medio. Gira para el
-// lado CONTRARIO al de esquive por defecto (deshace parte del desvío y
-// sigue de largo hacia el otro lado) -- confirmar con la pista real cuál
-// sentido deja al robot mejor apuntado hacia donde va a estar la bandera.
-constexpr int kGiroRecentrarDeg = 190;
-constexpr bool kGiroRecentrarHaciaDerecha = !kGiroEsquiveHaciaDerecha;
-constexpr uint32_t kDuracionGiroRecentrarMs = (uint32_t)(kGiroRecentrarDeg * kMsPorGradoEsquive);
-
-// -- Espera media entre caja y bandera ---------------------------------------
-// Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
-// persona ponga la bandera al frente del robot (ya reorientado por el giro
-// de esquive), a la vista del ToF. Ajustar acá si 6 s se queda corto/largo.
-constexpr uint32_t kEsperaReacomodoMs = 6000;
-
-// -- Acercamiento a la bandera (ToF) -- MISMOS valores que v5-agarrar-bandera,
-// confirmados en banco 2026-09-07 -----------------------------------------
-constexpr uint16_t kDistanciaAproximacionMm = 150;
-constexpr uint16_t kRangoAgarreMinMm = 56;
-constexpr uint16_t kRangoAgarreMaxMm = 60;
-constexpr int kVelocidadPaso = 50;
-constexpr uint32_t kPasoDuracionMs = 140;
-constexpr uint32_t kSettleTrasParoMs = 200;
-constexpr int kLecturasConsecutivasRequeridas = 3;
-constexpr int kMaxPasosSeguridad = 40;
-constexpr uint32_t kGripperSettleBanderaMs = 500;
-
-// -- Tras agarrar la bandera: SIN GIRO, pedido explícito (distinto de los
-// giros de esquive/recentrado tras la caja, que sí están habilitados) --
-// solo un respiro corto y sigue recto.
-constexpr uint32_t kEsperaTrasAgarrarBanderaMs = 600;
-
-// -- Zona enemiga (depósito de la bandera) -----------------------------------
-constexpr uint32_t kFullStopZonaEnemigaMs = 700;   // "espere un poco" antes de soltar
-constexpr uint32_t kGripperSettleSueltaBanderaMs = 400;
-
-enum class Phase : uint8_t {
-    ARRANQUE = 0,
-    ASEGURAR_CAJA,
-    ESPERAR_ANTES_DE_AVANZAR,
-    BUSCAR_ZONA_AMARILLA,
-    DETENER_ZONA_AMARILLA,
-    DEPOSITAR_CAJA,
-    RETROCEDER_TRAS_CAJA,
-    ESQUIVAR_CAJA,
-    GIRO_RECENTRAR,
-    ESPERAR_REACOMODO,
-    AVANCE_GRUESO_BANDERA,
-    DETENER_PARA_MEDIR,
-    PASO_AJUSTE,
-    CERRAR_GRIPPER_BANDERA,
-    ESPERAR_TRAS_AGARRE,
-    AVANZAR_ZONA_ENEMIGA,
-    DETENER_ZONA_ENEMIGA,
-    SOLTAR_BANDERA,
-    TERMINADO,
-    FALLO_AJUSTE,
-};
-
-inline const char *PhaseName(Phase phase) {
-    switch (phase) {
-        case Phase::ARRANQUE:                  return "ARRANQUE";
-        case Phase::ASEGURAR_CAJA:              return "ASEGURAR_CAJA";
-        case Phase::ESPERAR_ANTES_DE_AVANZAR:   return "ESPERAR_ANTES_DE_AVANZAR";
-        case Phase::BUSCAR_ZONA_AMARILLA:       return "BUSCAR_ZONA_AMARILLA";
-        case Phase::DETENER_ZONA_AMARILLA:      return "DETENER_ZONA_AMARILLA";
-        case Phase::DEPOSITAR_CAJA:             return "DEPOSITAR_CAJA";
-        case Phase::RETROCEDER_TRAS_CAJA:       return "RETROCEDER_TRAS_CAJA";
-        case Phase::ESQUIVAR_CAJA:              return "ESQUIVAR_CAJA";
-        case Phase::GIRO_RECENTRAR:             return "GIRO_RECENTRAR";
-        case Phase::ESPERAR_REACOMODO:          return "ESPERAR_REACOMODO";
-        case Phase::AVANCE_GRUESO_BANDERA:      return "AVANCE_GRUESO_BANDERA";
-        case Phase::DETENER_PARA_MEDIR:         return "DETENER_PARA_MEDIR";
-        case Phase::PASO_AJUSTE:                return "PASO_AJUSTE";
-        case Phase::CERRAR_GRIPPER_BANDERA:     return "CERRAR_GRIPPER_BANDERA";
-        case Phase::ESPERAR_TRAS_AGARRE:        return "ESPERAR_TRAS_AGARRE";
-        case Phase::AVANZAR_ZONA_ENEMIGA:       return "AVANZAR_ZONA_ENEMIGA";
-        case Phase::DETENER_ZONA_ENEMIGA:       return "DETENER_ZONA_ENEMIGA";
-        case Phase::SOLTAR_BANDERA:             return "SOLTAR_BANDERA";
-        case Phase::TERMINADO:                  return "TERMINADO";
-        case Phase::FALLO_AJUSTE:               return "FALLO_AJUSTE";
-        default:                                return "DESCONOCIDA";
-    }
-}
-
-} // namespace Mission
 
 inline void SetDrive(MotorCommand &m, int left, int right) {
     m.mode  = MotorMode::DRIVE;
@@ -1234,6 +1267,21 @@ void MissionTask(void *pvTeam) {
                         } else {
                             SetDrive(motor, -v, v);
                         }
+                    } else {
+                        phase = Mission::Phase::AVANZAR_TRAS_ESQUIVE;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // Avanza un poco tras esquivar, para terminar de salir de
+                // la huella de la zona amarilla antes de girar de nuevo --
+                // sin esto, el giro de recentrado (más grande) podía volver
+                // a pasar sobre la caja.
+                case Mission::Phase::AVANZAR_TRAS_ESQUIVE: {
+                    estado_led = EstadoVisible::AJUSTANDO;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kAvanceTrasEsquiveMs) {
+                        SetDrive(motor, Mission::kVelocidadAvanceTrasEsquive, Mission::kVelocidadAvanceTrasEsquive);
                     } else {
                         phase = Mission::Phase::GIRO_RECENTRAR;
                         phase_started_ms = millis();
