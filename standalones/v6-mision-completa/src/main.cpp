@@ -195,11 +195,19 @@ constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v
 
 // Retrocede antes de girar, para que el pivote no arrastre/empuje la caja
 // recién soltada (las ruedas barren un arco al pivotear, no giran en el
-// sitio exacto donde quedó la caja). Subido de 500 a 900 ms el 2026-09-11
-// (500 no bastaba, según lo visto en banco) -- seguir ajustando según lo
-// que se vea, esto no está calibrado con precisión.
+// sitio exacto donde quedó la caja). Duración subida de 500 a 900 ms el
+// 2026-09-11 (500 no bastaba, según lo visto en banco).
+//
+// ⚠️ DUTY subido de 40% a 80% el mismo día: a 40% el robot no se movía de
+// verdad hacia atrás (se confirmó en banco que el código SÍ manda reversa
+// a los 4 motores -- MotorApply/MotorTask, no es un bug de software). Es
+// arrancar desde parado, sin inercia, justo tras soltar la caja: el peor
+// caso para vencer fricción estática, y 40% quedaba por debajo de TODO lo
+// demás que ya funciona en este proyecto (60% de crucero, 100% en los
+// giros) -- no hay motivo físico para que retroceder necesite menos fuerza
+// que avanzar. Seguir ajustando según lo que se vea.
 constexpr uint32_t kRetrocesoTrasCajaMs = 900;
-constexpr int kVelocidadRetrocesoTrasCaja = 40;   // % de PWM, moderado -- no es un tramo largo
+constexpr int kVelocidadRetrocesoTrasCaja = 80;   // % de PWM
 
 // Primer giro: esquivar la zona amarilla. Referencia en grados del banco
 // 2026-09-11: 120-140° de comando hacían falta para despejar la caja (no
