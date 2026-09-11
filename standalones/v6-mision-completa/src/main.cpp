@@ -170,27 +170,27 @@ constexpr uint32_t kGripperSettleAperturaCajaMs = 400;
 // -- Giro de esquive tras soltar la caja -------------------------------------
 // Ver "GIRO DE ESQUIVE Y RECENTRADO TRAS LA CAJA" al principio del archivo.
 //
-// ⚠️ TODO LO DE ACÁ (incluido kMsPorGradoEsquive) SE MIDIÓ A 7.60 V EN LOS
-// MOTORES (subido de 6.60 V el 2026-09-11 -- ver el aviso grande al
-// principio del archivo). Si el voltaje real cambia de nuevo, TODOS los
-// valores de aquí basados en tiempo (estos giros, el avance intermedio, el
-// paso de ajuste del ToF, kVelocidadCrucero) quedan en duda -- más voltaje
-// es más torque en el mismo % de PWM, así que el mismo ms ya no gira/
-// avanza necesariamente lo mismo. Revisar con 08-calibracion-giro/ (y
-// re-verificar el resto) cada vez que cambie el voltaje real de los
-// motores, no solo la primera vez.
+// ⚠️ TODO LO DE ACÁ SE MIDIÓ A 7.60 V EN LOS MOTORES (subido de 6.60 V el
+// 2026-09-11 -- ver el aviso grande al principio del archivo). Si el
+// voltaje real cambia de nuevo, TODOS los valores de aquí basados en
+// tiempo (estos giros, el avance intermedio, el paso de ajuste del ToF,
+// kVelocidadCrucero) quedan en duda -- más voltaje es más torque en el
+// mismo % de PWM, así que el mismo ms ya no gira/avanza necesariamente lo
+// mismo. Revisar con 08-calibracion-giro/ (y re-verificar el resto) cada
+// vez que cambie el voltaje real de los motores, no solo la primera vez.
 //
-// kMsPorGradoEsquive es el valor heredado de v5-agarrar-bandera (3000ms/
-// 180°, bench-confirmado 2026-09-07 a OTRO voltaje) -- solo un punto de
-// partida para no arrancar de cero, no una calibración real. Los ángulos
-// de abajo SÍ son de banco (2026-09-11, robot completo, pista real): en la
-// práctica el robot nunca gira los grados "de libro" que indicaría
-// kMsPorGradoEsquive -- la fricción de la pista y lo irregular del terreno
-// hacen que el mismo comando dé un ángulo distinto según en qué punto de
-// la pista esté. Por eso los rangos de abajo son anchos: no vale la pena
-// perseguir un ángulo exacto en esta superficie, ver
-// pruebas-platformio/08-calibracion-giro/README.md.
-constexpr float kMsPorGradoEsquive = 3000.0f / 180.0f;
+// ⚠️ PARAMETRIZADO EN MS, NO EN GRADOS -- a propósito. Hasta el
+// 2026-09-11 estos dos giros se definían como "grados * ms_por_grado", que
+// se ve más intuitivo pero es una ilusión: en esta pista (fricción alta,
+// terreno irregular) el mismo comando da un ángulo real distinto según en
+// qué punto esté el robot, confirmado en banco -- "grados" no describe
+// nada que de verdad se esté logrando, solo maquilla un número de tiempo.
+// Ajustar el ms directo (más abajo) es más honesto y más rápido para
+// tunear por prueba y error. Los valores de referencia en grados de la
+// medición del 2026-09-11 quedan en el comentario de cada uno, por si
+// ayuda a razonar la magnitud del cambio, pero NO son la fuente de verdad
+// -- esa es el ms. `08-calibracion-giro/` sigue usando grados porque ahí
+// sí tiene sentido (se mide con transportador contra el chasis solo).
 constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v5 (la única palanca es tiempo)
 
 // Retrocede antes de girar, para que el pivote no arrastre/empuje la caja
@@ -201,15 +201,15 @@ constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v
 constexpr uint32_t kRetrocesoTrasCajaMs = 900;
 constexpr int kVelocidadRetrocesoTrasCaja = 40;   // % de PWM, moderado -- no es un tramo largo
 
-// Primer giro: esquivar la zona amarilla. Medido en banco 2026-09-11:
-// 120-140° de comando hacen falta para despejar la caja (no 90° como se
-// había puesto de entrada) -- 130° es el punto medio, punto de partida.
-constexpr int kGiroEsquiveCajaDeg = 130;
+// Primer giro: esquivar la zona amarilla. Referencia en grados del banco
+// 2026-09-11: 120-140° de comando hacían falta para despejar la caja (no
+// 90° como se había puesto de entrada) -- 130° ~ 2166 ms era el punto
+// medio con el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
+constexpr uint32_t kDuracionGiroEsquiveMs = 2166;
 // true = gira hacia la derecha (visto desde arriba) al esquivar; false =
 // hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
 // respecto al robot -- ajustar según la pista real, no es simétrico.
 constexpr bool kGiroEsquiveHaciaDerecha = true;
-constexpr uint32_t kDuracionGiroEsquiveMs = (uint32_t)(kGiroEsquiveCajaDeg * kMsPorGradoEsquive);
 
 // Tras el giro de esquive, avanza un poco en línea recta para terminar de
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
@@ -218,15 +218,15 @@ constexpr uint32_t kDuracionGiroEsquiveMs = (uint32_t)(kGiroEsquiveCajaDeg * kMs
 constexpr uint32_t kAvanceTrasEsquiveMs = 500;
 constexpr int kVelocidadAvanceTrasEsquive = 50;   // % de PWM, moderado
 
-// Segundo giro: volver a centrarse hacia donde va a estar la bandera,
-// tras haberse desviado con el giro de esquive. Medido en banco
-// 2026-09-11: 170-210° de comando -- 190° es el punto medio. Gira para el
-// lado CONTRARIO al de esquive por defecto (deshace parte del desvío y
-// sigue de largo hacia el otro lado) -- confirmar con la pista real cuál
-// sentido deja al robot mejor apuntado hacia donde va a estar la bandera.
-constexpr int kGiroRecentrarDeg = 190;
+// Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
+// haberse desviado con el giro de esquive. Referencia en grados del banco
+// 2026-09-11: 170-210° de comando -- 190° ~ 3167 ms era el punto medio con
+// el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
+constexpr uint32_t kDuracionGiroRecentrarMs = 3167;
+// Gira para el lado CONTRARIO al de esquive por defecto (deshace parte del
+// desvío y sigue de largo hacia el otro lado) -- confirmar con la pista
+// real cuál sentido deja al robot mejor apuntado hacia la bandera.
 constexpr bool kGiroRecentrarHaciaDerecha = !kGiroEsquiveHaciaDerecha;
-constexpr uint32_t kDuracionGiroRecentrarMs = (uint32_t)(kGiroRecentrarDeg * kMsPorGradoEsquive);
 
 // -- Espera media entre caja y bandera ---------------------------------------
 // Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
