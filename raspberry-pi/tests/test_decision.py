@@ -107,11 +107,18 @@ def test_la_secuencia_completa_respeta_el_orden_del_reglamento():
     _avanzar(d, CFG.frames_asentamiento_gripper - 1)
     assert d.state.phase is Phase.EVADIR_LLAVE
 
-    # EVADIR_LLAVE: retrocede, gira a la derecha, gira a la izquierda, y
-    # solo AHORA se habilita la búsqueda de la bandera. +1 porque la
-    # transición ocurre recién en el cuadro SIGUIENTE al último de la
-    # maniobra (ver el "else" implícito al final de ``_evadir_llave``).
-    total_evasion = CFG.frames_retroceso_evasion + 2 * CFG.frames_giro_evasion + 1
+    # EVADIR_LLAVE: retrocede, gira esquivando, avanza, gira recentrando
+    # (sin ver la bandera esta vez, así que agota el tope) y solo AHORA se
+    # habilita la búsqueda de la bandera. +1 porque la transición ocurre
+    # recién en el cuadro SIGUIENTE al último de la maniobra (ver el "else"
+    # implícito al final de ``_evadir_llave``).
+    total_evasion = (
+        CFG.frames_retroceso_evasion
+        + CFG.frames_giro_esquive
+        + CFG.frames_avance_esquive
+        + CFG.frames_giro_recentrar_max
+        + 1
+    )
     _avanzar(d, total_evasion)
     assert d.state.phase is Phase.BUSCAR_BANDERA   # recién ahora se habilita
 
@@ -121,8 +128,8 @@ def test_la_secuencia_completa_respeta_el_orden_del_reglamento():
 # ---------------------------------------------------------------------------
 
 
-def test_evadir_llave_retrocede_luego_gira_derecha_luego_izquierda():
-    """La maniobra pedida en el PDF: retroceder, doblar derecha, doblar izq."""
+def test_evadir_llave_retrocede_gira_avanza_y_gira_de_nuevo():
+    """La maniobra de 4 etapas: retroceder, pivotear, avanzar, pivotear."""
     d = DecisionMaker(CFG, RobotState(phase=Phase.EVADIR_LLAVE, llave_depositada=True))
 
     cmd = d.step(percepcion(), None, None)
@@ -130,16 +137,59 @@ def test_evadir_llave_retrocede_luego_gira_derecha_luego_izquierda():
 
     _avanzar(d, CFG.frames_retroceso_evasion - 1)
     cmd = d.step(percepcion(), None, None)
-    assert cmd.left > 0 and cmd.right > 0 and cmd.left > cmd.right    # avanza girando a la derecha
+    assert cmd.left > 0 and cmd.right < 0    # pivotea a la derecha (esquiva)
 
-    _avanzar(d, CFG.frames_giro_evasion - 1)
+    _avanzar(d, CFG.frames_giro_esquive - 1)
     cmd = d.step(percepcion(), None, None)
-    assert cmd.left > 0 and cmd.right > 0 and cmd.right > cmd.left    # corrige hacia la izquierda
+    assert cmd.left > 0 and cmd.right > 0 and cmd.left == cmd.right   # avanza recto
 
-    # +1 extra cuadro: la transición ocurre recién cuando se SUPERA el total
-    # de la maniobra (ver el "else" implícito al final de ``_evadir_llave``).
-    _avanzar(d, CFG.frames_giro_evasion)
+    _avanzar(d, CFG.frames_avance_esquive - 1)
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left < 0 and cmd.right > 0    # pivotea a la izquierda (recentra), sin ver la bandera
+
+    # +1 extra cuadro: la transición ocurre recién cuando se SUPERA el tope
+    # del giro de recentrado (ver el "else" implícito al final de
+    # ``_evadir_llave``) -- acá nunca se le mostró la bandera, así que agota
+    # el tope y recién entonces se habilita la búsqueda.
+    _avanzar(d, CFG.frames_giro_recentrar_max)
     assert d.state.phase is Phase.BUSCAR_BANDERA
+
+
+def test_evadir_llave_ignora_la_camara_antes_del_giro_de_recentrado():
+    """Ver la bandera durante retroceso/esquive/avance no debe tocar los motores."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.EVADIR_LLAVE, llave_depositada=True))
+    vista = percepcion(deteccion(ObjectClass.BANDERA_AZUL))
+
+    etapas_previas = CFG.frames_retroceso_evasion + CFG.frames_giro_esquive + CFG.frames_avance_esquive
+    for _ in range(etapas_previas):
+        d.step(vista, None, None)
+
+    # Ya se cruzaron las tres primeras etapas sin que la bandera (a la
+    # vista todo este tiempo) haya adelantado nada.
+    assert d.state.phase is Phase.EVADIR_LLAVE
+    assert d.state.frames_deteccion_evasion == 0
+
+
+def test_evadir_llave_giro_recentrar_salta_a_perseguir_si_ve_la_bandera():
+    """En el giro de recentrado, ver la bandera sostenida salta a APROXIMAR_BANDERA."""
+    d = DecisionMaker(CFG, RobotState(phase=Phase.EVADIR_LLAVE, llave_depositada=True))
+    vista = percepcion(deteccion(ObjectClass.BANDERA_AZUL))
+
+    etapas_previas = CFG.frames_retroceso_evasion + CFG.frames_giro_esquive + CFG.frames_avance_esquive
+    _avanzar(d, etapas_previas)
+    assert d.state.phase is Phase.EVADIR_LLAVE   # recién entrando al giro de recentrado
+
+    # Un solo cuadro viendo la bandera no basta (se exige detección sostenida).
+    cmd = d.step(vista, None, None)
+    assert d.state.phase is Phase.EVADIR_LLAVE
+    assert cmd.left != cmd.right   # sigue pivoteando, no persiguiendo todavía
+
+    # Verla los cuadros seguidos que pide frames_deteccion_estable_esquive sí interrumpe el giro.
+    for _ in range(CFG.frames_deteccion_estable_esquive - 1):
+        cmd = d.step(vista, None, None)
+
+    assert d.state.phase is Phase.APROXIMAR_BANDERA
+    assert cmd.motivo.startswith("persiguiendo")
 
 
 def test_agarrar_bandera_espera_el_gripper_antes_de_girar():
@@ -154,14 +204,20 @@ def test_agarrar_bandera_espera_el_gripper_antes_de_girar():
     assert d.state.phase is Phase.GIRO_RETORNO
 
 
-def test_giro_retorno_gira_a_tiempo_fijo_y_pasa_a_retornar():
+def test_giro_retorno_retrocede_luego_gira_y_pasa_a_retornar():
+    """Retrocede hacia el centro antes de pivotear ~180°, pedido explícito."""
     d = DecisionMaker(CFG, RobotState(phase=Phase.GIRO_RETORNO, team=TeamColor.RED,
                                       llave_depositada=True, bandera_capturada=True))
     cmd = d.step(percepcion(), None, None)
-    assert cmd.left != cmd.right                    # está girando, no avanzando recto
+    assert cmd.left < 0 and cmd.right < 0 and cmd.left == cmd.right   # retrocede recto
     assert d.state.phase is Phase.GIRO_RETORNO
 
-    _avanzar(d, CFG.frames_giro_retorno - 1)
+    _avanzar(d, CFG.frames_retroceso_retorno - 1)
+    cmd = d.step(percepcion(), None, None)
+    assert cmd.left != cmd.right                    # ya está girando, no retrocediendo
+    assert d.state.phase is Phase.GIRO_RETORNO
+
+    _avanzar(d, CFG.frames_giro_retorno)
     assert d.state.phase is Phase.RETORNAR_A_ZONA
 
 

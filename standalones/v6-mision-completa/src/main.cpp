@@ -207,13 +207,13 @@ constexpr int kVelocidadGiroEsquive = 100;   // % de PWM -- a fondo, igual que v
 // giros) -- no hay motivo físico para que retroceder necesite menos fuerza
 // que avanzar. Seguir ajustando según lo que se vea.
 constexpr uint32_t kRetrocesoTrasCajaMs = 900;
-constexpr int kVelocidadRetrocesoTrasCaja = 80;   // % de PWM
+constexpr int kVelocidadRetrocesoTrasCaja = 70;   // % de PWM
 
 // Primer giro: esquivar la zona amarilla. Referencia en grados del banco
 // 2026-09-11: 120-140° de comando hacían falta para despejar la caja (no
 // 90° como se había puesto de entrada) -- 130° ~ 2166 ms era el punto
 // medio con el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
-constexpr uint32_t kDuracionGiroEsquiveMs = 2166;
+constexpr uint32_t kDuracionGiroEsquiveMs = 2000;
 // true = gira hacia la derecha (visto desde arriba) al esquivar; false =
 // hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
 // respecto al robot -- ajustar según la pista real, no es simétrico.
@@ -223,14 +223,14 @@ constexpr bool kGiroEsquiveHaciaDerecha = true;
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
 // esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
 // Sin medir en banco todavía, punto de partida conservador.
-constexpr uint32_t kAvanceTrasEsquiveMs = 500;
-constexpr int kVelocidadAvanceTrasEsquive = 50;   // % de PWM, moderado
+constexpr uint32_t kAvanceTrasEsquiveMs = 900;
+constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 
 // Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
 // haberse desviado con el giro de esquive. Referencia en grados del banco
 // 2026-09-11: 170-210° de comando -- 190° ~ 3167 ms era el punto medio con
 // el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
-constexpr uint32_t kDuracionGiroRecentrarMs = 3167;
+constexpr uint32_t kDuracionGiroRecentrarMs = 2800;
 // Gira para el lado CONTRARIO al de esquive por defecto (deshace parte del
 // desvío y sigue de largo hacia el otro lado) -- confirmar con la pista
 // real cuál sentido deja al robot mejor apuntado hacia la bandera.
@@ -247,8 +247,8 @@ constexpr uint32_t kEsperaReacomodoMs = 6000;
 constexpr uint16_t kDistanciaAproximacionMm = 150;
 constexpr uint16_t kRangoAgarreMinMm = 56;
 constexpr uint16_t kRangoAgarreMaxMm = 60;
-constexpr int kVelocidadPaso = 50;
-constexpr uint32_t kPasoDuracionMs = 140;
+constexpr int kVelocidadPaso = 60;
+constexpr uint32_t kPasoDuracionMs = 150;
 constexpr uint32_t kSettleTrasParoMs = 200;
 constexpr int kLecturasConsecutivasRequeridas = 3;
 constexpr int kMaxPasosSeguridad = 40;

@@ -61,6 +61,11 @@ class RobotState:
     bandera_capturada: bool = False
     frames_sin_objetivo: int = 0
     sentido_busqueda: int = 1        # 1 = giro a la derecha, -1 = a la izquierda
+    # Cuadros SEGUIDOS viendo la bandera contraria durante el giro de
+    # recentrado de EVADIR_LLAVE (ver _evadir_llave) -- se reinicia a 0 en
+    # cuanto se pierde un cuadro, para exigir detección sostenida y no
+    # cortar el giro por un falso positivo suelto del detector.
+    frames_deteccion_evasion: int = 0
     # Cuadros transcurridos DENTRO de la fase actual. Se reinicia a 0 cada vez
     # que la fase cambia (ver DecisionMaker._ir_a_fase) y sirve de reloj
     # aproximado para las fases con un delay o una maniobra a tiempo fijo
@@ -167,7 +172,7 @@ class DecisionMaker:
             return self._depositar_llave()
 
         if phase is Phase.EVADIR_LLAVE:
-            return self._evadir_llave()
+            return self._evadir_llave(perception)
 
         if phase is Phase.BUSCAR_BANDERA:
             return self._buscar_bandera(perception)
@@ -264,35 +269,71 @@ class DecisionMaker:
             return Commands(motivo="llave depositada, maniobrando para no arrastrarla")
         return Commands(motivo="asentando la apertura de la pinza")
 
-    def _evadir_llave(self) -> Commands:
-        """Retrocede y esquiva la llave recién depositada antes de seguir.
+    def _evadir_llave(self, perception: Perception) -> Commands:
+        """Retrocede, esquiva la llave, avanza, y gira recentrando -- este
+        último paso guiado por cámara en cuanto ve la bandera contraria.
 
         Maniobra pedida explícitamente en el PDF de lógica (y dibujada en el
         plano de la pista): seguir de frente arrastraría la caja recién
-        depositada. Es a tiempo fijo, sin sensores -- ``frames_retroceso_
-        evasion``/``frames_giro_evasion`` en ``ControlConfig``, A CALIBRAR EN
-        CANCHA según el tamaño real de la caja y dónde quede el robot al
-        detenerse.
+        depositada. Reescrita 2026-09-12 con los tiempos/duty medidos en
+        banco con el chasis real (ver ``ControlConfig``, sección "Maniobra
+        de evasión") -- cuatro etapas en vez de las tres originales:
+
+          1. Retrocede recto (aleja el chasis de la llave antes de pivotear).
+          2. Gira (pivote) para esquivar la zona amarilla -- a tiempo fijo,
+             SIN mirar la cámara aunque ya esté viendo la bandera: pedido
+             explícito, nada debe tocar los motores por la bandera todavía.
+          3. Avanza recto un poco, para terminar de salir de la huella de la
+             zona amarilla antes del giro más grande que sigue.
+          4. Gira (pivote) recentrando hacia donde va a estar la bandera --
+             ACÁ SÍ entra la cámara: en cuanto la ve de forma sostenida
+             (``frames_deteccion_estable_esquive`` cuadros seguidos, para no
+             cortar el giro por un cuadro suelto de ruido), el giro se
+             interrumpe y se salta directo a ``APROXIMAR_BANDERA`` sin pasar
+             por el barrido ciego de ``BUSCAR_BANDERA`` -- pedido explícito:
+             minimizar giros y forzado de motores innecesarios. No hace
+             falta que esté centrada, solo visible: la persecución
+             proporcional de ``_perseguir()`` la va centrando después. Si el
+             giro llega a ``frames_giro_recentrar_max`` sin verla, recién
+             ahí se pasa a ``BUSCAR_BANDERA``.
         """
+        cfg = self._cfg
         f = self.state.frames_en_fase
-        v = self._cfg.velocidad_aproximacion
-        t1 = self._cfg.frames_retroceso_evasion
-        t2 = t1 + self._cfg.frames_giro_evasion
-        t3 = t2 + self._cfg.frames_giro_evasion
+        t_retroceso = cfg.frames_retroceso_evasion
+        t_esquive = t_retroceso + cfg.frames_giro_esquive
+        t_avance = t_esquive + cfg.frames_avance_esquive
+        t_recentrar = t_avance + cfg.frames_giro_recentrar_max
 
-        if f <= t1:
+        if f <= t_retroceso:
+            v = cfg.velocidad_retroceso_evasion
             return Commands(-v, -v, motivo="retrocediendo para no arrastrar la llave")
-        if f <= t2:
-            # Avanza girando a la derecha (izquierda más rápida) para
-            # rodear la caja por su lado derecho -- ver el plano de la pista.
-            return Commands(v, v // 3, motivo="esquivando la llave hacia la derecha")
-        if f <= t3:
-            # Corrige de vuelta hacia la izquierda para volver a quedar de
-            # frente a la zona del contrincante.
-            return Commands(v // 3, v, motivo="reposicionándose de frente tras esquivar la llave")
 
-        self._ir_a_fase(Phase.BUSCAR_BANDERA)
-        return Commands(motivo="maniobra de evasión completada, buscando la bandera")
+        if f <= t_esquive:
+            v = cfg.velocidad_giro_evasion
+            izq, der = (v, -v) if cfg.giro_esquive_hacia_derecha else (-v, v)
+            return Commands(izq, der, motivo="esquivando la zona amarilla")
+
+        if f <= t_avance:
+            v = cfg.velocidad_avance_esquive
+            return Commands(v, v, motivo="avanzando para salir de la huella de la zona amarilla")
+
+        if f <= t_recentrar:
+            objetivo = perception.best(self.state.bandera_objetivo)
+            if objetivo is not None:
+                vistas = self.state.frames_deteccion_evasion + 1
+                self.state = replace(self.state, frames_deteccion_evasion=vistas)
+                if vistas >= cfg.frames_deteccion_estable_esquive:
+                    self._ir_a_fase(Phase.APROXIMAR_BANDERA, frames_sin_objetivo=0)
+                    return self._perseguir(objetivo)
+            else:
+                self.state = replace(self.state, frames_deteccion_evasion=0)
+
+            v = cfg.velocidad_giro_evasion
+            izq, der = (v, -v) if cfg.giro_recentrar_hacia_derecha else (-v, v)
+            return Commands(izq, der, motivo="recentrando, buscando la bandera con la camara")
+
+        self._ir_a_fase(Phase.BUSCAR_BANDERA, frames_sin_objetivo=0)
+        return Commands(motivo="giro de recentrado agotado sin ver la bandera, iniciando busqueda")
 
     # -- fases de la bandera ------------------------------------------------
 
@@ -389,22 +430,46 @@ class DecisionMaker:
         return Commands(motivo="asentando el cierre de la pinza sobre la bandera")
 
     def _giro_retorno(self) -> Commands:
-        """Gira ~180° a tiempo fijo antes de buscar la zona propia.
+        """Retrocede hacia el centro y gira ~180° antes de buscar la zona propia.
 
         Sin odometría (mismo hueco que anota ``_retornar`` más abajo), el
         robot suele quedar orientado HACIA el fondo de la pista justo
         después de perseguir y agarrar la bandera contraria -- seguir de
         frente en ese momento lo aleja más de su zona, no lo acerca. Un giro
         a tiempo fijo antes de ``_retornar`` le da al menos una oportunidad
-        real de apuntar de vuelta. ``frames_giro_retorno`` en
-        ``ControlConfig``, A CALIBRAR EN CANCHA -- depende del punto exacto
-        donde se agarra la bandera y de la fricción de la pista.
+        real de apuntar de vuelta.
+
+        Retroceso agregado 2026-09-12, pedido explícito: los giros de este
+        chasis son muy abiertos y el robot no tiene sensor trasero -- girar
+        desde donde sea que haya quedado parado (posiblemente cerca de un
+        borde) arriesga salirse de la pista. Retroceder primero hacia el
+        centro le da más margen antes de pivotear.
+
+        A partir de acá la cámara ya no ayuda (no reconoce la zona propia) y
+        los giros vuelven a ser el punto débil -- ``factor_velocidad_
+        retorno`` en ``ControlConfig`` baja la velocidad un 15% de entrada,
+        pedido explícito para darle más margen a la corrección de borde
+        (que sigue con prioridad absoluta, sin verse afectada por esto).
+
+        ``frames_retroceso_retorno``/``frames_giro_retorno`` en
+        ``ControlConfig``, A CALIBRAR EN CANCHA -- el giro depende del punto
+        exacto donde se agarra la bandera y de la fricción de la pista.
         """
-        if self.state.frames_en_fase >= self._cfg.frames_giro_retorno:
-            self._ir_a_fase(Phase.RETORNAR_A_ZONA)
-            return Commands(motivo="giro completado, regresando a la zona propia")
-        v = self._cfg.velocidad_busqueda
-        return Commands(v, -v, motivo="girando ~180° para encarar la zona propia")
+        cfg = self._cfg
+        f = self.state.frames_en_fase
+        t_retroceso = cfg.frames_retroceso_retorno
+        t_giro = t_retroceso + cfg.frames_giro_retorno
+
+        if f <= t_retroceso:
+            v = int(cfg.velocidad_retroceso_evasion * cfg.factor_velocidad_retorno)
+            return Commands(-v, -v, motivo="retrocediendo hacia el centro antes de girar de vuelta")
+
+        if f <= t_giro:
+            v = int(cfg.velocidad_busqueda * cfg.factor_velocidad_retorno)
+            return Commands(v, -v, motivo="girando ~180° para encarar la zona propia")
+
+        self._ir_a_fase(Phase.RETORNAR_A_ZONA)
+        return Commands(motivo="giro completado, regresando a la zona propia")
 
     def _retornar(self, color: ColorTelemetry | None) -> Commands:
         """Vuelve a la zona propia. La línea de color del piso avisa al llegar."""
@@ -419,7 +484,12 @@ class DecisionMaker:
         # quedo girado. TODO: resolverlo con odometria (encoders) o reconociendo
         # visualmente la linea de color de la zona propia. Es el hueco mas grande
         # que queda en la logica de mision.
-        v = self._cfg.velocidad_crucero
+        #
+        # Velocidad reducida (factor_velocidad_retorno) por el mismo motivo
+        # que en _giro_retorno: la cámara ya no ayuda acá, y menos velocidad
+        # le da más tiempo de reacción a _evadir_borde si el robot no quedó
+        # bien apuntado tras el giro.
+        v = int(self._cfg.velocidad_crucero * self._cfg.factor_velocidad_retorno)
         return Commands(v, v, motivo="regresando a la zona propia")
 
     # -- control visual -----------------------------------------------------

@@ -99,7 +99,13 @@ class GeometryConfig:
 
 @dataclass(frozen=True)
 class ControlConfig:
-    """Ganancias del control visual. Conservadoras a propósito."""
+    """Ganancias del control visual y máquina de estados. Todo lo que se
+    ajusta a mano en cancha vive en este único dataclass, a propósito --
+    mismo criterio que ``standalones/v6-mision-completa/src/main.cpp`` en el
+    ESP32 (pidieron explícitamente poder tunear sin tener que buscar en
+    medio de la lógica): acá ni siquiera hace falta reflashear, solo editar
+    este archivo (o el JSON de ``config/rover.json``) y volver a correr.
+    """
 
     velocidad_crucero: int = 70      # % de PWM al avanzar en línea recta
     velocidad_busqueda: int = 65     # % al girar buscando
@@ -116,8 +122,69 @@ class ControlConfig:
     # aproximación -- el bucle real no corre siempre a 30 FPS exactos-- pero
     # es la misma convención que ya usaba este archivo, no una nueva.
     frames_asentamiento_gripper: int = 12   # ~0.4s: tiempo para que el servo llegue
-    frames_retroceso_evasion: int = 15      # ~0.5s retrocediendo tras soltar la llave
-    frames_giro_evasion: int = 12           # ~0.4s por cada giro (derecha, luego izquierda)
+
+    # -- Maniobra de evasión tras soltar la llave (Phase.EVADIR_LLAVE) ------
+    # Reescrita 2026-09-12 para llevar los tiempos/duty medidos en banco con
+    # el chasis real en standalones/v6-mision-completa/ (retroceso + giro +
+    # avance + giro, a 7.60V en los motores -- ver el aviso grande en ese
+    # archivo sobre por qué el voltaje importa). Convertido de ms a cuadros
+    # asumiendo ~30 FPS (ver CameraConfig.fps). Los dos giros son PIVOTE
+    # sobre el propio eje (un lado adelante, el otro atrás), no la curva de
+    # antes (un lado más rápido que el otro) -- alineado con v6 para que la
+    # calibración de banco sea directamente reutilizable acá.
+    frames_retroceso_evasion: int = 27      # ~900ms retrocediendo tras soltar la llave
+    velocidad_retroceso_evasion: int = 70   # % de PWM -- 40% no bastaba para vencer la fricción estática
+
+    frames_giro_esquive: int = 60           # ~2000ms -- primer giro, esquivar la zona amarilla
+    giro_esquive_hacia_derecha: bool = True  # true = pivotea a la derecha (visto desde arriba)
+
+    frames_avance_esquive: int = 27         # ~900ms -- avanza derecho para salir de la huella de la zona amarilla
+    velocidad_avance_esquive: int = 70      # % de PWM
+
+    # Segundo giro: YA NO es a tiempo fijo -- ver "GIRO DE RECENTRADO GUIADO
+    # POR CÁMARA" más abajo. frames_giro_recentrar_max es ahora un TOPE de
+    # seguridad, no una duración garantizada.
+    frames_giro_recentrar_max: int = 84     # ~2800ms -- tope si la cámara nunca ve la bandera
+    giro_recentrar_hacia_derecha: bool = False  # por defecto, sentido contrario al giro de esquive
+
+    velocidad_giro_evasion: int = 100       # % de PWM para AMBOS giros -- a fondo, la única palanca es tiempo
+
+    # GIRO DE RECENTRADO GUIADO POR CÁMARA (2026-09-12)
+    # ------------------------------------------------------------------
+    # Durante el segundo giro (recentrado), la cámara SÍ puede empezar a
+    # mandar sobre los motores -- a propósito, ANTES de eso (retroceso,
+    # primer giro, avance) el detector puede estar corriendo pero su salida
+    # se ignora por completo, ni de casualidad debe tocar los motores. En
+    # cuanto ve la bandera contraria de forma sostenida (no un solo cuadro
+    # suelto, para no cortar el giro por ruido del detector), el giro se
+    # interrumpe y se salta DIRECTO a APROXIMAR_BANDERA (sin pasar por el
+    # barrido ciego de BUSCAR_BANDERA) -- pedido explícito: minimizar
+    # movimientos y forzado de motores innecesarios. No hace falta que esté
+    # centrada -- alcanza con verla "de reojo", que la persecución
+    # proporcional de _perseguir() se encarga de irla centrando después.
+    # Si el giro llega al tope (frames_giro_recentrar_max) sin verla, recién
+    # ahí se pasa a BUSCAR_BANDERA (el barrido normal).
+    frames_deteccion_estable_esquive: int = 3   # ~0.1s -- cuadros seguidos viéndola para darla por buena
+
+    # -- Segunda mitad de la misión: bandera agarrada, regreso a la zona --
+    # A partir de acá la cámara ya cumplió su función (no ayuda a ubicar la
+    # zona propia) y los giros vuelven a ser el punto débil (a tiempo fijo,
+    # sin sensores) -- pedido explícito: bajar la velocidad un 10-20% para
+    # darle más margen a la corrección de borde (_evadir_borde, que sigue
+    # con prioridad absoluta y no se ve afectada por esto) y reducir el
+    # riesgo de salirse de la pista. 0.85 = 15%, punto medio del rango
+    # pedido -- ajustar aquí si hace falta más o menos margen.
+    factor_velocidad_retorno: float = 0.85
+
+    # Retrocede un poco hacia el centro de la pista ANTES del giro de
+    # ~180° -- pedido explícito: los giros son muy abiertos y closer al
+    # borde es más fácil salirse, y como el robot no tiene sensor trasero,
+    # más vale prevenir que corregir después. Sin calibrar en banco todavía
+    # (a diferencia del retroceso de EVADIR_LLAVE) -- punto de partida
+    # conservador, más corto que ese porque acá no hay nada que esquivar,
+    # solo ganar margen.
+    frames_retroceso_retorno: int = 15      # ~0.5s
+
     frames_giro_retorno: int = 45           # ~1.5s de giro al iniciar el regreso -- A CALIBRAR EN CANCHA
 
 
