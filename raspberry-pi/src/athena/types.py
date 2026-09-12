@@ -31,7 +31,7 @@ class BBox:
     """Caja en píxeles.
 
     OJO con el sistema de referencia: las cajas que salen del modelo de Edge
-    Impulse están en píxeles del frame YA reducido por el SDK (120x120), no de
+    Impulse están en píxeles del frame YA reducido por el SDK al tamaño del Impulse, no de
     la resolución de la cámara. Ver ``ei_flag_detector.EiFlagDetector``.
     """
 

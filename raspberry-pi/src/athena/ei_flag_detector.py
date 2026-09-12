@@ -26,7 +26,7 @@ comprueba explícitamente al construir el detector.
 
 COORDENADAS -- esto es lo más fácil de meter la pata: las cajas que devuelve
 ``detect()`` NO están en la resolución de la cámara. El SDK de Edge Impulse
-reescala/recorta el frame al tamaño que configuraste en el Impulse (120x120,
+reescala/recorta el frame al tamaño que configuraste en el Impulse (96x96 al momento de escribir esto,
 modo "Squash" en este proyecto) antes de correr el modelo, y las cajas salen
 en ESE tamaño reducido. Por eso ``frame_width``/``frame_height`` se actualizan
 en cada ``detect()``: quien las use para calcular un error de centrado tiene

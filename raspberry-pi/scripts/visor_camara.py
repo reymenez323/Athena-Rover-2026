@@ -358,7 +358,7 @@ def _dibujar_overlay(
     fh, fw = vista.shape[:2]
 
     # Cajas del modelo: reescaladas desde el frame reducido de Edge Impulse
-    # (120x120) al frame completo -- mismo cálculo que run_rover.py --ver.
+    # al frame completo -- mismo cálculo que run_rover.py --ver.
     escala_x = fw / max(1, frame_width_ei)
     escala_y = fh / max(1, frame_height_ei)
     for d in detecciones_ei:

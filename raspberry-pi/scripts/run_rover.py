@@ -246,7 +246,7 @@ def _percepcion_desde_color(
 
     Mismo tratamiento que ``_percepcion_desde_ei``, pero las cajas de
     ``ColorShapeDetector`` están medidas en el frame de captura COMPLETO
-    (``Camera.read_full()``), no en el 120x120 recortado por el SDK de Edge
+    (``Camera.read_full()``), no en el recorte del SDK de Edge
     Impulse -- por eso ``frame_width``/``frame_height`` acá son los de
     ``frame.shape``, no ``EiFlagDetector.frame_width``.
     """
@@ -452,7 +452,7 @@ def main() -> int:
                 # --- 2. Percepción (cámara USB -> Edge Impulse) ------------
                 # read_full() (resolución de captura completa), no read(): el
                 # SDK de Edge Impulse ya reescala/recorta al tamaño del
-                # Impulse (120x120) por su cuenta, reducir dos veces solo
+                # Impulse por su cuenta, reducir dos veces solo
                 # perdería detalle de más antes de esa etapa.
                 frame = cam.read_full()
                 if frame is None:

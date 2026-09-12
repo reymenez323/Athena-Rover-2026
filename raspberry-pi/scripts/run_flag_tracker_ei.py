@@ -129,7 +129,7 @@ def main() -> int:
             while not _parar:
                 # read_full() (resolución de captura completa), no read(): el
                 # SDK de Edge Impulse ya reescala/recorta al tamaño del
-                # Impulse (120x120) por su cuenta, así que reducir dos veces
+                # Impulse por su cuenta, así que reducir dos veces
                 # solo perdería detalle antes de esa etapa sin ganar nada.
                 frame = cam.read_full()
                 if frame is None:

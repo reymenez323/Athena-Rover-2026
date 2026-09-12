@@ -22,7 +22,7 @@ class CameraConfig:
     capture_width: int = 640
     capture_height: int = 480
     # Ancho de referencia del pipeline. Ya no se procesa a esta resolución
-    # (el SDK de Edge Impulse recorta y reescala por su cuenta a 120x120),
+    # (el SDK de Edge Impulse recorta y reescala por su cuenta al tamaño del Impulse),
     # pero sigue siendo el ancho contra el que está calibrada
     # ``GeometryConfig.focal_px``: ``run_rover.py`` reescala la focal desde
     # aquí al tamaño real que devuelve el modelo. No lo cambies sin recalibrar.
