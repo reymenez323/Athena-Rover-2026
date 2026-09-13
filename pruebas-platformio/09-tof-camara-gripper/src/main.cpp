@@ -307,24 +307,44 @@ void loop() {
         while (DEBUG_LINK.available()) DEBUG_LINK.read();
     }
 
-    uint16_t distancia_mm = 0;
-    bool distancia_valida = false;
+    // El ToF mide a ~20 Hz (RANGING_PERIOD_MS=50) pero este loop() da
+    // muchas más vueltas por segundo que eso -- si distancia_mm/valida
+    // fueran variables locales reiniciadas cada vuelta, la inmensa mayoría
+    // de las vueltas verían "sin dato nuevo todavía" y se leerían como
+    // inválidas, aunque el sensor esté midiendo perfectamente bien (esto
+    // pasaba acá: bug ya corregido 2026-09-13). Se guardan como estáticas,
+    // actualizadas SOLO cuando de verdad hay una lectura nueva, y el conteo
+    // de "lecturas consecutivas en rango" también se actualiza ahí mismo
+    // -- no en cada vuelta del loop() -- para que de verdad cuente
+    // mediciones físicas distintas, no la misma lectura vista de refilón
+    // varias veces.
+    static uint16_t g_ultimaDistanciaMm = 0;
+    static bool g_ultimaValida = false;
+    static uint32_t g_ultimaLecturaMs = 0;
+    constexpr uint32_t kLecturaObsoletaMs = 200;   // ~4 ciclos del sensor sin dato nuevo -> se muestra inválida
+
     if (g_tofOk && g_tof.dataReady()) {
-        distancia_mm = g_tof.read(false);
-        distancia_valida = !g_tof.timeoutOccurred() &&
+        const uint16_t mm = g_tof.read(false);
+        const bool valid = !g_tof.timeoutOccurred() &&
                             g_tof.ranging_data.range_status == VL53L1X::RangeValid;
         if (g_tof.timeoutOccurred()) g_tofOk = false;
+
+        g_ultimaDistanciaMm = mm;
+        g_ultimaValida = valid;
+        g_ultimaLecturaMs = millis();
+
+        const bool en_rango_ahora = valid && mm >= kRangoAgarreMinMm && mm <= kRangoAgarreMaxMm;
+        if (en_rango_ahora) {
+            if (g_lecturasEnRango < kLecturasConsecutivasRequeridas) ++g_lecturasEnRango;
+        } else {
+            g_lecturasEnRango = 0;
+            if (g_gripperCerrado) g_autoArmado = true;   // salió de rango -- se puede probar de nuevo
+        }
     }
 
-    const bool en_rango = distancia_valida &&
-        distancia_mm >= kRangoAgarreMinMm && distancia_mm <= kRangoAgarreMaxMm;
-
-    if (en_rango) {
-        if (g_lecturasEnRango < kLecturasConsecutivasRequeridas) ++g_lecturasEnRango;
-    } else {
-        g_lecturasEnRango = 0;
-        if (g_gripperCerrado) g_autoArmado = true;   // salió de rango -- se puede probar de nuevo
-    }
+    const bool distancia_valida = g_ultimaValida &&
+        (uint32_t)(millis() - g_ultimaLecturaMs) <= kLecturaObsoletaMs;
+    const uint16_t distancia_mm = g_ultimaDistanciaMm;
 
     const bool camara_confirma = CamaraBandera::Confirmada();
 
