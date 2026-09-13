@@ -393,6 +393,7 @@ def main() -> int:
 
             link.send_led(equipo)          # el reglamento exige identificarse
             ultimo_led = time.monotonic()
+            ultimo_estado_log = time.monotonic()
             ultima_fuente_deteccion = None
             ultimo_switch: TeamSwitchTelemetry | None = None
             apagado_solicitado = False
@@ -506,6 +507,32 @@ def main() -> int:
                 if decisor.state.phase is not ultima_fase:
                     log.info("Fase -> %s (%s)", decisor.state.phase.name, comandos.motivo)
                     ultima_fase = decisor.state.phase
+
+                # Diagnóstico de color/reflectancia -- 1 vez por segundo, no
+                # por cuadro (a 30 FPS inundaría el log sin aportar nada).
+                # Agregado 2026-09-12: sin esto, journalctl solo mostraba
+                # cambios de fase y avistamientos de bandera, así que una
+                # corrida atascada en BUSCAR_ZONA_NEUTRA no dejaba forma de
+                # saber si el sensor de color nunca vio amarillo, lo vio
+                # pero no se registró, o el robot ni siquiera llegó a esa
+                # franja (p. ej. atascado contra un borde). Quitar una vez
+                # que se entienda la causa del atasco -- no es para dejar
+                # corriendo siempre en competencia.
+                if time.monotonic() - ultimo_estado_log > 1.0:
+                    ultimo_estado_log = time.monotonic()
+                    if ultimo_color is not None:
+                        color_txt = (f"front={ultimo_color.front.name}"
+                                     f"(valido={ultimo_color.front_valid})")
+                    else:
+                        color_txt = "sin telemetria de color todavia"
+                    if ultimo_reflect is not None:
+                        reflect_txt = (f"izq_borde={ultimo_reflect.left_on_line} "
+                                        f"der_borde={ultimo_reflect.right_on_line}")
+                    else:
+                        reflect_txt = "sin telemetria de reflectancia todavia"
+                    log.info("[diag] fase=%s %s %s cmd=(%d,%d)",
+                              decisor.state.phase.name, color_txt, reflect_txt,
+                              comandos.left, comandos.right)
 
                 # --- 3b. CORRECCIÓN DE GIRO: línea central + zona muerta ---
                 # decision.py ya decidió QUÉ hacer (perseguir, agarrar,
