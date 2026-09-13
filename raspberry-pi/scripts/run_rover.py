@@ -397,8 +397,15 @@ def main() -> int:
             ultima_fuente_deteccion = None
             ultimo_switch: TeamSwitchTelemetry | None = None
             apagado_solicitado = False
+            # Para el diagnóstico de tiempo por vuelta -- ver más abajo.
+            t_vuelta_anterior = time.monotonic()
+            peor_vuelta_ms = 0.0
 
             while not _parar:
+                ahora_bucle = time.monotonic()
+                peor_vuelta_ms = max(peor_vuelta_ms, (ahora_bucle - t_vuelta_anterior) * 1000.0)
+                t_vuelta_anterior = ahora_bucle
+
                 # --- 1. Telemetría del ESP32 -------------------------------
                 for paquete in link.poll():
                     if isinstance(paquete, ColorTelemetry):
@@ -530,9 +537,19 @@ def main() -> int:
                                         f"der_borde={ultimo_reflect.right_on_line}")
                     else:
                         reflect_txt = "sin telemetria de reflectancia todavia"
-                    log.info("[diag] fase=%s %s %s cmd=(%d,%d)",
+                    # peor_vuelta_ms: la vuelta más lenta del bucle en el
+                    # último segundo. El firmware corta los motores en seco
+                    # si pasan 500ms (COMMS_FAILSAFE_TIMEOUT_MS) sin un
+                    # comando nuevo -- si esto anda cerca o por encima de
+                    # 500, la Pi (cámara + modelo + detector de respaldo,
+                    # cada cuadro) es lo bastante lenta como para disparar
+                    # ese failsafe sola, sin que la lógica de decisión tenga
+                    # nada que ver -- el robot se vería "frenando solo,
+                    # errático", que es justo lo reportado.
+                    log.info("[diag] fase=%s %s %s cmd=(%d,%d) peor_vuelta_ms=%.0f",
                               decisor.state.phase.name, color_txt, reflect_txt,
-                              comandos.left, comandos.right)
+                              comandos.left, comandos.right, peor_vuelta_ms)
+                    peor_vuelta_ms = 0.0
 
                 # --- 3b. CORRECCIÓN DE GIRO: línea central + zona muerta ---
                 # decision.py ya decidió QUÉ hacer (perseguir, agarrar,
