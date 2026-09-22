@@ -124,6 +124,14 @@
 //  raspberry-pi/src/athena/. El script que hay que correr en la Pi para
 //  esto es aparte, ver el mensaje donde se entregó este archivo.
 //
+//  DE VUELTA HACIA LA PI (2026-09-22): el switch físico de equipo ya decide
+//  ROJO/AZUL en setup() (ver más abajo) -- para que avisar_bandera_v7.py no
+//  tenga que recibirlo por línea de comandos (y arriesgarse a desincronizar
+//  del switch real), este firmware le manda un byte 'R' o 'A' por el mismo
+//  CAM_LINK, repetido cada kEquipoBroadcastMs (ver CamaraBandera::
+//  EnviarEquipo()) en vez de una sola vez, para que la Pi lo reciba sin
+//  importar el orden de arranque de los dos lados.
+//
 //  SIN GIRO DESPUÉS DE AGARRAR LA BANDERA
 //  ----------------------------------------------------------------------
 //  v5-agarrar-bandera giraba ~90° tras cerrar el gripper, para demostrar
@@ -280,6 +288,14 @@ constexpr bool kGiroRecentrarHaciaDerecha = !kGiroEsquiveHaciaDerecha;
 // para no cortar el giro por un aviso suelto/ruido.
 constexpr uint32_t kFrescoBanderaCamaraMs = 300;
 constexpr uint32_t kSostenBanderaCamaraMs = 150;
+
+// -- Aviso de equipo hacia la Raspberry Pi (para avisar_bandera_v7.py) -----
+// El switch físico ya decide el equipo acá (ver setup()); en vez de que la
+// Pi lo reciba por línea de comandos (que puede desincronizarse del switch
+// real), el ESP32 lo manda solo, repetido a este ritmo -- así, sin importar
+// si avisar_bandera_v7.py arranca antes, después, o se reinicia a mitad de
+// ronda, lo recibe igual en menos de un ciclo.
+constexpr uint32_t kEquipoBroadcastMs = 500;
 
 // -- Espera media entre caja y bandera ---------------------------------------
 // Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
@@ -1194,6 +1210,20 @@ namespace CamaraBandera {
         return sostenida_desde_ms != 0 &&
                (uint32_t)(millis() - sostenida_desde_ms) >= Mission::kSostenBanderaCamaraMs;
     }
+
+    // Difunde el equipo (ya decidido por el switch físico en setup()) a la
+    // Raspberry Pi, repetido cada kEquipoBroadcastMs en vez de una sola vez
+    // al arrancar -- así avisar_bandera_v7.py lo recibe también si se
+    // conecta o se reinicia después de este firmware, sin tener que
+    // reiniciar el ESP32. Un solo byte, mismo espíritu que 'V': 'R' = ROJO,
+    // 'A' = AZUL.
+    void EnviarEquipo(TeamColor team) {
+        static uint32_t ultimo_envio_ms = 0;
+        const uint32_t ahora = millis();
+        if ((uint32_t)(ahora - ultimo_envio_ms) < Mission::kEquipoBroadcastMs) return;
+        ultimo_envio_ms = ahora;
+        CAM_LINK.write(team == TeamColor::RED ? 'R' : 'A');
+    }
 }
 
 // pvTeam apunta a g_myTeam (global, ver setup()) -- de ahí se deriva
@@ -1236,6 +1266,7 @@ void MissionTask(void *pvTeam) {
 
     for (;;) {
         CamaraBandera::Actualizar();
+        CamaraBandera::EnviarEquipo(team);
 
         ColorReading c;
         while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) last_color = c;

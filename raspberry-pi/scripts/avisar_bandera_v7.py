@@ -19,13 +19,21 @@ bien en banco) y reducir el trabajo de la Pi a avisar "la veo" -- si este
 script se cuelga, se atrasa, o ni siquiera está conectado, el ESP32 sigue la
 misión igual, a ciegas, con el mismo comportamiento de v6.
 
+EQUIPO: normalmente NO se pasa por línea de comandos. El switch físico de 3
+posiciones del chasis ya decide ROJO/AZUL dentro del propio
+v7-mision-completa-camara (ver setup() en su main.cpp), que le manda ese
+mismo byte ('R'/'A') a este script por el mismo CAM_LINK -- así el equipo
+nunca se puede desincronizar entre los dos lados. ``--equipo`` sigue
+existiendo solo para banco sin switch instalado o sin ESP32 conectado.
+
 CONEXIÓN: al puerto USB NATIVO del ESP32-S3 (no el de programación/UART) --
 ver "SEÑAL DE CÁMARA" en standalones/v7-mision-completa-camara/src/main.cpp.
 
 USO::
 
-    python3 scripts/avisar_bandera_v7.py --equipo rojo
-    python3 scripts/avisar_bandera_v7.py --equipo azul --puerto /dev/ttyACM0
+    python3 scripts/avisar_bandera_v7.py                    # normal: espera el switch del ESP32
+    python3 scripts/avisar_bandera_v7.py --equipo rojo       # banco, sin switch/ESP32
+    python3 scripts/avisar_bandera_v7.py --puerto /dev/ttyACM0
 """
 
 from __future__ import annotations
@@ -65,7 +73,7 @@ def _signal_handler(signum, frame) -> None:
 
 
 class SenalSerial:
-    """Conexión de solo-escritura al ESP32: un byte 'V' por detección.
+    """Conexión con el ESP32: manda 'V' por detección, recibe 'R'/'A' de equipo.
 
     Deliberadamente sin el framing/checksum de ``athena.link.EspLink`` --
     ver el aviso grande en el módulo. Reconecta sola si el puerto se cae
@@ -118,6 +126,32 @@ class SenalSerial:
                 pass
             self._serial = None
 
+    def leer_equipo(self) -> str | None:
+        """Drena lo que haya llegado del ESP32 y devuelve 'rojo'/'azul' si
+        trae el byte de equipo ('R'/'A', ver CamaraBandera::EnviarEquipo()
+        en el firmware), o None si no llegó nada nuevo. Si llegan varios
+        bytes de golpe se queda con el último -- mismo criterio que usa el
+        propio ESP32 para 'V' en CamaraBandera::Actualizar()."""
+        self._asegurar_conexion()
+        if self._serial is None or not self._serial.is_open:
+            return None
+        equipo = None
+        try:
+            pendientes = self._serial.in_waiting
+            if pendientes:
+                for b in self._serial.read(pendientes):
+                    if b == ord("R"):
+                        equipo = "rojo"
+                    elif b == ord("A"):
+                        equipo = "azul"
+        except (serial.SerialException, OSError):
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+            self._serial = None
+        return equipo
+
     def close(self) -> None:
         if self._serial is not None:
             try:
@@ -129,8 +163,11 @@ class SenalSerial:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--equipo", required=True, choices=["rojo", "azul"],
-                        help="tiene que coincidir con el switch físico del robot")
+    parser.add_argument("--equipo", default=None, choices=["rojo", "azul"],
+                        help="fuerza el equipo SIN esperar el switch del ESP32 (banco de pruebas, "
+                             "sin switch instalado o sin ESP32 conectado). Normal: se omite, y se "
+                             "espera el byte 'R'/'A' que manda v7-mision-completa-camara tras leer "
+                             "su switch físico -- así nunca se puede desincronizar del switch real.")
     parser.add_argument("--puerto", default=PUERTO_AUTO,
                         help="puerto serial del ESP32 (USB nativo, no UART). 'auto' prueba ttyACM0/1, ttyUSB0/1")
     parser.add_argument("--baud", type=int, default=115200)
@@ -149,8 +186,25 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     cfg = Config.load(args.config)
-    etiqueta_objetivo = ETIQUETA_AZUL if args.equipo == "rojo" else ETIQUETA_ROJO
-    log.info("Equipo: %s | avisando cuando vea: %s", args.equipo.upper(), etiqueta_objetivo)
+    senal = SenalSerial(args.puerto, args.baud)
+
+    if args.equipo is not None:
+        equipo = args.equipo
+        log.info("Equipo forzado por --equipo: %s (sin esperar el switch del ESP32)", equipo.upper())
+    else:
+        log.info("Esperando el switch de equipo del ESP32 (byte 'R'/'A' por CAM_LINK)...")
+        equipo = None
+        while equipo is None and not _parar:
+            equipo = senal.leer_equipo()
+            if equipo is None:
+                time.sleep(0.05)
+        if _parar:
+            senal.close()
+            return 0
+        log.info("Equipo recibido del ESP32: %s", equipo.upper())
+
+    etiqueta_objetivo = ETIQUETA_AZUL if equipo == "rojo" else ETIQUETA_ROJO
+    log.info("Avisando cuando vea: %s", etiqueta_objetivo)
 
     modelo_path = Path(args.modelo)
     if not modelo_path.is_absolute():
@@ -159,7 +213,6 @@ def main() -> int:
     from athena.camera import Camera
 
     color_detector = ColorShapeDetector(geometry=cfg.geometry)
-    senal = SenalSerial(args.puerto, args.baud)
 
     frames = 0
     ultima_fuente: str | None = None
@@ -170,6 +223,13 @@ def main() -> int:
              EiFlagDetector(modelo_path, min_confidence=args.min_confianza) as ei_detector:
 
             while not _parar:
+                nuevo_equipo = senal.leer_equipo()
+                if nuevo_equipo is not None and nuevo_equipo != equipo:
+                    equipo = nuevo_equipo
+                    etiqueta_objetivo = ETIQUETA_AZUL if equipo == "rojo" else ETIQUETA_ROJO
+                    log.warning("Equipo cambio a %s (nuevo switch en el ESP32) -- avisando ahora: %s",
+                                equipo.upper(), etiqueta_objetivo)
+
                 frame = cam.read_full()
                 if frame is None:
                     time.sleep(0.01)

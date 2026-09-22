@@ -11,6 +11,15 @@ para ajustar a ojo la zona muerta/ganancia con `--ver` — **no lo uses como
 servicio de arranque**: se saltaría el depósito obligatorio de la llave, lo
 que pierde la ronda de inmediato según el reglamento.
 
+> ⚠️ **Dos arquitecturas, dos servicios distintos — nunca los dos activos a
+> la vez** (ambos abren la cámara y el puerto serial del ESP32, chocan
+> entre sí): este servicio (`athena-rover.service`) corre la misión
+> **completa** en la Pi con `run_rover.py`. Si estás usando en cambio
+> `standalones/v7-mision-completa-camara/` (la misión corre en el ESP32, la
+> Pi solo avisa "veo la bandera"), el servicio que instalar es
+> **[`athena-bandera-v7.service`](#6-avisar_bandera_v7py-como-servicio-para-v7-mision-completa-camara)**,
+> más abajo — no este.
+
 ## 1. Instalar
 
 Desde `raspberry-pi/` en la Pi (por SSH):
@@ -152,3 +161,65 @@ sudo systemctl restart systemd-journald
 
 Después de eso, `journalctl -u athena-rover.service --since "10 min ago"`
 funciona incluso tras apagar y encender la Pi.
+
+---
+
+## 6. avisar_bandera_v7.py como servicio (para v7-mision-completa-camara)
+
+Instala `avisar_bandera_v7.py` -- el script mínimo que solo avisa "veo la
+bandera contraria" al ESP32, usado con
+[`standalones/v7-mision-completa-camara/`](../../standalones/v7-mision-completa-camara/)
+en vez de la misión completa de `run_rover.py` -- como servicio de
+`systemd`, para que arranque solo al encender la Pi.
+
+**Reutiliza lo ya instalado para `athena-rover.service`** (grupo `dialout`,
+`chmod +x` del modelo `.eim`, `config/rover.json`): si ya la seguiste una
+vez para ese servicio, no hay que repetirla. Si esta es tu primera vez
+instalando cualquiera de los dos servicios, hacé primero los pasos de la
+sección 1 de arriba (salvo la parte del `sudoers`/`shutdown`, que
+`avisar_bandera_v7.py` no usa -- no apaga la Pi por su cuenta).
+
+```bash
+cd raspberry-pi   # si no estás ahí ya
+
+cp deploy/equipo-bandera.env.example deploy/equipo-bandera.env
+# Normalmente NO hace falta tocar este archivo: el equipo lo decide el
+# switch físico de 3 posiciones del chasis, del lado del ESP32 -- ver el
+# aviso "DE VUELTA HACIA LA PI" en
+# standalones/v7-mision-completa-camara/src/main.cpp. Solo descomentá
+# EQUIPO=rojo/azul ahí si querés forzarlo sin el switch instalado.
+```
+
+Edita `deploy/athena-bandera-v7.service` y reemplaza **las 3 apariciones**
+de `TU_USUARIO_AQUI` por tu usuario real (el de `whoami`).
+
+```bash
+sudo cp deploy/athena-bandera-v7.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable athena-bandera-v7.service
+sudo systemctl start athena-bandera-v7.service
+```
+
+Verificar que arrancó bien:
+
+```bash
+sudo systemctl status athena-bandera-v7.service
+journalctl -u athena-bandera-v7.service -f   # log en vivo, Ctrl+C para salir
+```
+
+Deberías ver algo como `Esperando el switch de equipo del ESP32...` seguido
+de `Equipo recibido del ESP32: ROJO` (o `AZUL`) en cuanto
+`v7-mision-completa-camara` decida su equipo por el switch del chasis --
+si el ESP32 arranca después que este servicio, no pasa nada: el servicio se
+queda esperando ese aviso en vez de fallar.
+
+**Antes de probar otro script a mano** (`run_flag_tracker_ei.py`, o el
+propio `avisar_bandera_v7.py` a mano), pará el servicio primero -- tiene la
+cámara y el puerto serial ocupados:
+
+```bash
+sudo systemctl stop athena-bandera-v7.service
+sudo systemctl disable athena-bandera-v7.service   # para que no vuelva a arrancar solo al reiniciar
+```
+
+Y para reactivarlo: `sudo systemctl enable --now athena-bandera-v7.service`.
