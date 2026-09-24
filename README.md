@@ -159,7 +159,7 @@ Esas dos formas de perder están escritas como **prioridad 1 y 2** en
 -- lo que implementa la lógica completa del reto (ver
 [`docs/handoff-vision-edge-impulse.md`](docs/handoff-vision-edge-impulse.md)
 y el resto de `docs/`). `standalones/`, `calibracion/`,
-`pruebas-platformio/` y `raspberry-pi-pruebas/` son bancos de prueba: ahí se
+y `pruebas-platformio/` son bancos de prueba: ahí se
 afinan sensores, se prueban maniobras nuevas y se caracteriza hardware antes
 de tocar el código real.
 
