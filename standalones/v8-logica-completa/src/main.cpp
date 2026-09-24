@@ -27,6 +27,11 @@
 //              El robot termina en FIN_M3 (bandera agarrada, LED verde).
 //         [M4] el código de borde (QTR) cubre también las fases de búsqueda y centrado.
 //              Sigue DESACTIVADO (kProteccionBordeActiva) hasta recalibrar el umbral.
+//         [M5] pasos 10-12: con la bandera agarrada da la vuelta (~180 grados), sale de la
+//              zona rival (lo confirma leyendo la franja rival con el sensor delantero), vuelve
+//              recto hasta leer la franja de SU equipo, avanza unos ms, para y suelta la bandera
+//              despacio (rampa del servo). kBancoPararTrasAgarrar=true detiene el robot tras
+//              agarrar (FIN_M3) para probar el M3 sin que siga de largo.
 //
 //  ---- Texto heredado de v7 (sigue siendo válido hasta que un hito lo cambie) ----
 //  VARIANTE v7-mision-completa-camara: copia EXACTA de
@@ -365,6 +370,25 @@ constexpr uint32_t kBordeGiroMs           = 500;    // pivote para alejarse del 
 constexpr int      kBordeVelocidadGiro    = 100;    // % de PWM del pivote
 constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho activo el borde queda a la derecha: se gira a la IZQUIERDA
 
+// -- Retorno con la bandera (hito M5, pasos 10-12) ----------------------------
+constexpr bool     kBancoPararTrasAgarrar = true;   // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
+constexpr uint32_t kGiroRetornoMs         = 2700;   // pivote para dar la vuelta con la bandera (~180 grados: 2800 ms dio ~190 en pista, ver kDuracionGiroRecentrarMs)
+constexpr int      kVelocidadGiroRetorno  = 100;    // % de PWM del pivote
+constexpr bool     kGiroRetornoHaciaDerecha = true; // sentido del pivote de vuelta
+constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto de vuelta
+constexpr uint32_t kSalirZonaRivalTopeMs  = 4000;   // si no lee la franja rival en este tiempo, asume que ya salió y sigue (la franja mide ~18.5 mm, puede saltársela)
+constexpr uint32_t kVolverTopeMs          = 9000;   // si no lee su franja en este tiempo, PARA y suelta igual (evita seguir hasta salirse de la pista)
+constexpr uint32_t kAvanceTrasLeerZonaPropiaMs = 300;   // ms que sigue avanzando tras leer su franja, antes de parar (por tiempo: no hay IMU)
+constexpr int      kVelocidadEntradaZonaPropia = 50;    // % de PWM de ese último avance
+constexpr uint32_t kFullStopZonaPropiaMs  = 700;    // parada total antes de soltar la bandera
+constexpr bool     kRetornoEvitaAmarillo  = true;   // si al volver lee AMARILLO (zona neutra, con la caja encima) la rodea para no arrastrarla. SIN PROBAR en pista
+constexpr bool     kEvitarAmarilloHaciaDerecha = true;   // lado hacia el que se aparta del amarillo
+constexpr uint32_t kEvitarAmarilloRetrocesoMs = 300;     // retroceso corto antes de apartarse
+constexpr uint32_t kEvitarAmarilloGiroMs  = 700;    // pivote para apartarse del amarillo
+constexpr int      kSoltarLentoPasoDeg    = 5;      // la bandera se suelta despacio: el servo baja de 65 grados a 0 en pasos de esta cantidad...
+constexpr uint32_t kSoltarLentoPasoMs     = 60;     // ...uno cada tanto (65/5 = 13 pasos x 60 ms ~ 0.8 s)
+constexpr uint32_t kSoltarLentoEsperaMs   = 1200;   // espera tras pedir la apertura lenta (debe ser mayor que la rampa)
+
 // -- Espera media entre caja y bandera ---------------------------------------
 // Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
 // persona ponga la bandera al frente del robot (ya reorientado por el giro
@@ -426,6 +450,13 @@ enum class Phase : uint8_t {
     FIN_M2,             // M2: (ya no se alcanza: ahora pasa al ajuste fino)
     CENTRAR_FINO,       // M3: un pulso de giro para recentrar la bandera antes de medir con el ToF
     FIN_M3,             // M3: bandera agarrada, el robot se detiene
+    GIRO_RETORNO,       // M5: paso 10, da la vuelta con la bandera
+    SALIR_ZONA_RIVAL,   // M5: paso 10, avanza hasta leer la franja rival (confirma la salida)
+    VOLVER_ZONA_PROPIA, // M5: paso 11, avanza hasta leer la franja de su equipo
+    EVITAR_AMARILLO,    // M5: rodea la zona neutra si la pisa al volver
+    AVANCE_EN_ZONA_PROPIA, // M5: paso 12, unos ms más dentro de su zona
+    DETENER_ZONA_PROPIA,   // M5: paso 12, parada total
+    SOLTAR_BANDERA_LENTO,  // M5: paso 12, apertura lenta del gripper
 };
 
 inline const char *PhaseName(Phase phase) {
@@ -460,6 +491,13 @@ inline const char *PhaseName(Phase phase) {
         case Phase::FIN_M2:                     return "FIN_M2";
         case Phase::CENTRAR_FINO:               return "CENTRAR_FINO";
         case Phase::FIN_M3:                     return "FIN_M3";
+        case Phase::GIRO_RETORNO:               return "GIRO_RETORNO";
+        case Phase::SALIR_ZONA_RIVAL:           return "SALIR_ZONA_RIVAL";
+        case Phase::VOLVER_ZONA_PROPIA:         return "VOLVER_ZONA_PROPIA";
+        case Phase::EVITAR_AMARILLO:            return "EVITAR_AMARILLO";
+        case Phase::AVANCE_EN_ZONA_PROPIA:      return "AVANCE_EN_ZONA_PROPIA";
+        case Phase::DETENER_ZONA_PROPIA:        return "DETENER_ZONA_PROPIA";
+        case Phase::SOLTAR_BANDERA_LENTO:       return "SOLTAR_BANDERA_LENTO";
         default:                                return "DESCONOCIDA";
     }
 }
@@ -610,7 +648,7 @@ enum class TaskId : uint8_t {
 
 enum class TeamColor     : uint8_t { NONE = 0, RED = 1, BLUE = 2 };
 enum class MotorMode     : uint8_t { STOP = 0, DRIVE = 1 };
-enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2 };
+enum class GripperAction : uint8_t { OPEN = 0, CLOSE_LLAVE = 1, CLOSE_BANDERA = 2, OPEN_SLOW = 3 };
 enum class ColorLabel    : uint8_t { UNKNOWN = 0, BLACK, YELLOW, RED, BLUE, FLOOR };
 
 // Fase "visible" para el LED -- MissionTask decide, LedTask solo traduce.
@@ -1053,7 +1091,22 @@ void GripperTask(void *) {
 
         GripperCommand cmd;
         if (xQueueReceive(g_gripperCmdQueue, &cmd, 0) == pdTRUE && pca_ok) {
-            if (I2c1Lock()) {
+            if (cmd.action == GripperAction::OPEN_SLOW) {
+                // Apertura lenta (paso 12: soltar la bandera suavemente): baja del ángulo
+                // de agarre de la bandera al abierto en pasos, tomando el bus solo un
+                // instante por paso para no dejar sin bus al sensor de color.
+                for (int a = kClawClosedBanderaDeg; a > kClawOpenDeg; a -= Mission::kSoltarLentoPasoDeg) {
+                    if (I2c1Lock()) {
+                        pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(a));
+                        I2c1Unlock();
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(Mission::kSoltarLentoPasoMs));
+                }
+                if (I2c1Lock()) {
+                    pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
+                    I2c1Unlock();
+                }
+            } else if (I2c1Lock()) {
                 switch (cmd.action) {
                     case GripperAction::OPEN:
                         pca_ok = Pca9685::SetChannel(ServoChannel::CLAW, ServoAngleToTicks(kClawOpenDeg));
@@ -1420,6 +1473,7 @@ namespace CamaraBandera {
 void MissionTask(void *pvTeam) {
     const TeamColor team = *reinterpret_cast<TeamColor *>(pvTeam);
     const ColorLabel enemy_color = (team == TeamColor::RED) ? ColorLabel::BLUE : ColorLabel::RED;
+    const ColorLabel own_color   = (team == TeamColor::RED) ? ColorLabel::RED  : ColorLabel::BLUE;
 
     Mission::Phase phase = Mission::Phase::ARRANQUE;
     Mission::Phase last_logged_phase = phase;
@@ -1444,6 +1498,8 @@ void MissionTask(void *pvTeam) {
     int      centr_sentido = 1;         // +1 = gira a la derecha, -1 = a la izquierda
     uint32_t perdida_desde_ms = 0;      // 0 = la cámara la ve ahora
     uint32_t last_cam_log_ms = 0;
+    uint32_t last_ret_log_ms = 0;
+    bool     soltar_lento_enviado = false;   // la apertura lenta se pide UNA sola vez, no en cada ciclo
 
     // Cerrojos: en cuanto se ve el color buscado UNA vez en la fase
     // correspondiente, esto pasa a true y ya no vuelve a false -- mismo
@@ -1466,7 +1522,7 @@ void MissionTask(void *pvTeam) {
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
 
-    DEBUG_LINK.printf("[Mission] v8-logica-completa (M3) -- equipo=%s, zona enemiga=%s\n",
+    DEBUG_LINK.printf("[Mission] v8-logica-completa (M5) -- equipo=%s, zona enemiga=%s\n",
                        team == TeamColor::RED ? "ROJO" : "AZUL",
                        ColorLabelName(enemy_color));
 
@@ -1506,6 +1562,14 @@ void MissionTask(void *pvTeam) {
                                    last_tof.distance_mm, last_tof.valid);
             }
 
+            if ((phase == Mission::Phase::SALIR_ZONA_RIVAL || phase == Mission::Phase::VOLVER_ZONA_PROPIA) &&
+                (uint32_t)(millis() - last_ret_log_ms) > 300) {
+                last_ret_log_ms = millis();
+                DEBUG_LINK.printf("[Retorno] %s color=%s valido=%d (franja rival=%s, franja propia=%s)\n",
+                                   Mission::PhaseName(phase), ColorLabelName(color_activo), last_color.valid,
+                                   ColorLabelName(enemy_color), ColorLabelName(own_color));
+            }
+
             // --- Protección de borde (QTR): prioridad sobre las fases que
             // avanzan o giran (no al retroceder ni quieto). Confirma el negro
             // kBordeDebounceMs, guarda la fase y reacciona (BORDE_*). ---------
@@ -1518,6 +1582,9 @@ void MissionTask(void *pvTeam) {
                     phase == Mission::Phase::BUSCAR_ZONA_AMARILLA ||
                     phase == Mission::Phase::BUSCAR_BANDERA ||
                     phase == Mission::Phase::CENTRAR_Y_AVANZAR ||
+                    phase == Mission::Phase::GIRO_RETORNO ||
+                    phase == Mission::Phase::SALIR_ZONA_RIVAL ||
+                    phase == Mission::Phase::VOLVER_ZONA_PROPIA ||
                     phase == Mission::Phase::ESQUIVAR_CAJA ||
                     phase == Mission::Phase::AVANZAR_TRAS_ESQUIVE ||
                     phase == Mission::Phase::GIRO_RECENTRAR;
@@ -1858,8 +1925,13 @@ void MissionTask(void *pvTeam) {
                     gripper.action = GripperAction::CLOSE_BANDERA;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleBanderaMs) {
-                        DEBUG_LINK.println("[Mission] bandera agarrada -- fin del hito M3, el robot se detiene.");
-                        phase = Mission::Phase::FIN_M3;
+                        if (Mission::kBancoPararTrasAgarrar) {
+                            DEBUG_LINK.println("[Mission] bandera agarrada -- BANCO: el robot se detiene (FIN_M3).");
+                            phase = Mission::Phase::FIN_M3;
+                        } else {
+                            DEBUG_LINK.println("[Mission] bandera agarrada -- a volver a la zona propia.");
+                            phase = Mission::Phase::ESPERAR_TRAS_AGARRE;
+                        }
                         phase_started_ms = millis();
                     }
                     break;
@@ -1870,7 +1942,7 @@ void MissionTask(void *pvTeam) {
                 case Mission::Phase::ESPERAR_TRAS_AGARRE: {
                     estado_led = EstadoVisible::AGARRADA;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kEsperaTrasAgarrarBanderaMs) {
-                        phase = Mission::Phase::AVANZAR_ZONA_ENEMIGA;
+                        phase = Mission::Phase::GIRO_RETORNO;
                         phase_started_ms = millis();
                     }
                     break;
@@ -2038,6 +2110,121 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
+                // ---- M5: pasos 10-12, retorno con la bandera -------------------------
+                case Mission::Phase::GIRO_RETORNO: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kGiroRetornoMs) {
+                        const int v = Mission::kVelocidadGiroRetorno;
+                        if (Mission::kGiroRetornoHaciaDerecha) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                    } else {
+                        DEBUG_LINK.println("[Mission] vuelta terminada -- a salir de la zona rival.");
+                        phase = Mission::Phase::SALIR_ZONA_RIVAL;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // Sin sensor trasero: la salida se confirma al volver a leer la franja RIVAL.
+                case Mission::Phase::SALIR_ZONA_RIVAL: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if (color_activo == enemy_color) {
+                        DEBUG_LINK.println("[Mission] franja rival leida: salio de la zona rival -- a volver.");
+                        phase = Mission::Phase::VOLVER_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    if ((uint32_t)(millis() - phase_started_ms) >= Mission::kSalirZonaRivalTopeMs) {
+                        DEBUG_LINK.println("[Mission] AVISO: no leyo la franja rival en el tiempo tope -- asume que salio y sigue.");
+                        phase = Mission::Phase::VOLVER_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    SetDrive(motor, Mission::kVelocidadRetorno, Mission::kVelocidadRetorno);
+                    break;
+                }
+
+                case Mission::Phase::VOLVER_ZONA_PROPIA: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if (color_activo == own_color) {
+                        DEBUG_LINK.printf("[Mission] franja propia leida -- sigue %u ms y para.\n",
+                                           (unsigned)Mission::kAvanceTrasLeerZonaPropiaMs);
+                        phase = Mission::Phase::AVANCE_EN_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    if (Mission::kRetornoEvitaAmarillo && color_activo == ColorLabel::YELLOW) {
+                        DEBUG_LINK.println("[Mission] leyo AMARILLO al volver (zona neutra con la caja) -- se aparta.");
+                        phase = Mission::Phase::EVITAR_AMARILLO;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    if ((uint32_t)(millis() - phase_started_ms) >= Mission::kVolverTopeMs) {
+                        DEBUG_LINK.println("[Mission] AVISO: no leyo su franja en el tiempo tope -- para y suelta la bandera aqui.");
+                        phase = Mission::Phase::DETENER_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    SetDrive(motor, Mission::kVelocidadRetorno, Mission::kVelocidadRetorno);
+                    break;
+                }
+
+                // Se aparta del amarillo: para, retrocede corto, pivota y reanuda la vuelta.
+                case Mission::Phase::EVITAR_AMARILLO: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    const uint32_t t = (uint32_t)(millis() - phase_started_ms);
+                    const uint32_t t_retro = Mission::kBordeParadaMs;
+                    const uint32_t t_giro  = t_retro + Mission::kEvitarAmarilloRetrocesoMs;
+                    const uint32_t t_fin   = t_giro + Mission::kEvitarAmarilloGiroMs;
+                    if (t < t_retro) {
+                        // quieto
+                    } else if (t < t_giro) {
+                        SetDrive(motor, -Mission::kBordeVelocidadRetroceso, -Mission::kBordeVelocidadRetroceso);
+                    } else if (t < t_fin) {
+                        const int v = Mission::kVelocidadGiroRetorno;
+                        if (Mission::kEvitarAmarilloHaciaDerecha) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                    } else {
+                        phase = Mission::Phase::VOLVER_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                case Mission::Phase::AVANCE_EN_ZONA_PROPIA: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kAvanceTrasLeerZonaPropiaMs) {
+                        SetDrive(motor, Mission::kVelocidadEntradaZonaPropia, Mission::kVelocidadEntradaZonaPropia);
+                    } else {
+                        phase = Mission::Phase::DETENER_ZONA_PROPIA;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                case Mission::Phase::DETENER_ZONA_PROPIA: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kFullStopZonaPropiaMs) {
+                        phase = Mission::Phase::SOLTAR_BANDERA_LENTO;
+                        phase_started_ms = millis();
+                        soltar_lento_enviado = false;
+                    }
+                    break;
+                }
+
+                case Mission::Phase::SOLTAR_BANDERA_LENTO: {
+                    estado_led = EstadoVisible::AGARRADA;
+                    if (!soltar_lento_enviado) {
+                        gripper.action = GripperAction::OPEN_SLOW;
+                        send_gripper = true;
+                        soltar_lento_enviado = true;
+                    }
+                    if ((uint32_t)(millis() - phase_started_ms) > Mission::kSoltarLentoEsperaMs) {
+                        DEBUG_LINK.println("[Mission] bandera soltada en la zona propia -- MISION COMPLETA.");
+                        phase = Mission::Phase::TERMINADO;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
                 case Mission::Phase::FIN_M2:
                     estado_led = EstadoVisible::TERMINADO;
                     break;
@@ -2156,7 +2343,7 @@ void setup() {
     }
     delay(200);
 
-    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M3: ajuste con ToF y agarre con camara + ToF)");
+    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M5: pasos 1-12 completos)");
     DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
                        ResetReasonToString(esp_reset_reason()));
 

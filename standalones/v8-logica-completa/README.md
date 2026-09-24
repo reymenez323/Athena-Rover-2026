@@ -7,9 +7,9 @@ Banco de validación de los 12 pasos de [`docs/logica-athena.md`](../../docs/log
 | M0 | Copia de v7, compila | hecho (sin probar en robot) |
 | M1 | Pasos 1–6 con protección de borde mínima (QTR derecho) | probado: pasos 1–6 OK; borde da falsos positivos cerca del amarillo, desactivado hasta M4 |
 | M2 | Búsqueda y centrado (paso 7), cámara simulada a mano | probado con cámara simulada: OK |
-| M3 | Ajuste con ToF y cierre con cámara + ToF (8–9) | compila, sin probar en robot |
+| M3 | Ajuste con ToF y cierre con cámara + ToF (8–9) | compila; en prueba |
 | M4 | QTR: borde en todas las fases que se mueven | código listo, desactivado: falta recalibrar el umbral con amarillo y caja |
-| M5 | Retorno y suelta (10–12) | pendiente |
+| M5 | Retorno y suelta (10–12) | compila, sin probar en robot |
 | M6 | Lado Pi: script nuevo, servicio y logs | pendiente |
 | M7 | Corrida completa en pista | pendiente |
 
