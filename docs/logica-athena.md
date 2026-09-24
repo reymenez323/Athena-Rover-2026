@@ -1,6 +1,6 @@
 # Lógica de Athena — Athena Rover 2026
 
-Versión 1 (2026-09-24). Reorganiza [`logicaATHENA.pdf`](logicaATHENA.pdf) sin quitarle nada y le suma las decisiones tomadas después.
+Versión 1.1 (2026-09-24). Reorganiza [`logicaATHENA.pdf`](logicaATHENA.pdf) sin quitarle nada y le suma las decisiones tomadas después.
 Etiquetas: **[DEFINIDO]** decidido por Montse · **[POR DEFINIR]** falta decidir · **[PROPUESTA]** sugerencia sin aprobar.
 
 **Flujo:** encender → elegir equipo → agarrar caja → ir al amarillo → soltar caja → evadir → buscar y centrar la bandera → agarrarla → salir de la zona rival → volver → soltar.
@@ -78,7 +78,7 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 **4. Buscar la zona amarilla** *(fila 4)*
 - Avanza en **línea recta** desde el medio de su zona hasta que el sensor de color delantero lee amarillo. Velocidad de crucero (hoy 60 %).
 - Sensores: color delantero. La cámara no interviene.
-- Zigzag solo si la recta no funciona **[POR DEFINIR]**. Se mejora cuando todo pase al 100 %.
+- Recta **[DEFINIDO]**. El zigzag queda para la Fase 2 (sección 9).
 
 **5. Depositar la llave** *(fila 5)*
 - Al leer amarillo: para por completo (400 ms), abre el gripper (0°) y espera (400 ms).
@@ -96,7 +96,8 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 
 **7. Localizar y acercarse** *(fila 7)*
 - La cámara busca la bandera del color rival. Al verla, se centra de forma **proporcional** (línea central, zona muerta de ±0.15) y avanza.
-- Si no la ve: pausa breve y sigue buscando; nunca inactivo. Patrón de búsqueda **[POR DEFINIR]** (por ejemplo, giro lento). Siempre dentro de la pista.
+- Si no la ve: pausa breve y sigue buscando; nunca inactivo. Patrón **[DEFINIDO]**: pausa → pivote corto a un lado → pausa → pivote al otro lado → pausa → avance corto → repetir. Todos los tiempos son parámetros. El QTR tiene prioridad: siempre dentro de la pista.
+- La Pi también informa qué % del cuadro ocupa la bandera. Es **informativo**: no interviene en ninguna decisión en la v1; tras varias pruebas se define un rango, como con el ToF.
 - Parámetros: velocidad, confianza mínima de detección (hoy 0.6), ganancia del centrado, cuándo está lo bastante cerca para terminar de centrarse sin botar la bandera.
 
 **8. Terminar de posicionarse** *(fila 8)*
@@ -123,7 +124,7 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 
 **12. Soltar la bandera** *(fila 12)*
 - Al leer su franja: para por completo y suelta la bandera despacio, a velocidad lenta.
-- Parámetros: velocidad y fuerza del gripper, y cuánto avanza dentro de la zona antes de soltar **[POR DEFINIR]**.
+- Parámetros: velocidad y fuerza del gripper, y `avance tras leer la zona propia` **[DEFINIDO]**: se mide en ms desde que lee su franja (no en distancia, porque no hay IMU); valor a medir en banco.
 - Mejora futura: entrar completo a la zona (como estacionarse en paralelo) y confirmar antes de soltar.
 
 ## 6. Quién decide qué
@@ -131,9 +132,9 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 | Sensor / actuador | Se usa para | Notas |
 |---|---|---|
 | Color delantero (TCS34725) | Amarillo (4–5), franja rival (10), franja propia (11–12) | Es el único de color: el trasero está desconectado. Franjas de 18.5 mm. |
-| Cámara (Raspberry Pi) | Ver la bandera rival en cualquier posición y en qué lado de la imagen está, para centrarse (6–8) | Obligatoria para agarrar. Modelo de Edge Impulse, con detector de color y forma de respaldo. No se verifica si la bandera está parada o caída (ver regla 10). |
+| Cámara (Raspberry Pi) | Ver la bandera rival en cualquier posición y en qué lado de la imagen está, para centrarse (6–8) | Obligatoria para agarrar. Modelo de Edge Impulse, con detector de color y forma de respaldo. Informa también el % del cuadro que ocupa la bandera (informativo). No se verifica si la bandera está parada o caída (ver regla 10). |
 | ToF (VL53L1X) | Distancia a la bandera (8–9) | No puede ver la caja (está montado muy alto). No distingue bandera de obstáculo: por eso se exige la cámara. |
-| Reflectancia (QTR) | Borde negro de la pista (todos los pasos) | Todavía sin integrar. El izquierdo está desactivado en el código; hay que verificar su sensibilidad. |
+| Reflectancia (QTR) | Borde negro de la pista (todos los pasos) | Todavía sin integrar. El izquierdo está desactivado en el código; la medición de su sensibilidad está aprobada y se hace antes de integrar el borde. Hasta entonces, solo el derecho. |
 | Gripper (servo) | Caja 128°, bandera 65°, abierto 0° | Recalibrar la fuerza. |
 | Switch y LED RGB | Elegir equipo y mostrar el estado | |
 
@@ -158,18 +159,18 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 | asentamiento tras parar | 8 | Espera antes de medir | 200 ms |
 | lecturas seguidas requeridas | 8 | Cuántas en rango para cerrar | 3 |
 | máximo de pasos | 8 | Tope de correcciones | 40 |
+| patrón de búsqueda | 7 | Pausa, pivote corto y avance corto para buscar la bandera | a definir en banco |
+| avance tras leer la zona propia | 12 | Ms que sigue avanzando tras leer su franja, antes de parar y soltar | a medir |
+| umbral de borde (QTR) | todos | Diferencia con emisor encendido menos apagado; por debajo de esto es negro (borde) | 40 (negro ~1–8, gris ~76–87) |
 | ángulos del gripper | 3, 5, 9, 12 | Abierto / caja / bandera | 0° / 128° / 65° |
 
 ## 8. Pendientes y decisiones
 
 **Por definir**
-- Recta o zigzag para buscar el amarillo (4).
 - Cómo cortar la evasión cuando la cámara ya mira (6).
-- Patrón de búsqueda cuando la cámara no ve la bandera (7).
 - Qué hace tras el máximo de pasos si la cámara no confirmó (8).
 - Cómo comprobar que la bandera quedó agarrada (9).
 - Cabe el giro de 180° en la zona rival, y qué hace si no lee la franja (10).
-- Cuánto avanza en su zona antes de soltar (12).
 
 **Ya decidido (2026-09-24)**
 - Zona propia = la del equipo elegido; la bandera se deposita ahí.
@@ -180,8 +181,12 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 - Rango del ToF 56–62 mm por ahora; franjas de 18.5 mm.
 - Los 6 s de espera de v6 eran solo una prueba.
 - Sensor de color trasero fuera hasta después de la competencia.
+- Amarillo: en línea recta; zigzag en la Fase 2.
+- Búsqueda de la bandera: pausa / pivote alterno / avance corto, con los tiempos como parámetros.
+- Tras leer su zona, avanza un tiempo (ms) antes de soltar; no se usa distancia.
+- La cámara informa el % del cuadro que ocupa la bandera (informativo; se define un rango tras varias pruebas).
 - Bandera caída: no se implementa nada por ahora; en la competencia alguien la vuelve a parar a la vista de la cámara.
-- Arquitectura: el ESP32 lleva la máquina de estados y todos los comandos de motor; la Pi solo manda por serial lo que ve (detección y error de centrado). Se valida primero en un standalone nuevo y, ya depurado, se promueve a `firmware-esp32/` y `raspberry-pi/`.
+- Arquitectura: el ESP32 lleva la máquina de estados y todos los comandos de motor; la Pi solo manda por serial lo que ve (detección, error de centrado y % de ocupación). Se valida primero en `standalones/v8-logica-completa/` y, ya depurado, se promueve a `firmware-esp32/` y `raspberry-pi/`.
 
 ## 9. Fase 2 (después de que la v1 pase al 100 %)
 
