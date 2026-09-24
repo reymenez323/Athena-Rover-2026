@@ -14,6 +14,12 @@
 //         [M1] pasos 1-6 de la lógica + protección de borde (QTR derecho). Tras el
 //              giro 2 el robot SE DETIENE (Phase::FIN_M1); las fases de bandera que
 //              siguen en este archivo son de v7 y NO se alcanzan hasta M2-M5.
+//         [M2] paso 7: búsqueda de la bandera y centrado proporcional con la cámara.
+//              La cámara manda LÍNEAS DE TEXTO: 'B <error -100..100> <área %>' (la ve;
+//              error negativo = a la izquierda) o 'N' (no la ve). Se pueden teclear a
+//              mano en el monitor del puerto UART para probar sin la Pi. El robot
+//              termina en FIN_M2 al llegar a kDistanciaAproximacionMm con la bandera vista.
+//              kBancoSoloPaso7=true salta los pasos 1-6 y empieza directo en la búsqueda.
 //
 //  ---- Texto heredado de v7 (sigue siendo válido hasta que un hito lo cambie) ----
 //  VARIANTE v7-mision-completa-camara: copia EXACTA de
@@ -277,7 +283,7 @@ constexpr bool kGiroEsquiveHaciaDerecha = true;
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
 // esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
 // Sin medir en banco todavía, punto de partida conservador.
-constexpr uint32_t kAvanceTrasEsquiveMs = 900;
+constexpr uint32_t kAvanceTrasEsquiveMs = 1300;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
 constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 
 // Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
@@ -303,6 +309,30 @@ constexpr bool kGiroRecentrarHaciaDerecha = !kGiroEsquiveHaciaDerecha;
 constexpr uint32_t kFrescoBanderaCamaraMs = 300;
 constexpr uint32_t kSostenBanderaCamaraMs = 150;
 
+// -- Paso 7: buscar la bandera y centrarse (hito M2) --------------------------
+// Protocolo de la cámara (CAM_LINK o el puerto UART, para simular a mano):
+//   'B <error> <área>'  la ve. error -100..100 (negativo = a la izquierda, 0 = centrada);
+//                       área = % del cuadro que ocupa la bandera (solo informativo, no decide nada)
+//   'N'                 no la ve
+constexpr bool kBancoSoloPaso7 = true;   // SOLO BANCO: salta los pasos 1-6 y empieza directo buscando la bandera. Poner false para la corrida completa
+// Búsqueda cuando la cámara no la ve: pausa -> pivote A -> pausa -> pivote B (doble) -> pausa -> pivote A -> pausa -> avance corto, y repite.
+// Los pivotes alternados casi se anulan entre sí; las pausas dan cuadros estables a la cámara.
+constexpr uint32_t kBusquedaPausaMs   = 400;   // quieto para que la cámara mire sin desenfoque
+constexpr uint32_t kBusquedaPivoteMs  = 600;   // duración del pivote A (el B dura el doble). ~600 ms ~ 40 grados a 100 %, a 7.60 V
+constexpr int      kBusquedaVelocidadPivote = 100;   // % de PWM del pivote (a menos no vence la fricción)
+constexpr uint32_t kBusquedaAvanceMs  = 400;   // avance corto al final de cada ciclo, para explorar más adelante
+constexpr int      kBusquedaVelocidadAvance = 50;    // % de PWM de ese avance
+constexpr bool     kBusquedaPrimerPivoteHaciaDerecha = true;   // lado del primer pivote
+// Centrado proporcional: si |error| <= zona muerta avanza recto; si no, pivota en pulsos
+// (pulso + pausa para leer de nuevo, porque la cámara llega con retraso) con más velocidad cuanto mayor el error.
+constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale a 0.15)
+constexpr uint32_t kPulsoCentradoMs    = 120;       // duración de cada pulso de giro
+constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
+constexpr int      kVelocidadCentradoMin = 60;      // % de PWM del pulso con el error apenas fuera de la zona muerta
+constexpr int      kVelocidadCentradoMax = 100;     // % de PWM con el error máximo
+constexpr int      kVelocidadAcercamiento = 50;     // % de PWM al avanzar recto hacia la bandera ya centrada
+constexpr uint32_t kPerdidaBanderaMs   = 500;       // si la cámara deja de verla, espera esto quieto antes de volver a buscar
+
 // -- Aviso de equipo hacia la Raspberry Pi (para avisar_bandera_v7.py) -----
 // El switch físico ya decide el equipo acá (ver setup()); en vez de que la
 // Pi lo reciba por línea de comandos (que puede desincronizarse del switch
@@ -316,7 +346,7 @@ constexpr uint32_t kEquipoBroadcastMs = 500;
 // cinta negra). El QTR compara el emisor IR encendido contra apagado; una
 // diferencia chica (menor que kBordeRestadoUmbral) = superficie negra = borde.
 // Solo actúa en las fases que avanzan o giran (no al retroceder ni quieto).
-constexpr bool     kProteccionBordeActiva = true;   // interruptor general: false = ignora el borde (p. ej. probando sobre una mesa con cosas negras)
+constexpr bool     kProteccionBordeActiva = false;  // interruptor general. DESACTIVADO por ahora: el QTR derecho dio falsos bordes cerca del amarillo (2026-09-24); se recalibra en M4
 constexpr bool     kQtrIzquierdoActivo    = false;  // el izquierdo está pegado al tope (sin señal útil, diagnosticado 2026-09-24): NO activar hasta repararlo
 constexpr int16_t  kBordeRestadoUmbral    = 40;     // |dif| menor que esto = negro (negro ~1-8, gris ~76-87 medido en banco)
 constexpr uint16_t kQtrTopeAdc            = 4085;   // off y on >= esto = sensor pegado al tope: NO cuenta como negro (sería un falso borde)
@@ -384,6 +414,9 @@ enum class Phase : uint8_t {
     BORDE_RETROCEDER,
     BORDE_GIRAR,
     FIN_M1,             // M1: fin de los pasos 1-6, el robot se detiene
+    BUSCAR_BANDERA,     // M2: paso 7, la cámara no la ve
+    CENTRAR_Y_AVANZAR,  // M2: paso 7, la cámara la ve: se centra y avanza
+    FIN_M2,             // M2: llegó cerca de la bandera, el robot se detiene
 };
 
 inline const char *PhaseName(Phase phase) {
@@ -413,6 +446,9 @@ inline const char *PhaseName(Phase phase) {
         case Phase::BORDE_RETROCEDER:           return "BORDE_RETROCEDER";
         case Phase::BORDE_GIRAR:                return "BORDE_GIRAR";
         case Phase::FIN_M1:                     return "FIN_M1";
+        case Phase::BUSCAR_BANDERA:             return "BUSCAR_BANDERA";
+        case Phase::CENTRAR_Y_AVANZAR:          return "CENTRAR_Y_AVANZAR";
+        case Phase::FIN_M2:                     return "FIN_M2";
         default:                                return "DESCONOCIDA";
     }
 }
@@ -1286,29 +1322,58 @@ inline void SetDrive(MotorCommand &m, int left, int right) {
 }
 
 // ---------------------------------------------------------------------------
-//  9.6  Señal de cámara -- lee CAM_LINK, sin bloquear, sin protocolo real
+//  9.6  Señal de cámara -- líneas de texto por CAM_LINK (y por el UART, para simular)
 // ---------------------------------------------------------------------------
-// La Raspberry Pi manda un byte 'V' (cualquier otro byte se ignora) cada
-// vez que su detector ve la bandera del equipo contrario -- ni framing, ni
-// checksum, ni structs: a propósito, todo lo que puede fallar de un
-// protocolo de verdad no puede fallar acá. Drenar el buffer es seguro
-// llamarlo en cualquier fase (no solo en GIRO_RECENTRAR); lo que cambia
-// según la fase es si MissionTask actúa sobre lo que devuelve Confirmada().
+// La Raspberry Pi manda una línea por cuadro: 'B <error> <área>' si ve la
+// bandera contraria, 'N' si no. Sin framing ni checksum a propósito: un byte
+// perdido solo estropea UNA línea y el salto de línea resincroniza. Los 'V'
+// sueltos del protocolo viejo de v7 se descartan. También se lee el puerto UART
+// (DEBUG_LINK) para poder teclear líneas a mano en el monitor y probar sin la Pi.
+// Es seguro llamarlo en cualquier fase; lo que cambia es si MissionTask actúa.
 namespace CamaraBandera {
-    volatile uint32_t ultima_senal_ms = 0;      // millis() del último 'V' recibido
+    volatile uint32_t ultima_b_ms = 0;          // millis() de la última línea B; 0 = no la ve (N) o nunca llegó
     volatile uint32_t sostenida_desde_ms = 0;   // 0 = no está fresca ahora mismo
+    volatile int      error = 0;                // -100..100
+    volatile int      area  = 0;                // 0..100, informativo
+
+    static char    linea[24];
+    static uint8_t largo = 0;
+
+    static void ProcesarLinea(const char *l) {
+        if (l[0] == 'B') {
+            int e = 0, a = 0;
+            const int n = sscanf(l + 1, "%d %d", &e, &a);
+            if (n >= 1) {
+                error = constrain(e, -100, 100);
+                area  = (n >= 2) ? constrain(a, 0, 100) : 0;
+                ultima_b_ms = millis();
+            }
+        } else if (l[0] == 'N') {
+            ultima_b_ms = 0;
+        }
+    }
+
+    static void Alimentar(char c) {
+        if (c == 'V') return;   // protocolo viejo de v7: se descarta
+        if (c == '\n' || c == '\r') {
+            if (largo > 0) { linea[largo] = 0; ProcesarLinea(linea); largo = 0; }
+            return;
+        }
+        if (largo < sizeof(linea) - 1) linea[largo++] = c; else largo = 0;
+    }
+
+    // true = llegó una línea B hace menos de kFrescoBanderaCamaraMs.
+    bool Fresca() {
+        return ultima_b_ms != 0 &&
+               (uint32_t)(millis() - ultima_b_ms) <= Mission::kFrescoBanderaCamaraMs;
+    }
 
     void Actualizar() {
-        bool vista_este_ciclo = false;
-        while (CAM_LINK.available() > 0) {
-            if ((char)CAM_LINK.read() == 'V') vista_este_ciclo = true;
-        }
-        const uint32_t ahora = millis();
-        if (vista_este_ciclo) ultima_senal_ms = ahora;
+        while (CAM_LINK.available() > 0)   Alimentar((char)CAM_LINK.read());
+        while (DEBUG_LINK.available() > 0) Alimentar((char)DEBUG_LINK.read());
 
-        const bool fresca = (uint32_t)(ahora - ultima_senal_ms) <= Mission::kFrescoBanderaCamaraMs;
-        if (fresca) {
-            if (sostenida_desde_ms == 0) sostenida_desde_ms = ahora;
+        if (Fresca()) {
+            if (sostenida_desde_ms == 0) sostenida_desde_ms = millis();
         } else {
             sostenida_desde_ms = 0;
         }
@@ -1320,6 +1385,9 @@ namespace CamaraBandera {
         return sostenida_desde_ms != 0 &&
                (uint32_t)(millis() - sostenida_desde_ms) >= Mission::kSostenBanderaCamaraMs;
     }
+
+    int Error() { return error; }
+    int Area()  { return area; }
 
     // Difunde el equipo (ya decidido por el switch físico en setup()) a la
     // Raspberry Pi, repetido cada kEquipoBroadcastMs en vez de una sola vez
@@ -1357,6 +1425,15 @@ void MissionTask(void *pvTeam) {
     uint32_t borde_eventos = 0;
     bool aviso_qtr_pegado_dado = false;
 
+    // Paso 7 (M2): ciclo de búsqueda y centrado por pulsos.
+    int      busq_paso = 0;             // 0..7, ver Mission::kBusqueda*
+    uint32_t busq_paso_desde_ms = 0;
+    int      centr_sub = 0;             // 0 = pausa/lectura, 1 = pulso de giro
+    uint32_t centr_sub_desde_ms = 0;
+    int      centr_sentido = 1;         // +1 = gira a la derecha, -1 = a la izquierda
+    uint32_t perdida_desde_ms = 0;      // 0 = la cámara la ve ahora
+    uint32_t last_cam_log_ms = 0;
+
     // Cerrojos: en cuanto se ve el color buscado UNA vez en la fase
     // correspondiente, esto pasa a true y ya no vuelve a false -- mismo
     // criterio que v1/v3 (no seguir de largo por una lectura suelta que
@@ -1378,7 +1455,7 @@ void MissionTask(void *pvTeam) {
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
 
-    DEBUG_LINK.printf("[Mission] v8-logica-completa (M1) -- equipo=%s, zona enemiga=%s\n",
+    DEBUG_LINK.printf("[Mission] v8-logica-completa (M2) -- equipo=%s, zona enemiga=%s\n",
                        team == TeamColor::RED ? "ROJO" : "AZUL",
                        ColorLabelName(enemy_color));
 
@@ -1406,6 +1483,15 @@ void MissionTask(void *pvTeam) {
         ColorLabel led_color = color_activo;
 
         if (Mission::kMotionEnabled) {
+
+            if ((phase == Mission::Phase::BUSCAR_BANDERA || phase == Mission::Phase::CENTRAR_Y_AVANZAR) &&
+                (uint32_t)(millis() - last_cam_log_ms) > 300) {
+                last_cam_log_ms = millis();
+                DEBUG_LINK.printf("[Camara] %s fresca=%d sostenida=%d err=%d area=%d%% | tof=%u mm valido=%d\n",
+                                   Mission::PhaseName(phase), CamaraBandera::Fresca(), CamaraBandera::Confirmada(),
+                                   CamaraBandera::Error(), CamaraBandera::Area(),
+                                   last_tof.distance_mm, last_tof.valid);
+            }
 
             // --- Protección de borde (QTR): prioridad sobre las fases que
             // avanzan o giran (no al retroceder ni quieto). Confirma el negro
@@ -1473,7 +1559,14 @@ void MissionTask(void *pvTeam) {
 
                 case Mission::Phase::ARRANQUE: {
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kStartupDelayMs) {
-                        phase = Mission::Phase::ASEGURAR_CAJA;
+                        if (Mission::kBancoSoloPaso7) {
+                            DEBUG_LINK.println("[Mission] BANCO SOLO PASO 7: se saltan los pasos 1-6.");
+                            phase = Mission::Phase::BUSCAR_BANDERA;
+                            busq_paso = 0;
+                            busq_paso_desde_ms = millis();
+                        } else {
+                            phase = Mission::Phase::ASEGURAR_CAJA;
+                        }
                         phase_started_ms = millis();
                     }
                     break;
@@ -1594,9 +1687,18 @@ void MissionTask(void *pvTeam) {
                     const bool tope_alcanzado =
                         (uint32_t)(millis() - phase_started_ms) >= Mission::kDuracionGiroRecentrarMs;
                     if (CamaraBandera::Confirmada() || tope_alcanzado) {
-                        DEBUG_LINK.printf("[Mission] giro 2 terminado (%s) -- fin del hito M1, el robot se detiene.\n",
-                                           CamaraBandera::Confirmada() ? "camara confirmo la bandera" : "tope de tiempo");
-                        phase = Mission::Phase::FIN_M1;
+                        if (CamaraBandera::Confirmada()) {
+                            DEBUG_LINK.println("[Mission] giro 2 terminado: la camara confirmo la bandera -- a centrar.");
+                            phase = Mission::Phase::CENTRAR_Y_AVANZAR;
+                            centr_sub = 0;
+                            centr_sub_desde_ms = millis();
+                            perdida_desde_ms = 0;
+                        } else {
+                            DEBUG_LINK.println("[Mission] giro 2 terminado por tope de tiempo, sin ver la bandera -- a buscar.");
+                            phase = Mission::Phase::BUSCAR_BANDERA;
+                            busq_paso = 0;
+                            busq_paso_desde_ms = millis();
+                        }
                         phase_started_ms = millis();
                     } else {
                         const int v = Mission::kVelocidadGiroEsquive;
@@ -1787,6 +1889,102 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
+                // ---- M2: paso 7 -- buscar la bandera y centrarse ------------------
+                case Mission::Phase::BUSCAR_BANDERA: {
+                    estado_led = EstadoVisible::BUSCANDO_BANDERA;
+                    if (CamaraBandera::Confirmada()) {
+                        DEBUG_LINK.printf("[Mission] bandera vista durante la busqueda (err=%d, area=%d%%) -- a centrar.\n",
+                                           CamaraBandera::Error(), CamaraBandera::Area());
+                        phase = Mission::Phase::CENTRAR_Y_AVANZAR;
+                        phase_started_ms = millis();
+                        centr_sub = 0;
+                        centr_sub_desde_ms = millis();
+                        perdida_desde_ms = 0;
+                        break;
+                    }
+                    const uint32_t t = (uint32_t)(millis() - busq_paso_desde_ms);
+                    const int vp = Mission::kBusquedaVelocidadPivote;
+                    bool paso_termino = false;
+                    switch (busq_paso) {
+                        case 1:
+                        case 5:   // pivote A
+                            if (Mission::kBusquedaPrimerPivoteHaciaDerecha) SetDrive(motor, vp, -vp); else SetDrive(motor, -vp, vp);
+                            paso_termino = t >= Mission::kBusquedaPivoteMs;
+                            break;
+                        case 3:   // pivote B (lado contrario, el doble)
+                            if (Mission::kBusquedaPrimerPivoteHaciaDerecha) SetDrive(motor, -vp, vp); else SetDrive(motor, vp, -vp);
+                            paso_termino = t >= 2 * Mission::kBusquedaPivoteMs;
+                            break;
+                        case 7:   // avance corto
+                            SetDrive(motor, Mission::kBusquedaVelocidadAvance, Mission::kBusquedaVelocidadAvance);
+                            paso_termino = t >= Mission::kBusquedaAvanceMs;
+                            break;
+                        default:  // 0, 2, 4, 6: pausa quieto
+                            paso_termino = t >= Mission::kBusquedaPausaMs;
+                            break;
+                    }
+                    if (paso_termino) {
+                        busq_paso = (busq_paso + 1) % 8;
+                        busq_paso_desde_ms = millis();
+                    }
+                    break;
+                }
+
+                case Mission::Phase::CENTRAR_Y_AVANZAR: {
+                    estado_led = EstadoVisible::BUSCANDO_BANDERA;
+                    // 1) ¿llegó? La cámara la ve Y el ToF dice que está cerca.
+                    if (CamaraBandera::Fresca() && last_tof.valid &&
+                        last_tof.distance_mm <= Mission::kDistanciaAproximacionMm) {
+                        DEBUG_LINK.printf("[Mission] llego cerca de la bandera: tof=%u mm, camara err=%d area=%d%% -- fin del hito M2.\n",
+                                           last_tof.distance_mm, CamaraBandera::Error(), CamaraBandera::Area());
+                        phase = Mission::Phase::FIN_M2;
+                        phase_started_ms = millis();
+                        break;
+                    }
+                    // 2) ¿perdió la señal? Quieto un momento y de vuelta a buscar.
+                    if (!CamaraBandera::Fresca()) {
+                        if (perdida_desde_ms == 0) perdida_desde_ms = millis();
+                        if ((uint32_t)(millis() - perdida_desde_ms) >= Mission::kPerdidaBanderaMs) {
+                            DEBUG_LINK.println("[Mission] la camara perdio la bandera -- a buscar.");
+                            phase = Mission::Phase::BUSCAR_BANDERA;
+                            phase_started_ms = millis();
+                            busq_paso = 0;
+                            busq_paso_desde_ms = millis();
+                        }
+                        break;   // motor en STOP mientras espera
+                    }
+                    perdida_desde_ms = 0;
+                    // 3) Centrado proporcional por pulsos.
+                    const int e = CamaraBandera::Error();
+                    if (abs(e) <= Mission::kZonaMuertaCentrado) {
+                        SetDrive(motor, Mission::kVelocidadAcercamiento, Mission::kVelocidadAcercamiento);
+                        centr_sub = 0;
+                        centr_sub_desde_ms = millis();   // si se descentra, espera un asentamiento antes del primer pulso
+                    } else if (centr_sub == 0) {
+                        if ((uint32_t)(millis() - centr_sub_desde_ms) >= Mission::kAsentarCentradoMs) {
+                            centr_sub = 1;
+                            centr_sub_desde_ms = millis();
+                            centr_sentido = (e > 0) ? 1 : -1;
+                        }
+                    } else {
+                        if ((uint32_t)(millis() - centr_sub_desde_ms) < Mission::kPulsoCentradoMs) {
+                            const float frac = constrain((float)(abs(e) - Mission::kZonaMuertaCentrado) /
+                                                          (float)(100 - Mission::kZonaMuertaCentrado), 0.0f, 1.0f);
+                            const int v = Mission::kVelocidadCentradoMin +
+                                          (int)((Mission::kVelocidadCentradoMax - Mission::kVelocidadCentradoMin) * frac);
+                            if (centr_sentido > 0) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                        } else {
+                            centr_sub = 0;
+                            centr_sub_desde_ms = millis();
+                        }
+                    }
+                    break;
+                }
+
+                case Mission::Phase::FIN_M2:
+                    estado_led = EstadoVisible::TERMINADO;
+                    break;
+
                 // M1: pasos 1-6 terminados. Quieto (STOP por defecto) y LED verde.
                 case Mission::Phase::FIN_M1:
                     estado_led = EstadoVisible::TERMINADO;
@@ -1897,7 +2095,7 @@ void setup() {
     }
     delay(200);
 
-    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M1: pasos 1-6 + proteccion de borde, QTR derecho)");
+    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M2: busqueda y centrado de la bandera)");
     DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
                        ResetReasonToString(esp_reset_reason()));
 

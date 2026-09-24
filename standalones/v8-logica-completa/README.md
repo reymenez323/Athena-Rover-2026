@@ -5,8 +5,8 @@ Banco de validación de los 12 pasos de [`docs/logica-athena.md`](../../docs/log
 | Hito | Qué | Estado |
 |---|---|---|
 | M0 | Copia de v7, compila | hecho (sin probar en robot) |
-| M1 | Pasos 1–6 con protección de borde mínima (QTR derecho) | flasheado, en pruebas |
-| M2 | Búsqueda y centrado (paso 7), cámara simulada a mano | pendiente |
+| M1 | Pasos 1–6 con protección de borde mínima (QTR derecho) | probado: pasos 1–6 OK; borde da falsos positivos cerca del amarillo, desactivado hasta M4 |
+| M2 | Búsqueda y centrado (paso 7), cámara simulada a mano | compila, sin probar en robot |
 | M3 | Ajuste con ToF y cierre con cámara + ToF (8–9) | pendiente |
 | M4 | QTR: medir el izquierdo y activar el borde | pendiente |
 | M5 | Retorno y suelta (10–12) | pendiente |
