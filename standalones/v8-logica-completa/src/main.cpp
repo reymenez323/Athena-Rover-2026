@@ -326,7 +326,7 @@ constexpr uint32_t kSostenBanderaCamaraMs = 150;
 //   'B <error> <área>'  la ve. error -100..100 (negativo = a la izquierda, 0 = centrada);
 //                       área = % del cuadro que ocupa la bandera (solo informativo, no decide nada)
 //   'N'                 no la ve
-constexpr bool kBancoSoloPaso7 = true;   // SOLO BANCO: salta los pasos 1-6 y empieza directo buscando la bandera. Poner false para la corrida completa
+constexpr bool kBancoSoloPaso7 = false;  // SOLO BANCO: salta los pasos 1-6 y empieza directo buscando la bandera. Poner false para la corrida completa
 // Búsqueda cuando la cámara no la ve: pausa -> pivote A -> pausa -> pivote B (doble) -> pausa -> pivote A -> pausa -> avance corto, y repite.
 // Los pivotes alternados casi se anulan entre sí; las pausas dan cuadros estables a la cámara.
 constexpr uint32_t kBusquedaPausaMs   = 400;   // quieto para que la cámara mire sin desenfoque
@@ -371,7 +371,7 @@ constexpr int      kBordeVelocidadGiro    = 100;    // % de PWM del pivote
 constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho activo el borde queda a la derecha: se gira a la IZQUIERDA
 
 // -- Retorno con la bandera (hito M5, pasos 10-12) ----------------------------
-constexpr bool     kBancoPararTrasAgarrar = true;   // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
+constexpr bool     kBancoPararTrasAgarrar = false;  // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
 constexpr uint32_t kGiroRetornoMs         = 2700;   // pivote para dar la vuelta con la bandera (~180 grados: 2800 ms dio ~190 en pista, ver kDuracionGiroRecentrarMs)
 constexpr int      kVelocidadGiroRetorno  = 100;    // % de PWM del pivote
 constexpr bool     kGiroRetornoHaciaDerecha = true; // sentido del pivote de vuelta

@@ -10,7 +10,7 @@ Banco de validación de los 12 pasos de [`docs/logica-athena.md`](../../docs/log
 | M3 | Ajuste con ToF y cierre con cámara + ToF (8–9) | compila; en prueba |
 | M4 | QTR: borde en todas las fases que se mueven | código listo, desactivado: falta recalibrar el umbral con amarillo y caja |
 | M5 | Retorno y suelta (10–12) | compila, sin probar en robot |
-| M6 | Lado Pi: script nuevo, servicio y logs | pendiente |
+| M6 | Lado Pi: script nuevo, servicio y logs | escrito (`avisar_bandera_v8.py`), sin probar con la cámara real |
 | M7 | Corrida completa en pista | pendiente |
 
 Uso: `pio run -t upload --upload-port COM11` y `pio device monitor --port COM11` (log por UART). Los parámetros ajustables están al inicio de `src/main.cpp` (`Mission::`).

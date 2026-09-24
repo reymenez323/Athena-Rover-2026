@@ -164,7 +164,9 @@ funciona incluso tras apagar y encender la Pi.
 
 ---
 
-## 6. avisar_bandera_v7.py como servicio (para v7-mision-completa-camara)
+## 6. avisar_bandera_v8.py como servicio (para v8-logica-completa)
+
+> Desde 2026-09-24 este servicio corre `scripts/avisar_bandera_v8.py` (manda `B <error> <area>` / `N` por cuadro al `v8-logica-completa`). El nombre del archivo `athena-bandera-v7.service` se conservó para no reinstalar: si ya lo tenías instalado, basta `git pull`, `sudo cp deploy/athena-bandera-v7.service /etc/systemd/system/` (con tu usuario en las 3 rutas), `sudo systemctl daemon-reload` y `sudo systemctl restart athena-bandera-v7.service`.
 
 Instala `avisar_bandera_v7.py` -- el script mínimo que solo avisa "veo la
 bandera contraria" al ESP32, usado con

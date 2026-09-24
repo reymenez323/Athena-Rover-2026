@@ -1,5 +1,5 @@
 [Unit]
-Description=Athena Rover - aviso de camara para v7-mision-completa-camara (solo detecta bandera y avisa al ESP32)
+Description=Athena Rover - aviso de camara para v8-logica-completa (solo detecta bandera y avisa al ESP32)
 After=multi-user.target
 # Sin límite de reintentos: si la cámara o el ESP32 tardan en enumerarse por
 # USB al encender, el servicio se reinicia solo hasta que estén listos, en
@@ -16,17 +16,17 @@ WorkingDirectory=/home/TU_USUARIO_AQUI/Athena-Rover-2026/raspberry-pi
 EnvironmentFile=/home/TU_USUARIO_AQUI/Athena-Rover-2026/raspberry-pi/deploy/equipo-bandera.env
 
 # Le da unos segundos a la cámara USB y al ESP32 para enumerarse antes del
-# primer intento. Si de todas formas no están listos, avisar_bandera_v7.py
+# primer intento. Si de todas formas no están listos, avisar_bandera_v8.py
 # falla y Restart=on-failure lo vuelve a intentar solo.
 ExecStartPre=/bin/sleep 5
 
-# NORMAL: EQUIPO sin definir en equipo-bandera.env -- avisar_bandera_v7.py
-# espera el byte 'R'/'A' que manda v7-mision-completa-camara después de leer
+# NORMAL: EQUIPO sin definir en equipo-bandera.env -- avisar_bandera_v8.py
+# espera el byte 'R'/'A' que manda v8-logica-completa después de leer
 # el switch físico de equipo del chasis, así que nunca se puede desincronizar
 # de él. ${EQUIPO:+--equipo $EQUIPO} se expande a nada si EQUIPO no está
 # definida, o a "--equipo rojo"/"--equipo azul" si se descomentó en
 # equipo-bandera.env (banco sin switch instalado o sin ESP32 conectado).
-ExecStart=/bin/sh -c 'exec /usr/bin/python3 scripts/avisar_bandera_v7.py ${EQUIPO:+--equipo $EQUIPO}'
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 scripts/avisar_bandera_v8.py ${EQUIPO:+--equipo $EQUIPO}'
 
 Restart=on-failure
 RestartSec=2
