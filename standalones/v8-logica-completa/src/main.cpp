@@ -11,6 +11,9 @@
 //  speed>0 = adelante).
 //
 //  HITOS: [M0] copia de v7, compila.
+//         [M1] pasos 1-6 de la lógica + protección de borde (QTR derecho). Tras el
+//              giro 2 el robot SE DETIENE (Phase::FIN_M1); las fases de bandera que
+//              siguen en este archivo son de v7 y NO se alcanzan hasta M2-M5.
 //
 //  ---- Texto heredado de v7 (sigue siendo válido hasta que un hito lo cambie) ----
 //  VARIANTE v7-mision-completa-camara: copia EXACTA de
@@ -308,6 +311,23 @@ constexpr uint32_t kSostenBanderaCamaraMs = 150;
 // ronda, lo recibe igual en menos de un ciclo.
 constexpr uint32_t kEquipoBroadcastMs = 500;
 
+// -- Protección de borde (QTR) -- hito M1 ------------------------------------
+// Regla 1 de docs/logica-athena.md: nunca salirse de la pista (el marco es
+// cinta negra). El QTR compara el emisor IR encendido contra apagado; una
+// diferencia chica (menor que kBordeRestadoUmbral) = superficie negra = borde.
+// Solo actúa en las fases que avanzan o giran (no al retroceder ni quieto).
+constexpr bool     kProteccionBordeActiva = true;   // interruptor general: false = ignora el borde (p. ej. probando sobre una mesa con cosas negras)
+constexpr bool     kQtrIzquierdoActivo    = false;  // el izquierdo está pegado al tope (sin señal útil, diagnosticado 2026-09-24): NO activar hasta repararlo
+constexpr int16_t  kBordeRestadoUmbral    = 40;     // |dif| menor que esto = negro (negro ~1-8, gris ~76-87 medido en banco)
+constexpr uint16_t kQtrTopeAdc            = 4085;   // off y on >= esto = sensor pegado al tope: NO cuenta como negro (sería un falso borde)
+constexpr uint32_t kBordeDebounceMs       = 50;     // el borde debe verse sostenido este tiempo antes de reaccionar (filtra ruido)
+constexpr uint32_t kBordeParadaMs         = 200;    // parada total antes de retroceder
+constexpr uint32_t kBordeRetrocesoMs      = 300;    // retroceso corto (no hay sensor trasero: por eso corto y limitado)
+constexpr int      kBordeVelocidadRetroceso = 60;   // % de PWM del retroceso
+constexpr uint32_t kBordeGiroMs           = 500;    // pivote para alejarse del borde
+constexpr int      kBordeVelocidadGiro    = 100;    // % de PWM del pivote
+constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho activo el borde queda a la derecha: se gira a la IZQUIERDA
+
 // -- Espera media entre caja y bandera ---------------------------------------
 // Pedido explícito: "ni muy corta ni muy larga" -- tiempo para que una
 // persona ponga la bandera al frente del robot (ya reorientado por el giro
@@ -360,6 +380,10 @@ enum class Phase : uint8_t {
     SOLTAR_BANDERA,
     TERMINADO,
     FALLO_AJUSTE,
+    BORDE_PARAR,        // M1: reacción al borde negro
+    BORDE_RETROCEDER,
+    BORDE_GIRAR,
+    FIN_M1,             // M1: fin de los pasos 1-6, el robot se detiene
 };
 
 inline const char *PhaseName(Phase phase) {
@@ -385,6 +409,10 @@ inline const char *PhaseName(Phase phase) {
         case Phase::SOLTAR_BANDERA:             return "SOLTAR_BANDERA";
         case Phase::TERMINADO:                  return "TERMINADO";
         case Phase::FALLO_AJUSTE:               return "FALLO_AJUSTE";
+        case Phase::BORDE_PARAR:                return "BORDE_PARAR";
+        case Phase::BORDE_RETROCEDER:           return "BORDE_RETROCEDER";
+        case Phase::BORDE_GIRAR:                return "BORDE_GIRAR";
+        case Phase::FIN_M1:                     return "FIN_M1";
         default:                                return "DESCONOCIDA";
     }
 }
@@ -432,6 +460,11 @@ namespace Pins {
     // -------- Switch de 3 posiciones: elige equipo Y arma el robot ---------
     constexpr uint8_t TEAM_SWITCH_BLUE = 40;
     constexpr uint8_t TEAM_SWITCH_RED  = 21;
+
+    // -------- Reflectancia: 2x QTRX-HD-01A (a 3.3 V, NUNCA 5 V) -------------
+    constexpr uint8_t QTR_LEFT_OUT     = 1;    // ADC1_CH0
+    constexpr uint8_t QTR_RIGHT_OUT    = 2;    // ADC1_CH1
+    constexpr uint8_t QTR_EMITTER_CTRL = 42;   // CTRL de los emisores IR, compartido
 }
 
 namespace I2CAddr {
@@ -470,6 +503,7 @@ namespace TaskPriority {
     constexpr UBaseType_t GRIPPER_CONTROL = 3;
     constexpr UBaseType_t COLOR_SENSOR    = 2;
     constexpr UBaseType_t TOF_SENSOR      = 2;
+    constexpr UBaseType_t REFLECTANCE     = 2;
     constexpr UBaseType_t LED_STATUS      = 1;
 }
 
@@ -480,6 +514,7 @@ namespace TaskStack {
     constexpr uint32_t GRIPPER_CONTROL = 3072;
     constexpr uint32_t COLOR_SENSOR    = 3584;
     constexpr uint32_t TOF_SENSOR      = 3072;
+    constexpr uint32_t REFLECTANCE     = 3072;
     constexpr uint32_t LED_STATUS      = 2048;
 }
 
@@ -490,6 +525,7 @@ namespace TaskPeriodMs {
     constexpr uint32_t GRIPPER       = 50;
     constexpr uint32_t COLOR_SENSOR  = 100;
     constexpr uint32_t TOF_SENSOR    = 50;   // igual al ranging period del VL53L1X
+    constexpr uint32_t REFLECTANCE   = 20;   // 50 Hz
     constexpr uint32_t LED_STATUS    = 100;
 }
 
@@ -502,6 +538,7 @@ enum class TaskId : uint8_t {
     COLOR_SENSOR,
     TOF_SENSOR,
     LED_STATUS,
+    REFLECTANCE,
     MISSION,
     COUNT
 };
@@ -540,6 +577,7 @@ enum class EstadoVisible : uint8_t {
     AGARRADA,         // gripper cerrado sobre la bandera, avanzando
     TERMINADO,
     FALLO,            // se agotaron los pasos de ajuste sin confirmar rango
+    BORDE,            // M1: reaccionando al borde negro de la pista (morado fijo)
 };
 
 struct MotorCommand {
@@ -569,6 +607,17 @@ struct TofReading {
     bool     valid        = false;
 };
 
+// Lectura del QTR con rechazo de luz ambiente: dif = (emisor encendido) - (emisor apagado).
+struct ReflectanceReading {
+    uint32_t timestamp_ms  = 0;
+    int16_t  left_restado  = 0;
+    int16_t  right_restado = 0;
+    bool     left_pegado   = false;   // pegado al tope del ADC: sin señal útil
+    bool     right_pegado  = false;
+    bool     left_on_line  = false;   // true = ve negro (borde)
+    bool     right_on_line = false;
+};
+
 struct HealthReport {
     uint32_t timestamp_ms          = 0;
     uint8_t  faulted_tasks_bitmask = 0;
@@ -590,6 +639,7 @@ static QueueHandle_t g_gripperCmdQueue = nullptr;
 static QueueHandle_t g_ledCmdQueue     = nullptr;
 static QueueHandle_t g_colorQueue      = nullptr;
 static QueueHandle_t g_tofQueue        = nullptr;
+static QueueHandle_t g_reflectQueue    = nullptr;
 static QueueHandle_t g_healthQueue     = nullptr;
 
 // Protege el bus Nº1 (Wire1): el TCS34725 delantero (ColorSensorTask,
@@ -1087,6 +1137,52 @@ void TofSensorTask(void *) {
 //  9.5  LedTask — color sensado (fases COLOR) o indicador de fase (resto)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+//  ReflectanceTask -- 2x QTRX-HD-01A con rechazo de luz ambiente (hito M1)
+// ---------------------------------------------------------------------------
+// Misma técnica que firmware-esp32/ y v4: emisor IR APAGADO (>= 1 ms, menos
+// solo lo atenúa) -> lectura off; ENCENDIDO -> lectura on; dif = on - off.
+// Un sensor con off y on pegados al tope del ADC no da información: se marca
+// pegado y NO cuenta como negro (leería dif=0 = negro todo el tiempo).
+void ReflectanceTask(void *) {
+    analogReadResolution(12);
+    analogSetPinAttenuation(Pins::QTR_LEFT_OUT, ADC_11db);
+    analogSetPinAttenuation(Pins::QTR_RIGHT_OUT, ADC_11db);
+
+    pinMode(Pins::QTR_EMITTER_CTRL, OUTPUT);
+    digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
+
+    const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::REFLECTANCE);
+    TickType_t last_wake = xTaskGetTickCount();
+
+    for (;;) {
+        digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
+        delay(2);   // >= 1 ms: apagado real
+        const uint16_t left_off  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+        const uint16_t right_off = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
+        digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
+        delayMicroseconds(200);   // asentar el fototransistor con luz IR estable
+        const uint16_t left_on  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
+        const uint16_t right_on = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+
+        ReflectanceReading r;
+        r.timestamp_ms  = millis();
+        r.left_restado  = (int16_t)((int32_t)left_on  - (int32_t)left_off);
+        r.right_restado = (int16_t)((int32_t)right_on - (int32_t)right_off);
+        r.left_pegado   = left_off  >= Mission::kQtrTopeAdc && left_on  >= Mission::kQtrTopeAdc;
+        r.right_pegado  = right_off >= Mission::kQtrTopeAdc && right_on >= Mission::kQtrTopeAdc;
+        r.right_on_line = !r.right_pegado && abs(r.right_restado) < Mission::kBordeRestadoUmbral;
+        r.left_on_line  = Mission::kQtrIzquierdoActivo && !r.left_pegado &&
+                          abs(r.left_restado) < Mission::kBordeRestadoUmbral;
+
+        PushDropOldest(g_reflectQueue, r);
+
+        Heartbeat(TaskId::REFLECTANCE);
+        vTaskDelayUntil(&last_wake, period);
+    }
+}
+
 namespace RgbLed {
     constexpr uint8_t CH_R = 4;
     constexpr uint8_t CH_G = 5;
@@ -1164,6 +1260,9 @@ void LedTask(void *) {
                 break;
             case EstadoVisible::FALLO:
                 RgbLed::SetRaw(blink_on ? 255 : 0, 0, 0);   // rojo parpadeando
+                break;
+            case EstadoVisible::BORDE:
+                RgbLed::SetRaw(160, 0, 200);  // morado fijo
                 break;
         }
 
@@ -1249,6 +1348,14 @@ void MissionTask(void *pvTeam) {
 
     ColorReading last_color{};
     TofReading last_tof{};
+    ReflectanceReading last_reflect{};
+
+    // Protección de borde (M1): cuánto lleva visto el negro, a qué fase volver
+    // tras reaccionar, cuántas veces ha reaccionado y si ya se avisó de un QTR pegado.
+    uint32_t borde_desde_ms = 0;   // 0 = no se está confirmando ahora
+    Mission::Phase fase_interrumpida = Mission::Phase::ARRANQUE;
+    uint32_t borde_eventos = 0;
+    bool aviso_qtr_pegado_dado = false;
 
     // Cerrojos: en cuanto se ve el color buscado UNA vez en la fase
     // correspondiente, esto pasa a true y ya no vuelve a false -- mismo
@@ -1271,7 +1378,7 @@ void MissionTask(void *pvTeam) {
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
 
-    DEBUG_LINK.printf("[Mission] v8-logica-completa (M0) -- equipo=%s, zona enemiga=%s\n",
+    DEBUG_LINK.printf("[Mission] v8-logica-completa (M1) -- equipo=%s, zona enemiga=%s\n",
                        team == TeamColor::RED ? "ROJO" : "AZUL",
                        ColorLabelName(enemy_color));
 
@@ -1283,6 +1390,8 @@ void MissionTask(void *pvTeam) {
         while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) last_color = c;
         TofReading t;
         while (xQueueReceive(g_tofQueue, &t, 0) == pdTRUE) last_tof = t;
+        ReflectanceReading rf;
+        while (xQueueReceive(g_reflectQueue, &rf, 0) == pdTRUE) last_reflect = rf;
         HealthReport h;
         while (xQueueReceive(g_healthQueue, &h, 0) == pdTRUE) {
             DEBUG_LINK.printf("[Mission] tareas colgadas, bitmask=0x%02X\n", h.faulted_tasks_bitmask);
@@ -1297,6 +1406,39 @@ void MissionTask(void *pvTeam) {
         ColorLabel led_color = color_activo;
 
         if (Mission::kMotionEnabled) {
+
+            // --- Protección de borde (QTR): prioridad sobre las fases que
+            // avanzan o giran (no al retroceder ni quieto). Confirma el negro
+            // kBordeDebounceMs, guarda la fase y reacciona (BORDE_*). ---------
+            if (last_reflect.right_pegado && !aviso_qtr_pegado_dado) {
+                aviso_qtr_pegado_dado = true;
+                DEBUG_LINK.println("[Borde] AVISO: QTR derecho pegado al tope -- SIN proteccion de borde");
+            }
+            {
+                const bool fase_con_borde =
+                    phase == Mission::Phase::BUSCAR_ZONA_AMARILLA ||
+                    phase == Mission::Phase::ESQUIVAR_CAJA ||
+                    phase == Mission::Phase::AVANZAR_TRAS_ESQUIVE ||
+                    phase == Mission::Phase::GIRO_RECENTRAR;
+                const bool en_borde = last_reflect.right_on_line || last_reflect.left_on_line;
+                if (Mission::kProteccionBordeActiva && fase_con_borde && en_borde) {
+                    if (borde_desde_ms == 0) {
+                        borde_desde_ms = millis();
+                    } else if ((uint32_t)(millis() - borde_desde_ms) >= Mission::kBordeDebounceMs) {
+                        ++borde_eventos;
+                        fase_interrumpida = phase;
+                        DEBUG_LINK.printf("[Borde] #%u en fase %s -- QTR der dif=%d, izq dif=%d (%s). Parando.\n",
+                                           (unsigned)borde_eventos, Mission::PhaseName(phase),
+                                           (int)last_reflect.right_restado, (int)last_reflect.left_restado,
+                                           Mission::kQtrIzquierdoActivo ? "izq activo" : "izq desactivado");
+                        phase = Mission::Phase::BORDE_PARAR;
+                        phase_started_ms = millis();
+                        borde_desde_ms = 0;
+                    }
+                } else {
+                    borde_desde_ms = 0;
+                }
+            }
 
             // --- Cerrojos: detenerse YA, para siempre, al ver el color -----
             if (!zona_amarilla_detectada && phase == Mission::Phase::BUSCAR_ZONA_AMARILLA &&
@@ -1452,7 +1594,9 @@ void MissionTask(void *pvTeam) {
                     const bool tope_alcanzado =
                         (uint32_t)(millis() - phase_started_ms) >= Mission::kDuracionGiroRecentrarMs;
                     if (CamaraBandera::Confirmada() || tope_alcanzado) {
-                        phase = Mission::Phase::ESPERAR_REACOMODO;
+                        DEBUG_LINK.printf("[Mission] giro 2 terminado (%s) -- fin del hito M1, el robot se detiene.\n",
+                                           CamaraBandera::Confirmada() ? "camara confirmo la bandera" : "tope de tiempo");
+                        phase = Mission::Phase::FIN_M1;
                         phase_started_ms = millis();
                     } else {
                         const int v = Mission::kVelocidadGiroEsquive;
@@ -1604,6 +1748,50 @@ void MissionTask(void *pvTeam) {
                     break;
                 }
 
+                // ---- M1: reacción al borde negro -----------------------------------
+                case Mission::Phase::BORDE_PARAR: {
+                    estado_led = EstadoVisible::BORDE;
+                    if ((uint32_t)(millis() - phase_started_ms) >= Mission::kBordeParadaMs) {
+                        phase = Mission::Phase::BORDE_RETROCEDER;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                case Mission::Phase::BORDE_RETROCEDER: {
+                    estado_led = EstadoVisible::BORDE;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kBordeRetrocesoMs) {
+                        SetDrive(motor, -Mission::kBordeVelocidadRetroceso, -Mission::kBordeVelocidadRetroceso);
+                    } else {
+                        phase = Mission::Phase::BORDE_GIRAR;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                case Mission::Phase::BORDE_GIRAR: {
+                    estado_led = EstadoVisible::BORDE;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kBordeGiroMs) {
+                        const int v = Mission::kBordeVelocidadGiro;
+                        if (Mission::kBordeGiroHaciaDerecha) {
+                            SetDrive(motor, v, -v);
+                        } else {
+                            SetDrive(motor, -v, v);
+                        }
+                    } else {
+                        DEBUG_LINK.printf("[Borde] reaccion terminada -- reanuda %s (cronometro reiniciado)\n",
+                                           Mission::PhaseName(fase_interrumpida));
+                        phase = fase_interrumpida;
+                        phase_started_ms = millis();
+                    }
+                    break;
+                }
+
+                // M1: pasos 1-6 terminados. Quieto (STOP por defecto) y LED verde.
+                case Mission::Phase::FIN_M1:
+                    estado_led = EstadoVisible::TERMINADO;
+                    break;
+
                 case Mission::Phase::TERMINADO:
                     estado_led = EstadoVisible::TERMINADO;
                     break;
@@ -1668,10 +1856,11 @@ static bool CreateQueues() {
     g_ledCmdQueue     = xQueueCreate(1, sizeof(LedCommand));
     g_colorQueue      = xQueueCreate(4, sizeof(ColorReading));
     g_tofQueue        = xQueueCreate(4, sizeof(TofReading));
+    g_reflectQueue    = xQueueCreate(4, sizeof(ReflectanceReading));
     g_healthQueue     = xQueueCreate(1, sizeof(HealthReport));
 
     return g_motorCmdQueue && g_gripperCmdQueue && g_ledCmdQueue &&
-           g_colorQueue && g_tofQueue && g_healthQueue;
+           g_colorQueue && g_tofQueue && g_reflectQueue && g_healthQueue;
 }
 
 constexpr uint32_t SERIAL_BAUD_RATE = 115200;
@@ -1708,7 +1897,7 @@ void setup() {
     }
     delay(200);
 
-    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M0: copia de v7)");
+    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M1: pasos 1-6 + proteccion de borde, QTR derecho)");
     DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
                        ResetReasonToString(esp_reset_reason()));
 
@@ -1777,6 +1966,8 @@ void setup() {
                             nullptr, TaskPriority::COLOR_SENSOR, nullptr, 0);
     xTaskCreatePinnedToCore(TofSensorTask, "ToF", TaskStack::TOF_SENSOR,
                             nullptr, TaskPriority::TOF_SENSOR, nullptr, 0);
+    xTaskCreatePinnedToCore(ReflectanceTask, "Reflectance", TaskStack::REFLECTANCE,
+                            nullptr, TaskPriority::REFLECTANCE, nullptr, 0);
     xTaskCreatePinnedToCore(LedTask, "Led", TaskStack::LED_STATUS,
                             nullptr, TaskPriority::LED_STATUS, nullptr, 0);
 
