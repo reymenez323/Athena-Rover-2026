@@ -405,6 +405,9 @@ constexpr uint32_t kPasoDuracionMs = 150;
 constexpr uint32_t kSettleTrasParoMs = 200;
 constexpr int kLecturasConsecutivasRequeridas = 3;
 constexpr int kMaxPasosSeguridad = 40;
+constexpr uint32_t kPasoLargoMs = 350;        // paso más largo mientras está LEJOS de la bandera (cada paso fino de kPasoDuracionMs avanza solo ~2-4 mm y con 40 pasos no alcanzaba: 2026-09-24)
+constexpr uint16_t kPasoLargoSobreMm = 100;   // usa el paso largo mientras el ToF marque más que esto; por debajo, pasos finos
+constexpr uint32_t kToFObsoletoMs = 150;   // una lectura válida del ToF vale este tiempo; una inválida (el sensor aún no tenía dato nuevo) NO la pisa antes. Sin esto, ~40 % de lecturas inválidas hacían avanzar pasos de más
 constexpr uint32_t kGripperSettleBanderaMs = 500;
 
 // -- Tras agarrar la bandera: SIN GIRO, pedido explícito (distinto de los
@@ -1481,6 +1484,7 @@ void MissionTask(void *pvTeam) {
 
     ColorReading last_color{};
     TofReading last_tof{};
+    uint32_t last_tof_valid_ms = 0;   // cuándo llegó la última lectura válida del ToF
     ReflectanceReading last_reflect{};
 
     // Protección de borde (M1): cuánto lleva visto el negro, a qué fase volver
@@ -1518,6 +1522,7 @@ void MissionTask(void *pvTeam) {
     int lecturas_en_rango_seguidas = 0;
     int pasos_dados = 0;
     int sentido_paso = 1;   // -1 = paso hacia atrás, +1 = hacia adelante
+    uint32_t paso_actual_ms = Mission::kPasoDuracionMs;   // duración del paso en curso (largo si está lejos, fino si está cerca)
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
@@ -1533,7 +1538,14 @@ void MissionTask(void *pvTeam) {
         ColorReading c;
         while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) last_color = c;
         TofReading t;
-        while (xQueueReceive(g_tofQueue, &t, 0) == pdTRUE) last_tof = t;
+        while (xQueueReceive(g_tofQueue, &t, 0) == pdTRUE) {
+            if (t.valid) {
+                last_tof = t;
+                last_tof_valid_ms = millis();
+            } else if ((uint32_t)(millis() - last_tof_valid_ms) > Mission::kToFObsoletoMs) {
+                last_tof = t;   // ya pasó demasiado sin lectura válida: ahora sí cuenta como sin dato
+            }
+        }
         ReflectanceReading rf;
         while (xQueueReceive(g_reflectQueue, &rf, 0) == pdTRUE) last_reflect = rf;
         HealthReport h;
@@ -1889,6 +1901,10 @@ void MissionTask(void *pvTeam) {
                     sentido_paso = (last_tof.valid && last_tof.distance_mm < Mission::kRangoAgarreMinMm)
                         ? -1
                         : 1;
+                    paso_actual_ms = (sentido_paso > 0 && last_tof.valid &&
+                                      last_tof.distance_mm > Mission::kPasoLargoSobreMm)
+                        ? Mission::kPasoLargoMs
+                        : Mission::kPasoDuracionMs;
                     phase = Mission::Phase::PASO_AJUSTE;
                     phase_started_ms = millis();
                     break;
@@ -1909,7 +1925,7 @@ void MissionTask(void *pvTeam) {
 
                 case Mission::Phase::PASO_AJUSTE: {
                     estado_led = EstadoVisible::AJUSTANDO;
-                    if ((uint32_t)(millis() - phase_started_ms) >= Mission::kPasoDuracionMs) {
+                    if ((uint32_t)(millis() - phase_started_ms) >= paso_actual_ms) {
                         ++pasos_dados;
                         phase = Mission::Phase::DETENER_PARA_MEDIR;
                         phase_started_ms = millis();
