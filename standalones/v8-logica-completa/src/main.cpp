@@ -20,6 +20,13 @@
 //              mano en el monitor del puerto UART para probar sin la Pi. El robot
 //              termina en FIN_M2 al llegar a kDistanciaAproximacionMm con la bandera vista.
 //              kBancoSoloPaso7=true salta los pasos 1-6 y empieza directo en la búsqueda.
+//         [M3] pasos 8-9: ajuste fino con el ToF y cierre del gripper. Cámara Y ToF son
+//              OBLIGATORIOS: sin ver la bandera no se mide ni se cierra (si la pierde, vuelve
+//              a buscar). El ToF solo cuenta con la bandera centrada. Tras kMaxPasosSeguridad
+//              correcciones sin confirmar rango, si la cámara AÚN la ve, cierra igual.
+//              El robot termina en FIN_M3 (bandera agarrada, LED verde).
+//         [M4] el código de borde (QTR) cubre también las fases de búsqueda y centrado.
+//              Sigue DESACTIVADO (kProteccionBordeActiva) hasta recalibrar el umbral.
 //
 //  ---- Texto heredado de v7 (sigue siendo válido hasta que un hito lo cambie) ----
 //  VARIANTE v7-mision-completa-camara: copia EXACTA de
@@ -368,7 +375,7 @@ constexpr uint32_t kEsperaReacomodoMs = 6000;
 // confirmados en banco 2026-09-07 -----------------------------------------
 constexpr uint16_t kDistanciaAproximacionMm = 150;
 constexpr uint16_t kRangoAgarreMinMm = 56;
-constexpr uint16_t kRangoAgarreMaxMm = 60;
+constexpr uint16_t kRangoAgarreMaxMm = 62;   // subido de 60 (2026-09-24, pedido de Montse: rango 56-62)
 constexpr int kVelocidadPaso = 60;
 constexpr uint32_t kPasoDuracionMs = 150;
 constexpr uint32_t kSettleTrasParoMs = 200;
@@ -416,7 +423,9 @@ enum class Phase : uint8_t {
     FIN_M1,             // M1: fin de los pasos 1-6, el robot se detiene
     BUSCAR_BANDERA,     // M2: paso 7, la cámara no la ve
     CENTRAR_Y_AVANZAR,  // M2: paso 7, la cámara la ve: se centra y avanza
-    FIN_M2,             // M2: llegó cerca de la bandera, el robot se detiene
+    FIN_M2,             // M2: (ya no se alcanza: ahora pasa al ajuste fino)
+    CENTRAR_FINO,       // M3: un pulso de giro para recentrar la bandera antes de medir con el ToF
+    FIN_M3,             // M3: bandera agarrada, el robot se detiene
 };
 
 inline const char *PhaseName(Phase phase) {
@@ -449,6 +458,8 @@ inline const char *PhaseName(Phase phase) {
         case Phase::BUSCAR_BANDERA:             return "BUSCAR_BANDERA";
         case Phase::CENTRAR_Y_AVANZAR:          return "CENTRAR_Y_AVANZAR";
         case Phase::FIN_M2:                     return "FIN_M2";
+        case Phase::CENTRAR_FINO:               return "CENTRAR_FINO";
+        case Phase::FIN_M3:                     return "FIN_M3";
         default:                                return "DESCONOCIDA";
     }
 }
@@ -1455,7 +1466,7 @@ void MissionTask(void *pvTeam) {
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::MISSION);
     TickType_t last_wake = xTaskGetTickCount();
 
-    DEBUG_LINK.printf("[Mission] v8-logica-completa (M2) -- equipo=%s, zona enemiga=%s\n",
+    DEBUG_LINK.printf("[Mission] v8-logica-completa (M3) -- equipo=%s, zona enemiga=%s\n",
                        team == TeamColor::RED ? "ROJO" : "AZUL",
                        ColorLabelName(enemy_color));
 
@@ -1484,7 +1495,9 @@ void MissionTask(void *pvTeam) {
 
         if (Mission::kMotionEnabled) {
 
-            if ((phase == Mission::Phase::BUSCAR_BANDERA || phase == Mission::Phase::CENTRAR_Y_AVANZAR) &&
+            if ((phase == Mission::Phase::BUSCAR_BANDERA || phase == Mission::Phase::CENTRAR_Y_AVANZAR ||
+                 phase == Mission::Phase::DETENER_PARA_MEDIR || phase == Mission::Phase::PASO_AJUSTE ||
+                 phase == Mission::Phase::CENTRAR_FINO) &&
                 (uint32_t)(millis() - last_cam_log_ms) > 300) {
                 last_cam_log_ms = millis();
                 DEBUG_LINK.printf("[Camara] %s fresca=%d sostenida=%d err=%d area=%d%% | tof=%u mm valido=%d\n",
@@ -1503,6 +1516,8 @@ void MissionTask(void *pvTeam) {
             {
                 const bool fase_con_borde =
                     phase == Mission::Phase::BUSCAR_ZONA_AMARILLA ||
+                    phase == Mission::Phase::BUSCAR_BANDERA ||
+                    phase == Mission::Phase::CENTRAR_Y_AVANZAR ||
                     phase == Mission::Phase::ESQUIVAR_CAJA ||
                     phase == Mission::Phase::AVANZAR_TRAS_ESQUIVE ||
                     phase == Mission::Phase::GIRO_RECENTRAR;
@@ -1746,15 +1761,54 @@ void MissionTask(void *pvTeam) {
                         break;   // sigue quieto, todavía asentando
                     }
 
+                    // Cámara OBLIGATORIA: sin verla no se mide ni se cierra. Si la
+                    // pierde más de kPerdidaBanderaMs, vuelve a buscar.
+                    if (!CamaraBandera::Fresca()) {
+                        lecturas_en_rango_seguidas = 0;
+                        if (perdida_desde_ms == 0) perdida_desde_ms = millis();
+                        if ((uint32_t)(millis() - perdida_desde_ms) >= Mission::kPerdidaBanderaMs) {
+                            DEBUG_LINK.println("[Mission] ajuste: la camara perdio la bandera -- a buscar.");
+                            phase = Mission::Phase::BUSCAR_BANDERA;
+                            phase_started_ms = millis();
+                            busq_paso = 0;
+                            busq_paso_desde_ms = millis();
+                        }
+                        break;
+                    }
+                    perdida_desde_ms = 0;
+
+                    // Tope de correcciones: la cámara AÚN la ve, así que (pedido de
+                    // Montse) cierra igual aunque el ToF no haya confirmado el rango.
+                    if (pasos_dados >= Mission::kMaxPasosSeguridad) {
+                        DEBUG_LINK.printf("[Mission] ajuste: %d correcciones sin confirmar el rango, la camara aun la ve -- cierra igual.\n",
+                                           pasos_dados);
+                        phase = Mission::Phase::CERRAR_GRIPPER_BANDERA;
+                        phase_started_ms = millis();
+                        break;
+                    }
+
+                    // El ToF solo cuenta con la bandera CENTRADA (mide un punto).
+                    const int e = CamaraBandera::Error();
+                    if (abs(e) > Mission::kZonaMuertaCentrado) {
+                        lecturas_en_rango_seguidas = 0;
+                        ++pasos_dados;
+                        centr_sentido = (e > 0) ? 1 : -1;
+                        DEBUG_LINK.printf("[Mission] ajuste: bandera descentrada (err=%d) -- pulso de centrado (correccion %d/%d).\n",
+                                           e, pasos_dados, Mission::kMaxPasosSeguridad);
+                        phase = Mission::Phase::CENTRAR_FINO;
+                        phase_started_ms = millis();
+                        break;
+                    }
+
                     const bool en_rango = last_tof.valid &&
                         last_tof.distance_mm >= Mission::kRangoAgarreMinMm &&
                         last_tof.distance_mm <= Mission::kRangoAgarreMaxMm;
 
                     if (en_rango) {
                         ++lecturas_en_rango_seguidas;
-                        DEBUG_LINK.printf("[Mission] en rango (%u mm), %d/%d lecturas seguidas\n",
+                        DEBUG_LINK.printf("[Mission] en rango (%u mm), %d/%d lecturas seguidas (camara err=%d area=%d%%)\n",
                                            last_tof.distance_mm, lecturas_en_rango_seguidas,
-                                           Mission::kLecturasConsecutivasRequeridas);
+                                           Mission::kLecturasConsecutivasRequeridas, e, CamaraBandera::Area());
                         if (lecturas_en_rango_seguidas >= Mission::kLecturasConsecutivasRequeridas) {
                             phase = Mission::Phase::CERRAR_GRIPPER_BANDERA;
                             phase_started_ms = millis();
@@ -1765,24 +1819,24 @@ void MissionTask(void *pvTeam) {
                     }
 
                     lecturas_en_rango_seguidas = 0;
-
-                    if (pasos_dados >= Mission::kMaxPasosSeguridad) {
-                        // Ya no se rinde: tras kMaxPasosSeguridad
-                        // correcciones sin caer en rango, agarra la bandera
-                        // de todos modos en la posición actual en vez de
-                        // quedarse plantado en FALLO_AJUSTE -- a pedido
-                        // explícito, termina la misión aunque el agarre no
-                        // esté confirmado en rango.
-                        phase = Mission::Phase::CERRAR_GRIPPER_BANDERA;
-                        phase_started_ms = millis();
-                        break;
-                    }
-
                     sentido_paso = (last_tof.valid && last_tof.distance_mm < Mission::kRangoAgarreMinMm)
                         ? -1
                         : 1;
                     phase = Mission::Phase::PASO_AJUSTE;
                     phase_started_ms = millis();
+                    break;
+                }
+
+                // Un pulso corto de giro para recentrar la bandera antes de volver a medir.
+                case Mission::Phase::CENTRAR_FINO: {
+                    estado_led = EstadoVisible::AJUSTANDO;
+                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kPulsoCentradoMs) {
+                        const int v = Mission::kVelocidadCentradoMin;
+                        if (centr_sentido > 0) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                    } else {
+                        phase = Mission::Phase::DETENER_PARA_MEDIR;
+                        phase_started_ms = millis();
+                    }
                     break;
                 }
 
@@ -1804,8 +1858,8 @@ void MissionTask(void *pvTeam) {
                     gripper.action = GripperAction::CLOSE_BANDERA;
                     send_gripper = true;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kGripperSettleBanderaMs) {
-                        DEBUG_LINK.println("[Mission] bandera agarrada.");
-                        phase = Mission::Phase::ESPERAR_TRAS_AGARRE;
+                        DEBUG_LINK.println("[Mission] bandera agarrada -- fin del hito M3, el robot se detiene.");
+                        phase = Mission::Phase::FIN_M3;
                         phase_started_ms = millis();
                     }
                     break;
@@ -1935,10 +1989,13 @@ void MissionTask(void *pvTeam) {
                     // 1) ¿llegó? La cámara la ve Y el ToF dice que está cerca.
                     if (CamaraBandera::Fresca() && last_tof.valid &&
                         last_tof.distance_mm <= Mission::kDistanciaAproximacionMm) {
-                        DEBUG_LINK.printf("[Mission] llego cerca de la bandera: tof=%u mm, camara err=%d area=%d%% -- fin del hito M2.\n",
+                        DEBUG_LINK.printf("[Mission] cerca de la bandera: tof=%u mm, camara err=%d area=%d%% -- ajuste fino con el ToF.\n",
                                            last_tof.distance_mm, CamaraBandera::Error(), CamaraBandera::Area());
-                        phase = Mission::Phase::FIN_M2;
+                        phase = Mission::Phase::DETENER_PARA_MEDIR;
                         phase_started_ms = millis();
+                        lecturas_en_rango_seguidas = 0;
+                        pasos_dados = 0;
+                        perdida_desde_ms = 0;
                         break;
                     }
                     // 2) ¿perdió la señal? Quieto un momento y de vuelta a buscar.
@@ -1983,6 +2040,10 @@ void MissionTask(void *pvTeam) {
 
                 case Mission::Phase::FIN_M2:
                     estado_led = EstadoVisible::TERMINADO;
+                    break;
+
+                case Mission::Phase::FIN_M3:
+                    estado_led = EstadoVisible::AGARRADA;
                     break;
 
                 // M1: pasos 1-6 terminados. Quieto (STOP por defecto) y LED verde.
@@ -2095,7 +2156,7 @@ void setup() {
     }
     delay(200);
 
-    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M2: busqueda y centrado de la bandera)");
+    DEBUG_LINK.println("\nAthena Rover 2026 - v8-logica-completa (hito M3: ajuste con ToF y agarre con camara + ToF)");
     DEBUG_LINK.printf("[Setup] Motivo del ultimo reinicio: %s\n",
                        ResetReasonToString(esp_reset_reason()));
 
