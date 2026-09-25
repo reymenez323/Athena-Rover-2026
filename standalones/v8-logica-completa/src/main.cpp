@@ -384,7 +384,7 @@ constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto
 constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos (kManiobra). false = pivote unico de kGiroRetornoMs. El REINTENTO tras kVolverTopeMs siempre usa el pivote (evita reversas a ciegas en mitad de la pista)
 struct PasoManiobra { int izq; int der; uint32_t ms; };
 constexpr PasoManiobra kManiobra[] = {
-    {-100, -40,  1500},   // 1: reversa, la cola se va a la derecha (el frente gira a la izquierda)
+    {-100, 100,  1400},   // 1: pivote a la IZQUIERDA, igual que el giro de esquive de la zona amarilla (100 %, 2000 ms) pero al lado contrario y 30 % mas corto
     { 40, 100,  1700},   // 2: avance girando a la izquierda
     {-100, -40,  1500},   // 3: reversa otra vez para quedar mirando hacia la zona propia
 };
