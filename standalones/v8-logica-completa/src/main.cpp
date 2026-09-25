@@ -341,7 +341,7 @@ constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale 
 constexpr int      kCamaraOffsetError  = 0;         // CALIBRACIÓN cámara-ToF: error que marca la cámara cuando la bandera está justo en el eje del ToF (se resta a todo error). Medir con la bandera a ~10 cm frente al ToF; si la cámara marca +12, poner 12
 constexpr uint32_t kPulsoCentradoMs    = 140;       // duración de cada pulso de giro
 constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
-constexpr int      kVelocidadCentradoMin = 70;      // % de PWM del pulso con el error apenas fuera de la zona muerta
+constexpr int      kVelocidadCentradoMin = 77;      // % de PWM del pulso con el error apenas fuera de la zona muerta (subido de 70 el 2026-09-24, +10 %)
 constexpr int      kVelocidadCentradoMax = 100;     // % de PWM con el error máximo
 constexpr int      kVelocidadAcercamiento = 50;     // % de PWM al avanzar recto hacia la bandera ya centrada
 constexpr uint32_t kPerdidaBanderaMs   = 500;       // si la cámara deja de verla, espera esto quieto antes de volver a buscar
@@ -375,14 +375,15 @@ constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho a
 constexpr bool     kBancoPararTrasAgarrar = false;  // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
 constexpr uint32_t kGiroRetornoMs         = 2700;   // pivote para dar la vuelta con la bandera (~180 grados: 2800 ms dio ~190 en pista, ver kDuracionGiroRecentrarMs)
 constexpr int      kVelocidadGiroRetorno  = 100;    // % de PWM del pivote
-constexpr bool     kGiroRetornoHaciaDerecha = true; // sentido del pivote de vuelta
+constexpr bool     kGiroRetornoHaciaDerecha = false; // sentido del pivote de vuelta con la bandera: false = IZQUIERDA (pedido de Montse 2026-09-24; antes giraba a la derecha)
 constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto de vuelta
+constexpr bool     kConfirmarSalidaZonaRival = false; // false = tras dar la vuelta va DIRECTO a buscar su franja, sin exigir leer la franja rival (a veces agarra la bandera casi en el borde de la zona y ni entra 1/4 del robot, asi que esa franja nunca se lee)
 constexpr uint32_t kSalirZonaRivalTopeMs  = 4000;   // si no lee la franja rival en este tiempo, asume que ya salió y sigue (la franja mide ~18.5 mm, puede saltársela)
-constexpr uint32_t kVolverTopeMs          = 9000;   // si no lee su franja en este tiempo, PARA y suelta igual (evita seguir hasta salirse de la pista)
+constexpr uint32_t kVolverTopeMs          = 9000;   // si en este tiempo no lee su franja, da la vuelta (otro pivote de kGiroRetornoMs) y lo intenta en sentido contrario. NUNCA suelta la bandera fuera de su zona: el unico color que la suelta es el de SU equipo
 constexpr uint32_t kAvanceTrasLeerZonaPropiaMs = 300;   // ms que sigue avanzando tras leer su franja, antes de parar (por tiempo: no hay IMU)
 constexpr int      kVelocidadEntradaZonaPropia = 50;    // % de PWM de ese último avance
 constexpr uint32_t kFullStopZonaPropiaMs  = 700;    // parada total antes de soltar la bandera
-constexpr bool     kRetornoEvitaAmarillo  = true;   // si al volver lee AMARILLO (zona neutra, con la caja encima) la rodea para no arrastrarla. SIN PROBAR en pista
+constexpr bool     kRetornoEvitaAmarillo  = false;  // false = al volver IGNORA el amarillo y el color rival (solo cuenta el color propio). true = si lee AMARILLO (zona neutra, con la caja encima) se aparta para no arrastrarla; SIN PROBAR en pista
 constexpr bool     kEvitarAmarilloHaciaDerecha = true;   // lado hacia el que se aparta del amarillo
 constexpr uint32_t kEvitarAmarilloRetrocesoMs = 300;     // retroceso corto antes de apartarse
 constexpr uint32_t kEvitarAmarilloGiroMs  = 700;    // pivote para apartarse del amarillo
@@ -2134,8 +2135,13 @@ void MissionTask(void *pvTeam) {
                         const int v = Mission::kVelocidadGiroRetorno;
                         if (Mission::kGiroRetornoHaciaDerecha) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
                     } else {
-                        DEBUG_LINK.println("[Mission] vuelta terminada -- a salir de la zona rival.");
-                        phase = Mission::Phase::SALIR_ZONA_RIVAL;
+                        if (Mission::kConfirmarSalidaZonaRival) {
+                            DEBUG_LINK.println("[Mission] vuelta terminada -- a salir de la zona rival.");
+                            phase = Mission::Phase::SALIR_ZONA_RIVAL;
+                        } else {
+                            DEBUG_LINK.println("[Mission] vuelta terminada -- directo a buscar la franja propia (sin confirmar la salida de la zona rival).");
+                            phase = Mission::Phase::VOLVER_ZONA_PROPIA;
+                        }
                         phase_started_ms = millis();
                     }
                     break;
@@ -2176,8 +2182,8 @@ void MissionTask(void *pvTeam) {
                         break;
                     }
                     if ((uint32_t)(millis() - phase_started_ms) >= Mission::kVolverTopeMs) {
-                        DEBUG_LINK.println("[Mission] AVISO: no leyo su franja en el tiempo tope -- para y suelta la bandera aqui.");
-                        phase = Mission::Phase::DETENER_ZONA_PROPIA;
+                        DEBUG_LINK.println("[Mission] AVISO: no leyo su franja en el tiempo tope -- da la vuelta y vuelve a buscarla (NO suelta fuera de su zona).");
+                        phase = Mission::Phase::GIRO_RETORNO;
                         phase_started_ms = millis();
                         break;
                     }
