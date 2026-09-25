@@ -1,6 +1,6 @@
 # Lógica de Athena — Athena Rover 2026
 
-Versión 1.1 (2026-09-24). Reorganiza [`logicaATHENA.pdf`](logicaATHENA.pdf) sin quitarle nada y le suma las decisiones tomadas después.
+Versión 1.2 (2026-09-24). Reorganiza [`logicaATHENA.pdf`](logicaATHENA.pdf) sin quitarle nada y le suma las decisiones tomadas después.
 Etiquetas: **[DEFINIDO]** decidido por Montse · **[POR DEFINIR]** falta decidir · **[PROPUESTA]** sugerencia sin aprobar.
 
 **Flujo:** encender → elegir equipo → agarrar caja → ir al amarillo → soltar caja → evadir → buscar y centrar la bandera → agarrarla → salir de la zona rival → volver → soltar.
@@ -115,7 +115,7 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 
 **10. Salir de la zona rival** *(fila 10)*
 - Con la bandera asegurada, da la vuelta y sale sin salirse de la pista.
-- Sin sensor trasero, la salida se confirma cuando el sensor delantero **vuelve a leer la franja rival** al salir. Es la única confirmación por ahora.
+- Sin sensor trasero, la salida se confirma cuando el sensor delantero **vuelve a leer la franja rival** al salir. **Desactivada por ahora** (`kConfirmarSalidaZonaRival = false`): a veces la bandera está tan cerca del borde de la zona que ni entra 1/4 del robot y esa franja no se lee.
 - **[POR DEFINIR]** ¿Cabe el giro de 180° dentro de la zona (28 cm contando marco y franja)? ¿Qué hace si no lee la franja (18.5 mm, color a 10 Hz)?
 
 **11. Volver a la zona propia** *(fila 11)*
@@ -184,7 +184,9 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 - Amarillo: en línea recta; zigzag en la Fase 2.
 - Búsqueda de la bandera: pausa / pivote alterno / avance corto, con los tiempos como parámetros.
 - Tras leer su zona, avanza un tiempo (ms) antes de soltar; no se usa distancia.
-- La cámara informa el % del cuadro que ocupa la bandera (informativo; se define un rango tras varias pruebas).
+- La cámara informa el % del cuadro que ocupa la bandera (informativo; se define un rango tras varias pruebas). Dato medido: en los agarres buenos ocupa entre 63 % y 79 % del cuadro.
+- Vuelta con la bandera: el pivote de ~180° va a la **izquierda**. Al volver **solo cuenta el color propio**: se ignoran el amarillo y el color rival, y solo el color propio suelta la bandera. Si en 15 s no lo lee, da la vuelta y lo busca de nuevo; nunca suelta fuera de su zona.
+- Probado como equipo AZUL (busca la bandera roja): corrida completa de los 12 pasos en ~71 s. El modelo de la bandera azul falla con la luz actual; se reentrena con fotos nuevas.
 - Bandera caída: no se implementa nada por ahora; en la competencia alguien la vuelve a parar a la vista de la cámara.
 - Arquitectura: el ESP32 lleva la máquina de estados y todos los comandos de motor; la Pi solo manda por serial lo que ve (detección, error de centrado y % de ocupación). Se valida primero en `standalones/v8-logica-completa/` y, ya depurado, se promueve a `firmware-esp32/` y `raspberry-pi/`.
 
