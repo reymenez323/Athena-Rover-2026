@@ -339,9 +339,9 @@ constexpr bool     kBusquedaPrimerPivoteHaciaDerecha = true;   // lado del prime
 // (pulso + pausa para leer de nuevo, porque la cámara llega con retraso) con más velocidad cuanto mayor el error.
 constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale a 0.15)
 constexpr int      kCamaraOffsetError  = 0;         // CALIBRACIÓN cámara-ToF: error que marca la cámara cuando la bandera está justo en el eje del ToF (se resta a todo error). Medir con la bandera a ~10 cm frente al ToF; si la cámara marca +12, poner 12
-constexpr uint32_t kPulsoCentradoMs    = 120;       // duración de cada pulso de giro
+constexpr uint32_t kPulsoCentradoMs    = 140;       // duración de cada pulso de giro
 constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
-constexpr int      kVelocidadCentradoMin = 60;      // % de PWM del pulso con el error apenas fuera de la zona muerta
+constexpr int      kVelocidadCentradoMin = 70;      // % de PWM del pulso con el error apenas fuera de la zona muerta
 constexpr int      kVelocidadCentradoMax = 100;     // % de PWM con el error máximo
 constexpr int      kVelocidadAcercamiento = 50;     // % de PWM al avanzar recto hacia la bandera ya centrada
 constexpr uint32_t kPerdidaBanderaMs   = 500;       // si la cámara deja de verla, espera esto quieto antes de volver a buscar
