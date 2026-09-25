@@ -162,6 +162,40 @@ class ColorShapeDetector:
 
         return detecciones
 
+    def detect_cerca(
+        self,
+        frame_bgr: np.ndarray,
+        etiqueta: str,
+        area_min_frac: float = 0.10,
+        altura_ancho_min: float = 0.8,
+    ) -> tuple[BBox, float] | None:
+        """Bandera MUY cerca (10-25 cm): la mancha grande de su color, sin exigir la proporción.
+
+        A esa distancia el cilindro llena el cuadro y el borde lo corta, así que ``detect()``
+        lo descarta por proporciones y el modelo FOMO marca cajas mal centradas (visto en el
+        visor, 2026-09-24). Acá basta con que la mancha del color pedido ocupe al menos
+        ``area_min_frac`` del cuadro y no sea una franja ancha y baja (alto/ancho mínimo
+        ``altura_ancho_min``): así se descarta la franja de color de la pista vista de cerca.
+        Devuelve ``(caja, fracción del cuadro que ocupa)`` o ``None``.
+        """
+        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        mascara = self._mascara(hsv, self._rangos[etiqueta])
+        contornos, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        alto, ancho = frame_bgr.shape[:2]
+        mejor: tuple[float, BBox] | None = None
+        for contorno in contornos:
+            area = cv2.contourArea(contorno)
+            if area < area_min_frac * alto * ancho:
+                continue
+            x, y, w, h = cv2.boundingRect(contorno)
+            if w == 0 or h < altura_ancho_min * w:
+                continue
+            if mejor is None or area > mejor[0]:
+                mejor = (area, BBox(x, y, w, h))
+        if mejor is None:
+            return None
+        return mejor[1], mejor[0] / float(alto * ancho)
+
     @staticmethod
     def best(detections: list[ColorShapeDetection], label: str) -> ColorShapeDetection | None:
         candidatas = [d for d in detections if d.label == label]

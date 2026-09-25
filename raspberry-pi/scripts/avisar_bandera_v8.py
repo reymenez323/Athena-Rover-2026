@@ -207,6 +207,10 @@ def main() -> int:
     parser.add_argument("--ei-sin-recorte", action="store_true",
                         help="el Impulse NO recorta el cuadro (modo Squash): no corrige el error del modelo. "
                              "Por defecto se asume 'Fit shortest axis' (recorte cuadrado centrado).")
+    parser.add_argument("--area-cerca", type=float, default=0.10,
+                        help="fracción del cuadro (0-1) que debe ocupar la mancha del color de la bandera para "
+                             "tratarla como 'MUY cerca' y usar su centro de color en vez del modelo. Sube el "
+                             "valor si confunde la franja de la pista con la bandera.")
     parser.add_argument("--resumen-s", type=float, default=5.0,
                         help="cada cuántos segundos imprime el resumen (FPS, líneas enviadas, última detección)")
     parser.add_argument("--verbose", action="store_true")
@@ -277,11 +281,24 @@ def main() -> int:
                     time.sleep(0.01)
                     continue
 
+                # 0) bandera MUY cerca (mancha grande de su color): el modelo marca cajas mal
+                #    centradas y el detector por forma la rechaza porque el borde la corta;
                 # 1) modelo de Edge Impulse; 2) respaldo por color y forma
                 fuente = None
                 error = area = 0
-                deteccion_ei = EiFlagDetector.best(ei_detector.detect(frame), etiqueta_objetivo)
-                if deteccion_ei is not None:
+                alto, ancho = frame.shape[:2]
+                cerca = color_detector.detect_cerca(frame, etiqueta_objetivo, args.area_cerca)
+                if cerca is not None:
+                    fuente = "color-cerca"
+                    caja_cerca, fraccion_cerca = cerca
+                    error = max(-100, min(100, int(round(100 * error_horizontal(caja_cerca, ancho)))))
+                    area = max(0, min(100, int(round(100 * fraccion_cerca))))
+                    deteccion_ei = None
+                else:
+                    deteccion_ei = EiFlagDetector.best(ei_detector.detect(frame), etiqueta_objetivo)
+                if fuente == "color-cerca":
+                    pass
+                elif deteccion_ei is not None:
                     fuente = "modelo"
                     error, area = _medir_ei(deteccion_ei.box, ei_detector, frame, not args.ei_sin_recorte)
                 else:

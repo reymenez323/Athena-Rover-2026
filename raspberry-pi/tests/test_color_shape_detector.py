@@ -127,3 +127,39 @@ def test_deteccion_reporta_la_relacion_de_aspecto_medida():
     objetivo = ColorShapeDetector.best(_detector().detect(frame), ETIQUETA_ROJO)
     assert objetivo is not None
     assert abs(objetivo.aspect_ratio - 3.0) < 0.2
+
+
+# --- detect_cerca: bandera MUY cerca, llena el cuadro (2026-09-24) ---------
+
+def _frame_ancho(color_bgr, x0: int, x1: int, y0: int, y1: int, ancho: int = 640, alto: int = 480) -> np.ndarray:
+    frame = np.full((alto, ancho, 3), 40, dtype=np.uint8)
+    cv2.rectangle(frame, (x0, y0), (x1, y1), color_bgr, thickness=-1)
+    return frame
+
+
+def test_detect_cerca_ve_la_bandera_que_llena_el_cuadro_y_ya_no_cumple_la_proporcion():
+    # 360 de ancho x 480 de alto, cortada por arriba y por abajo: proporción ~1.3, no 3.
+    frame = _frame_ancho(BGR_ROJO, 140, 500, 0, 479)
+    assert ColorShapeDetector.best(_detector().detect(frame), ETIQUETA_ROJO) is None
+    resultado = _detector().detect_cerca(frame, ETIQUETA_ROJO)
+    assert resultado is not None
+    caja, fraccion = resultado
+    assert abs(caja.cx - 320) < 3          # centrada
+    assert fraccion > 0.3
+
+
+def test_detect_cerca_mide_bien_el_lado_cuando_no_esta_centrada():
+    frame = _frame_ancho(BGR_AZUL, 400, 600, 0, 479)
+    caja, _ = _detector().detect_cerca(frame, ETIQUETA_AZUL)
+    assert caja.cx > 480                    # a la derecha del centro (320)
+
+
+def test_detect_cerca_descarta_una_franja_ancha_y_baja():
+    # La franja de color de la pista vista de cerca: 600 x 90, alto/ancho = 0.15.
+    frame = _frame_ancho(BGR_ROJO, 20, 620, 300, 390)
+    assert _detector().detect_cerca(frame, ETIQUETA_ROJO) is None
+
+
+def test_detect_cerca_ignora_manchas_pequenas():
+    frame = _frame_ancho(BGR_ROJO, 300, 340, 200, 300)   # 40x100: ~1 % del cuadro
+    assert _detector().detect_cerca(frame, ETIQUETA_ROJO) is None
