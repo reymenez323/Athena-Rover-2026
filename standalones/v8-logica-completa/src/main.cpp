@@ -338,6 +338,7 @@ constexpr bool     kBusquedaPrimerPivoteHaciaDerecha = true;   // lado del prime
 // Centrado proporcional: si |error| <= zona muerta avanza recto; si no, pivota en pulsos
 // (pulso + pausa para leer de nuevo, porque la cámara llega con retraso) con más velocidad cuanto mayor el error.
 constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale a 0.15)
+constexpr int      kCamaraOffsetError  = 0;         // CALIBRACIÓN cámara-ToF: error que marca la cámara cuando la bandera está justo en el eje del ToF (se resta a todo error). Medir con la bandera a ~10 cm frente al ToF; si la cámara marca +12, poner 12
 constexpr uint32_t kPulsoCentradoMs    = 120;       // duración de cada pulso de giro
 constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
 constexpr int      kVelocidadCentradoMin = 60;      // % de PWM del pulso con el error apenas fuera de la zona muerta
@@ -1453,7 +1454,7 @@ namespace CamaraBandera {
                (uint32_t)(millis() - sostenida_desde_ms) >= Mission::kSostenBanderaCamaraMs;
     }
 
-    int Error() { return error; }
+    int Error() { return constrain(error - Mission::kCamaraOffsetError, -100, 100); }
     int Area()  { return area; }
 
     // Difunde el equipo (ya decidido por el switch físico en setup()) a la
