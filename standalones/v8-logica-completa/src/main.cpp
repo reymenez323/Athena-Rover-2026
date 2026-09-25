@@ -379,7 +379,7 @@ constexpr bool     kGiroRetornoHaciaDerecha = false; // sentido del pivote de vu
 constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto de vuelta
 constexpr bool     kConfirmarSalidaZonaRival = false; // false = tras dar la vuelta va DIRECTO a buscar su franja, sin exigir leer la franja rival (a veces agarra la bandera casi en el borde de la zona y ni entra 1/4 del robot, asi que esa franja nunca se lee)
 constexpr uint32_t kSalirZonaRivalTopeMs  = 4000;   // si no lee la franja rival en este tiempo, asume que ya salió y sigue (la franja mide ~18.5 mm, puede saltársela)
-constexpr uint32_t kVolverTopeMs          = 9000;   // si en este tiempo no lee su franja, da la vuelta (otro pivote de kGiroRetornoMs) y lo intenta en sentido contrario. NUNCA suelta la bandera fuera de su zona: el unico color que la suelta es el de SU equipo
+constexpr uint32_t kVolverTopeMs          = 15000;  // si en este tiempo no lee su franja, da la vuelta (otro pivote de kGiroRetornoMs) y lo intenta en sentido contrario. NUNCA suelta la bandera fuera de su zona: el unico color que la suelta es el de SU equipo
 constexpr uint32_t kAvanceTrasLeerZonaPropiaMs = 300;   // ms que sigue avanzando tras leer su franja, antes de parar (por tiempo: no hay IMU)
 constexpr int      kVelocidadEntradaZonaPropia = 50;    // % de PWM de ese último avance
 constexpr uint32_t kFullStopZonaPropiaMs  = 700;    // parada total antes de soltar la bandera
