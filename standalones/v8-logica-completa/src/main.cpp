@@ -385,8 +385,8 @@ constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos
 struct PasoManiobra { int izq; int der; uint32_t ms; };
 constexpr PasoManiobra kManiobra[] = {
     {-100, 100,  1400},   // 1: pivote a la IZQUIERDA, igual que el giro de esquive de la zona amarilla (100 %, 2000 ms) pero al lado contrario y 30 % mas corto
-    { 40, 100,  1700},   // 2: avance girando a la izquierda
-    {-100, -40,  1500},   // 3: reversa otra vez para quedar mirando hacia la zona propia
+    { 40, 100,  1200},   // 2: avance girando a la izquierda
+    {-100, -40,  1300},   // 3: reversa otra vez para quedar mirando hacia la zona propia
 };
 constexpr int      kManiobraPasos         = (int)(sizeof(kManiobra) / sizeof(kManiobra[0]));
 constexpr bool     kConfirmarSalidaZonaRival = false; // false = tras dar la vuelta va DIRECTO a buscar su franja, sin exigir leer la franja rival (a veces agarra la bandera casi en el borde de la zona y ni entra 1/4 del robot, asi que esa franja nunca se lee)
