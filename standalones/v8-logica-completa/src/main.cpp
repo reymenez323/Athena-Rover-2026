@@ -295,7 +295,7 @@ constexpr bool kGiroEsquiveHaciaDerecha = true;
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
 // esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
 // Sin medir en banco todavía, punto de partida conservador.
-constexpr uint32_t kAvanceTrasEsquiveMs = 1300;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
+constexpr uint32_t kAvanceTrasEsquiveMs = 1250;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
 constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 
 // Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
@@ -304,7 +304,7 @@ constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 // el ms_por_grado de entonces. kDuracionGiroRecentrarMs YA NO es la
 // duración garantizada de este giro -- ver "SEÑAL DE CÁMARA" más abajo --
 // es el TOPE de seguridad si la cámara nunca avisa.
-constexpr uint32_t kDuracionGiroRecentrarMs = 2800;
+constexpr uint32_t kDuracionGiroRecentrarMs = 2880;
 // Gira para el lado CONTRARIO al de esquive por defecto (deshace parte del
 // desvío y sigue de largo hacia el otro lado) -- confirmar con la pista
 // real cuál sentido deja al robot mejor apuntado hacia la bandera.
@@ -333,15 +333,15 @@ constexpr uint32_t kBusquedaPausaMs   = 400;   // quieto para que la cámara mir
 constexpr uint32_t kBusquedaPivoteMs  = 600;   // duración del pivote A (el B dura el doble). ~600 ms ~ 40 grados a 100 %, a 7.60 V
 constexpr int      kBusquedaVelocidadPivote = 100;   // % de PWM del pivote (a menos no vence la fricción)
 constexpr uint32_t kBusquedaAvanceMs  = 400;   // avance corto al final de cada ciclo, para explorar más adelante
-constexpr int      kBusquedaVelocidadAvance = 50;    // % de PWM de ese avance
+constexpr int      kBusquedaVelocidadAvance = 60;    // % de PWM de ese avance
 constexpr bool     kBusquedaPrimerPivoteHaciaDerecha = true;   // lado del primer pivote
 // Centrado proporcional: si |error| <= zona muerta avanza recto; si no, pivota en pulsos
 // (pulso + pausa para leer de nuevo, porque la cámara llega con retraso) con más velocidad cuanto mayor el error.
 constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale a 0.15)
 constexpr int      kCamaraOffsetError  = 0;         // CALIBRACIÓN cámara-ToF: error que marca la cámara cuando la bandera está justo en el eje del ToF (se resta a todo error). Medir con la bandera a ~10 cm frente al ToF; si la cámara marca +12, poner 12
-constexpr uint32_t kPulsoCentradoMs    = 170;       // duración de cada pulso de giro (subido de 140 el 2026-09-25, pedido de Montse: mas fuerza al centrar)
+constexpr uint32_t kPulsoCentradoMs    = 200;       // duración de cada pulso de giro (subido de 140 el 2026-09-25, pedido de Montse: mas fuerza al centrar)
 constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
-constexpr int      kVelocidadCentradoMin = 77;      // % de PWM del pulso con el error apenas fuera de la zona muerta (subido de 70 el 2026-09-24, +10 %)
+constexpr int      kVelocidadCentradoMin = 80;      // % de PWM del pulso con el error apenas fuera de la zona muerta (subido de 70 el 2026-09-24, +10 %)
 constexpr int      kVelocidadCentradoMax = 100;     // % de PWM con el error máximo
 constexpr int      kVelocidadAcercamiento = 50;     // % de PWM al avanzar recto hacia la bandera ya centrada
 constexpr uint32_t kPerdidaBanderaMs   = 500;       // si la cámara deja de verla, espera esto quieto antes de volver a buscar
@@ -374,7 +374,7 @@ constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho a
 // -- Retorno con la bandera (hito M5, pasos 10-12) ----------------------------
 constexpr bool     kBancoPararTrasAgarrar = false;  // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
 constexpr uint32_t kGiroRetornoMs         = 3200;   // pivote para dar la vuelta con la bandera (subido de 2700 el 2026-09-25: con la bandera y la friccion no llegaba a 180 grados)
-constexpr int      kVelocidadGiroRetorno  = 100;    // % de PWM del pivote
+constexpr int      kVelocidadGiroRetorno  = 90;    // % de PWM del pivote
 constexpr bool     kGiroRetornoHaciaDerecha = false; // sentido del pivote de vuelta con la bandera: false = IZQUIERDA (pedido de Montse 2026-09-24; antes giraba a la derecha)
 constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto de vuelta
 // Vuelta con la bandera como un giro de 3 puntos (idea de Montse 2026-09-25): reversa, avance, reversa, todo girando el frente a la IZQUIERDA.
@@ -384,9 +384,9 @@ constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto
 constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos (kManiobra). false = pivote unico de kGiroRetornoMs. El REINTENTO tras kVolverTopeMs siempre usa el pivote (evita reversas a ciegas en mitad de la pista)
 struct PasoManiobra { int izq; int der; uint32_t ms; };
 constexpr PasoManiobra kManiobra[] = {
-    {-70, -20,  700},   // 1: reversa, la cola se va a la derecha (el frente gira a la izquierda)
-    { 20,  70,  900},   // 2: avance girando a la izquierda
-    {-70, -20,  700},   // 3: reversa otra vez para quedar mirando hacia la zona propia
+    {-100, -40,  1500},   // 1: reversa, la cola se va a la derecha (el frente gira a la izquierda)
+    { 40, 100,  1700},   // 2: avance girando a la izquierda
+    {-100, -40,  1500},   // 3: reversa otra vez para quedar mirando hacia la zona propia
 };
 constexpr int      kManiobraPasos         = (int)(sizeof(kManiobra) / sizeof(kManiobra[0]));
 constexpr bool     kConfirmarSalidaZonaRival = false; // false = tras dar la vuelta va DIRECTO a buscar su franja, sin exigir leer la franja rival (a veces agarra la bandera casi en el borde de la zona y ni entra 1/4 del robot, asi que esa franja nunca se lee)
@@ -394,7 +394,7 @@ constexpr uint32_t kSalirZonaRivalTopeMs  = 4000;   // si no lee la franja rival
 constexpr uint32_t kVolverTopeMs          = 15000;  // si en este tiempo no lee su franja, da la vuelta (otro pivote de kGiroRetornoMs) y lo intenta en sentido contrario. NUNCA suelta la bandera fuera de su zona: el unico color que la suelta es el de SU equipo
 constexpr uint32_t kAvanceTrasLeerZonaPropiaMs = 300;   // ms que sigue avanzando tras leer su franja, antes de parar (por tiempo: no hay IMU)
 constexpr int      kVelocidadEntradaZonaPropia = 50;    // % de PWM de ese último avance
-constexpr uint32_t kFullStopZonaPropiaMs  = 700;    // parada total antes de soltar la bandera
+constexpr uint32_t kFullStopZonaPropiaMs  = 600;    // parada total antes de soltar la bandera
 constexpr bool     kRetornoEvitaAmarillo  = false;  // false = al volver IGNORA el amarillo y el color rival (solo cuenta el color propio). true = si lee AMARILLO (zona neutra, con la caja encima) se aparta para no arrastrarla; SIN PROBAR en pista
 constexpr bool     kEvitarAmarilloHaciaDerecha = true;   // lado hacia el que se aparta del amarillo
 constexpr uint32_t kEvitarAmarilloRetrocesoMs = 300;     // retroceso corto antes de apartarse
