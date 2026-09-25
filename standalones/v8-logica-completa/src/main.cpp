@@ -339,7 +339,7 @@ constexpr bool     kBusquedaPrimerPivoteHaciaDerecha = true;   // lado del prime
 // (pulso + pausa para leer de nuevo, porque la cámara llega con retraso) con más velocidad cuanto mayor el error.
 constexpr int      kZonaMuertaCentrado = 15;        // error ignorado (equivale a 0.15)
 constexpr int      kCamaraOffsetError  = 0;         // CALIBRACIÓN cámara-ToF: error que marca la cámara cuando la bandera está justo en el eje del ToF (se resta a todo error). Medir con la bandera a ~10 cm frente al ToF; si la cámara marca +12, poner 12
-constexpr uint32_t kPulsoCentradoMs    = 140;       // duración de cada pulso de giro
+constexpr uint32_t kPulsoCentradoMs    = 170;       // duración de cada pulso de giro (subido de 140 el 2026-09-25, pedido de Montse: mas fuerza al centrar)
 constexpr uint32_t kAsentarCentradoMs  = 250;       // pausa entre pulsos antes de volver a leer el error
 constexpr int      kVelocidadCentradoMin = 77;      // % de PWM del pulso con el error apenas fuera de la zona muerta (subido de 70 el 2026-09-24, +10 %)
 constexpr int      kVelocidadCentradoMax = 100;     // % de PWM con el error máximo
@@ -373,10 +373,22 @@ constexpr bool     kBordeGiroHaciaDerecha = false;  // con solo el QTR derecho a
 
 // -- Retorno con la bandera (hito M5, pasos 10-12) ----------------------------
 constexpr bool     kBancoPararTrasAgarrar = false;  // SOLO BANCO: tras agarrar la bandera se detiene (FIN_M3) en vez de volver. Poner false para la corrida completa
-constexpr uint32_t kGiroRetornoMs         = 2700;   // pivote para dar la vuelta con la bandera (~180 grados: 2800 ms dio ~190 en pista, ver kDuracionGiroRecentrarMs)
+constexpr uint32_t kGiroRetornoMs         = 3200;   // pivote para dar la vuelta con la bandera (subido de 2700 el 2026-09-25: con la bandera y la friccion no llegaba a 180 grados)
 constexpr int      kVelocidadGiroRetorno  = 100;    // % de PWM del pivote
 constexpr bool     kGiroRetornoHaciaDerecha = false; // sentido del pivote de vuelta con la bandera: false = IZQUIERDA (pedido de Montse 2026-09-24; antes giraba a la derecha)
 constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto de vuelta
+// Vuelta con la bandera como un giro de 3 puntos (idea de Montse 2026-09-25): reversa, avance, reversa, todo girando el frente a la IZQUIERDA.
+// Cada paso = rueda izquierda %, rueda derecha %, duracion ms (positivo = adelante, negativo = reversa). Ajustar UNO A UNO en pista.
+// Reversa con la cola a la derecha = rueda izq. atras mas rapida que la der. Avance girando a la izquierda = rueda der. mas rapida.
+// Valores iniciales = ESTIMACION sin calibrar (calibrados a 7.60 V). Las reversas van a ciegas: no hay sensor trasero ni QTR.
+constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos (kManiobra). false = pivote unico de kGiroRetornoMs. El REINTENTO tras kVolverTopeMs siempre usa el pivote (evita reversas a ciegas en mitad de la pista)
+struct PasoManiobra { int izq; int der; uint32_t ms; };
+constexpr PasoManiobra kManiobra[] = {
+    {-70, -20,  700},   // 1: reversa, la cola se va a la derecha (el frente gira a la izquierda)
+    { 20,  70,  900},   // 2: avance girando a la izquierda
+    {-70, -20,  700},   // 3: reversa otra vez para quedar mirando hacia la zona propia
+};
+constexpr int      kManiobraPasos         = (int)(sizeof(kManiobra) / sizeof(kManiobra[0]));
 constexpr bool     kConfirmarSalidaZonaRival = false; // false = tras dar la vuelta va DIRECTO a buscar su franja, sin exigir leer la franja rival (a veces agarra la bandera casi en el borde de la zona y ni entra 1/4 del robot, asi que esa franja nunca se lee)
 constexpr uint32_t kSalirZonaRivalTopeMs  = 4000;   // si no lee la franja rival en este tiempo, asume que ya salió y sigue (la franja mide ~18.5 mm, puede saltársela)
 constexpr uint32_t kVolverTopeMs          = 15000;  // si en este tiempo no lee su franja, da la vuelta (otro pivote de kGiroRetornoMs) y lo intenta en sentido contrario. NUNCA suelta la bandera fuera de su zona: el unico color que la suelta es el de SU equipo
@@ -1483,6 +1495,8 @@ void MissionTask(void *pvTeam) {
     Mission::Phase phase = Mission::Phase::ARRANQUE;
     Mission::Phase last_logged_phase = phase;
     uint32_t phase_started_ms = millis();
+    bool     giro_retorno_reintento = false;   // true = el GIRO_RETORNO viene del tope kVolverTopeMs (usa el pivote, no la maniobra)
+    int      maniobra_paso_logueado = -1;      // para escribir una linea de log por cada paso de la maniobra
 
     ColorReading last_color{};
     TofReading last_tof{};
@@ -1960,6 +1974,7 @@ void MissionTask(void *pvTeam) {
                 case Mission::Phase::ESPERAR_TRAS_AGARRE: {
                     estado_led = EstadoVisible::AGARRADA;
                     if ((uint32_t)(millis() - phase_started_ms) > Mission::kEsperaTrasAgarrarBanderaMs) {
+                        giro_retorno_reintento = false;
                         phase = Mission::Phase::GIRO_RETORNO;
                         phase_started_ms = millis();
                     }
@@ -2131,10 +2146,34 @@ void MissionTask(void *pvTeam) {
                 // ---- M5: pasos 10-12, retorno con la bandera -------------------------
                 case Mission::Phase::GIRO_RETORNO: {
                     estado_led = EstadoVisible::AGARRADA;
-                    if ((uint32_t)(millis() - phase_started_ms) < Mission::kGiroRetornoMs) {
-                        const int v = Mission::kVelocidadGiroRetorno;
-                        if (Mission::kGiroRetornoHaciaDerecha) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                    const uint32_t t_giro = (uint32_t)(millis() - phase_started_ms);
+                    uint32_t t_total = Mission::kGiroRetornoMs;
+                    const bool con_maniobra = Mission::kRetornoConManiobra && !giro_retorno_reintento;
+                    if (con_maniobra) {
+                        t_total = 0;
+                        for (int i = 0; i < Mission::kManiobraPasos; ++i) t_total += Mission::kManiobra[i].ms;
+                    }
+                    if (t_giro < t_total) {
+                        if (con_maniobra) {
+                            uint32_t acum = 0;
+                            int paso = 0;
+                            while (paso < Mission::kManiobraPasos - 1 && t_giro >= acum + Mission::kManiobra[paso].ms) {
+                                acum += Mission::kManiobra[paso].ms;
+                                ++paso;
+                            }
+                            if (paso != maniobra_paso_logueado) {
+                                maniobra_paso_logueado = paso;
+                                DEBUG_LINK.printf("[Mission] maniobra de vuelta: paso %d/%d izq=%d der=%d durante %u ms\n",
+                                                   paso + 1, Mission::kManiobraPasos, Mission::kManiobra[paso].izq,
+                                                   Mission::kManiobra[paso].der, (unsigned)Mission::kManiobra[paso].ms);
+                            }
+                            SetDrive(motor, Mission::kManiobra[paso].izq, Mission::kManiobra[paso].der);
+                        } else {
+                            const int v = Mission::kVelocidadGiroRetorno;
+                            if (Mission::kGiroRetornoHaciaDerecha) SetDrive(motor, v, -v); else SetDrive(motor, -v, v);
+                        }
                     } else {
+                        maniobra_paso_logueado = -1;
                         if (Mission::kConfirmarSalidaZonaRival) {
                             DEBUG_LINK.println("[Mission] vuelta terminada -- a salir de la zona rival.");
                             phase = Mission::Phase::SALIR_ZONA_RIVAL;
@@ -2183,6 +2222,7 @@ void MissionTask(void *pvTeam) {
                     }
                     if ((uint32_t)(millis() - phase_started_ms) >= Mission::kVolverTopeMs) {
                         DEBUG_LINK.println("[Mission] AVISO: no leyo su franja en el tiempo tope -- da la vuelta y vuelve a buscarla (NO suelta fuera de su zona).");
+                        giro_retorno_reintento = true;
                         phase = Mission::Phase::GIRO_RETORNO;
                         phase_started_ms = millis();
                         break;

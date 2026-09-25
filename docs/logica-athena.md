@@ -185,6 +185,7 @@ Planos: [pista acotada](pista_robotica_plano_acotado_A3_escala_1_5.pdf) y [la ve
 - Búsqueda de la bandera: pausa / pivote alterno / avance corto, con los tiempos como parámetros.
 - Tras leer su zona, avanza un tiempo (ms) antes de soltar; no se usa distancia.
 - La cámara informa el % del cuadro que ocupa la bandera (informativo; se define un rango tras varias pruebas). Dato medido: en los agarres buenos ocupa entre 63 % y 79 % del cuadro.
+- Vuelta con la bandera (2026-09-25): en vez del pivote de 180° (que con la bandera y la fricción no llega), un giro de **3 puntos** que siempre gira el frente a la izquierda: reversa con la cola a la derecha → avance girando a la izquierda → reversa otra vez → recto hacia la zona propia. Cada paso es una línea de parámetros (`kManiobra`); `kRetornoConManiobra=false` vuelve al pivote. El reintento tras 15 s usa el pivote. Valores iniciales sin calibrar.
 - Vuelta con la bandera: el pivote de ~180° va a la **izquierda**. Al volver **solo cuenta el color propio**: se ignoran el amarillo y el color rival, y solo el color propio suelta la bandera. Si en 15 s no lo lee, da la vuelta y lo busca de nuevo; nunca suelta fuera de su zona.
 - Probado como equipo AZUL (busca la bandera roja): corrida completa de los 12 pasos en ~71 s. El modelo de la bandera azul falla con la luz actual; se reentrena con fotos nuevas.
 - Bandera caída: no se implementa nada por ahora; en la competencia alguien la vuelve a parar a la vista de la cámara.
