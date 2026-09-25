@@ -32,10 +32,17 @@ reenviá el puerto por el propio túnel de SSH::
 y abrí ``http://localhost:8080`` en tu laptop mientras esa sesión SSH siga
 abierta.
 
+QUÉ CAMBIÓ (2026-09-24): el visor ya NO simula su propio giro. Usa la MISMA medición que el robot
+(``athena/medicion_bandera.py``: color-cerca > modelo > color+forma, todo medido contra el cuadro
+completo de la cámara), así que lo que ves acá es lo que recibe el ESP32: la línea ``B <error> <area>``,
+la fuente que ganó, el error con y sin el offset cámara-ToF, y qué haría el robot con él. Para
+calibrar el offset: pon la bandera justo en el eje del ToF y lee el ``Error`` (ese número es el
+``kCamaraOffsetError`` del firmware); mientras tanto ``--offset`` dibuja el eje del ToF en cian.
+
 USO::
 
-    python3 scripts/visor_camara.py --equipo rojo
-    python3 scripts/visor_camara.py --equipo azul --puerto 8080
+    python3 scripts/visor_camara.py --equipo azul
+    python3 scripts/visor_camara.py --equipo azul --offset 12 --area-cerca 0.15
 """
 
 from __future__ import annotations
@@ -57,7 +64,6 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from athena.centering import calcular_giro, error_horizontal  # noqa: E402
 from athena.color_shape_detector import (  # noqa: E402
     ETIQUETA_AZUL,
     ETIQUETA_ROJO,
@@ -65,6 +71,7 @@ from athena.color_shape_detector import (  # noqa: E402
 )
 from athena.config import Config  # noqa: E402
 from athena.ei_flag_detector import EiFlagDetector  # noqa: E402
+from athena.medicion_bandera import mapear_caja_ei, medir_bandera  # noqa: E402
 
 log = logging.getLogger("visor_camara")
 _parar = False
@@ -78,6 +85,9 @@ COLOR_AZUL_BGR = (255, 128, 0)
 COLOR_AMARILLO_BGR = (0, 255, 255)
 COLOR_VERDE_BGR = (0, 220, 0)
 COLOR_BLANCO_BGR = (255, 255, 255)
+COLOR_CIAN_BGR = (255, 255, 0)
+COLOR_MAGENTA_BGR = (255, 0, 255)
+COLOR_GRIS_BGR = (150, 150, 150)
 
 
 def _signal_handler(signum, frame) -> None:
@@ -164,7 +174,8 @@ PAGINA_HTML = """<!doctype html>
 <main>
   <h1>Athena Rover -- Visor de camara</h1>
   <div class="sub">Equipo: {equipo} | buscando: {etiqueta_objetivo} | sin motores, sin ESP32 -- solo camara.
-    Rojo/azul = modelo FOMO. Amarillo = respaldo color+forma. Linea central + zona muerta en verde/blanco.</div>
+    Magenta = la medicion que MANDA el robot. Rojo/azul = modelo FOMO (ya corregido al cuadro completo; gris = zona que el modelo ve).
+    Amarillo = color+forma. Blanco = centro de la imagen. Cian = eje del ToF (--offset). Verde = zona muerta.</div>
   <div class="visor"><img id="camara" alt="Vista de la camara"></div>
   <div class="botones">
     <span style="align-self:center;font-size:.82rem;color:#aeb8c2;">Guardar cuadro crudo como:</span>
@@ -175,12 +186,14 @@ PAGINA_HTML = """<!doctype html>
   </div>
   <div class="estado-guardado" id="estadoGuardado"></div>
   <section class="datos">
+    <div class="dato"><div class="etiqueta">Fuente que usa el robot</div><div class="valor" id="fuente">--</div></div>
+    <div class="dato"><div class="etiqueta">Linea que manda al ESP32</div><div class="valor" id="linea">--</div></div>
+    <div class="dato"><div class="etiqueta">Error (-100 izq .. 100 der)</div><div class="valor" id="error">--</div></div>
+    <div class="dato"><div class="etiqueta">Error con offset (el que usa el ESP32)</div><div class="valor" id="errorOff">--</div></div>
+    <div class="dato"><div class="etiqueta">Area de la bandera (% del cuadro)</div><div class="valor" id="area">--</div></div>
+    <div class="dato"><div class="etiqueta">Accion esperada del robot</div><div class="valor" id="accion">--</div></div>
     <div class="dato"><div class="etiqueta">Modelo (FOMO)</div><div class="valor" id="claseModelo">--</div></div>
-    <div class="dato"><div class="etiqueta">Color+forma (respaldo)</div><div class="valor" id="claseColor">--</div></div>
-    <div class="dato"><div class="etiqueta">Error horizontal</div><div class="valor" id="error">--</div></div>
-    <div class="dato"><div class="etiqueta">Giro simulado (no se envia)</div><div class="valor" id="giro">--</div></div>
-    <div class="dato"><div class="etiqueta">Latencia del modelo</div><div class="valor" id="latencia">--</div></div>
-    <div class="dato"><div class="etiqueta">Cuadros procesados</div><div class="valor" id="frames">--</div></div>
+    <div class="dato"><div class="etiqueta">Color+forma / color-cerca</div><div class="valor" id="claseColor">--</div></div>
   </section>
   <div class="pie" id="diagnostico">Conectando...</div>
 </main>
@@ -200,14 +213,16 @@ PAGINA_HTML = """<!doctype html>
     try {{
       const r = await fetch('/estado.json?t=' + Date.now(), {{cache: 'no-store'}});
       const d = await r.json();
+      document.getElementById('fuente').textContent = d.fuente;
+      document.getElementById('linea').textContent = d.linea;
+      document.getElementById('error').textContent = d.error;
+      document.getElementById('errorOff').textContent = d.error_offset;
+      document.getElementById('area').textContent = d.area;
+      document.getElementById('accion').textContent = d.accion;
       document.getElementById('claseModelo').textContent = d.clase_modelo;
       document.getElementById('claseColor').textContent = d.clase_color;
-      document.getElementById('error').textContent = d.error_x;
-      document.getElementById('giro').textContent = d.giro;
-      document.getElementById('latencia').textContent = d.latencia_ms + ' ms';
-      document.getElementById('frames').textContent = d.frames + ' (' + d.fps + ' FPS)';
       document.getElementById('diagnostico').textContent =
-        'Camara ' + d.camara_estado + ' | puerto ' + d.puerto_web;
+        'Camara ' + d.camara_estado + ' | ' + d.frames + ' cuadros (' + d.fps + ' FPS) | modelo ' + d.latencia_ms + ' ms | puerto ' + d.puerto_web;
     }} catch (e) {{
       document.getElementById('diagnostico').textContent = 'Esperando respuesta de la Pi...';
     }}
@@ -346,47 +361,57 @@ def _crear_handler(estado: EstadoCompartido, data_dir: Path, args, etiqueta_obje
 
 def _dibujar_overlay(
     frame: np.ndarray,
-    detecciones_ei,
-    frame_width_ei: int,
-    frame_height_ei: int,
+    cajas_ei,
     detecciones_color,
+    medicion,
+    ei_recorte: bool,
     zona_muerta: float,
-    giro_texto: str,
+    offset: int,
+    texto: str,
     fps: float,
 ) -> np.ndarray:
     vista = frame.copy()
     fh, fw = vista.shape[:2]
 
-    # Cajas del modelo: reescaladas desde el frame reducido de Edge Impulse
-    # al frame completo -- mismo cálculo que run_rover.py --ver.
-    escala_x = fw / max(1, frame_width_ei)
-    escala_y = fh / max(1, frame_height_ei)
-    for d in detecciones_ei:
-        b = d.box
-        x, y = int(b.x * escala_x), int(b.y * escala_y)
-        w, h = int(b.w * escala_x), int(b.h * escala_y)
-        color = COLOR_ROJO_BGR if d.label == ETIQUETA_ROJO else COLOR_AZUL_BGR
-        cv2.rectangle(vista, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(vista, f"{d.label} {d.confidence:.2f}", (x, max(12, y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
+    # Zona que ve el modelo (recorte cuadrado centrado) -- solo referencia visual.
+    if ei_recorte and fw != fh:
+        lado = min(fw, fh)
+        x0, y0 = (fw - lado) // 2, (fh - lado) // 2
+        cv2.rectangle(vista, (x0, y0), (x0 + lado - 1, y0 + lado - 1), COLOR_GRIS_BGR, 1)
 
-    # Cajas del respaldo color+forma: ya en el sistema de referencia del
-    # frame completo, sin reescalar.
+    # Cajas del modelo, YA llevadas al cuadro completo (mismo mapeo que usa el robot).
+    for d, caja in cajas_ei:
+        color = COLOR_ROJO_BGR if d.label == ETIQUETA_ROJO else COLOR_AZUL_BGR
+        cv2.rectangle(vista, (caja.x, caja.y), (caja.x + caja.w, caja.y + caja.h), color, 1)
+        cv2.putText(vista, f"{d.label} {d.confidence:.2f}", (caja.x, max(12, caja.y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
     for d in detecciones_color:
         b = d.box
         cv2.rectangle(vista, (b.x, b.y), (b.x + b.w, b.y + b.h), COLOR_AMARILLO_BGR, 1)
         cv2.putText(vista, f"{d.label} ({d.orientation}) {d.confidence:.2f}",
                     (b.x, min(fh - 4, b.y + b.h + 14)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLOR_AMARILLO_BGR, 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_AMARILLO_BGR, 1)
 
-    # Linea central + zona muerta, mismo criterio que centering.py.
+    # La medición que de verdad manda el robot.
+    if medicion.caja is not None:
+        c = medicion.caja
+        cv2.rectangle(vista, (c.x, c.y), (c.x + c.w, c.y + c.h), COLOR_MAGENTA_BGR, 3)
+        cv2.putText(vista, f"{medicion.fuente} err={medicion.error:+d} area={medicion.area}%",
+                    (c.x, min(fh - 6, c.y + c.h + 30)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_MAGENTA_BGR, 2)
+        cv2.circle(vista, (int(c.cx), c.y + c.h // 2), 5, COLOR_MAGENTA_BGR, -1)
+
+    # Centro de la imagen (blanco), eje del ToF (cian) y zona muerta alrededor de ese eje (verde).
     centro_x = fw // 2
+    eje_x = int(centro_x + offset * (fw / 2) / 100.0)
     zona_px = int(zona_muerta * (fw / 2))
     cv2.line(vista, (centro_x, 0), (centro_x, fh), COLOR_BLANCO_BGR, 1)
-    cv2.line(vista, (centro_x - zona_px, 0), (centro_x - zona_px, fh), COLOR_VERDE_BGR, 1)
-    cv2.line(vista, (centro_x + zona_px, 0), (centro_x + zona_px, fh), COLOR_VERDE_BGR, 1)
+    if offset != 0:
+        cv2.line(vista, (eje_x, 0), (eje_x, fh), COLOR_CIAN_BGR, 1)
+    cv2.line(vista, (eje_x - zona_px, 0), (eje_x - zona_px, fh), COLOR_VERDE_BGR, 1)
+    cv2.line(vista, (eje_x + zona_px, 0), (eje_x + zona_px, fh), COLOR_VERDE_BGR, 1)
 
-    cv2.putText(vista, giro_texto, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 0), 1)
+    cv2.putText(vista, texto, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     cv2.putText(vista, f"{fps:.1f} FPS", (8, fh - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
 
     return vista
@@ -407,10 +432,15 @@ def main() -> int:
     parser.add_argument("--config", default=None)
     parser.add_argument("--data-dir", default=None,
                         help="carpeta base del dataset (por defecto: raspberry-pi/data/raw)")
-    parser.add_argument("--zona-muerta", type=float, default=0.15)
-    parser.add_argument("--kp", type=float, default=60.0)
-    parser.add_argument("--correccion-max", type=int, default=40)
-    parser.add_argument("--velocidad-base", type=int, default=35)
+    parser.add_argument("--zona-muerta", type=float, default=0.15,
+                        help="zona muerta del centrado (0-1); el firmware usa kZonaMuertaCentrado=15 (0.15)")
+    parser.add_argument("--offset", type=int, default=0,
+                        help="offset cámara-ToF en unidades de error (-100..100): dibuja el eje del ToF y muestra el error "
+                             "corregido. Es el valor que va en kCamaraOffsetError del firmware")
+    parser.add_argument("--area-cerca", type=float, default=0.10,
+                        help="fracción del cuadro (0-1) que debe ocupar la mancha del color para tratarla como bandera MUY cerca")
+    parser.add_argument("--ei-sin-recorte", action="store_true",
+                        help="el Impulse NO recorta el cuadro (modo Squash). Por defecto se asume 'Fit shortest axis'")
     parser.add_argument("--min-confianza", type=float, default=0.6)
     parser.add_argument("--intervalo-imagen-ms", type=int, default=250,
                         help="cada cuanto recarga la imagen el navegador (no el ritmo de captura)")
@@ -466,42 +496,32 @@ def main() -> int:
                     time.sleep(0.01)
                     continue
 
-                detecciones_ei = ei_detector.detect(frame)
-                objetivo_ei = EiFlagDetector.best(detecciones_ei, etiqueta_objetivo)
-                detecciones_color = color_detector.detect(frame)
-                objetivo_color = ColorShapeDetector.best(detecciones_color, etiqueta_objetivo)
-
+                # La MISMA medición que usa el robot (athena/medicion_bandera.py).
+                medicion, detecciones_ei, detecciones_color = medir_bandera(
+                    frame, etiqueta_objetivo, ei_detector, color_detector,
+                    area_cerca=args.area_cerca, ei_recorte=not args.ei_sin_recorte,
+                )
                 fh, fw = frame.shape[:2]
-                if objetivo_ei is not None:
-                    caja, ancho_ref = objetivo_ei.box, ei_detector.frame_width
-                    fuente = "modelo"
-                elif objetivo_color is not None:
-                    caja, ancho_ref = objetivo_color.box, fw
-                    fuente = "color+forma"
+                cajas_ei = [
+                    (d, mapear_caja_ei(d.box, ei_detector.frame_width, ei_detector.frame_height,
+                                       fw, fh, not args.ei_sin_recorte))
+                    for d in detecciones_ei
+                ]
+                zona_units = int(round(args.zona_muerta * 100))
+                if medicion.fuente is not None:
+                    error_off = max(-100, min(100, medicion.error - args.offset))
+                    if abs(error_off) <= zona_units:
+                        accion = "avanza recto (centrada)"
+                    else:
+                        accion = "pulso de giro a la " + ("DERECHA" if error_off > 0 else "IZQUIERDA")
+                    linea = f"B {medicion.error} {medicion.area}"
+                    error_txt, error_off_txt, area_txt = f"{medicion.error:+d}", f"{error_off:+d}", f"{medicion.area} %"
+                    texto = f"{medicion.fuente}: {accion}"
                 else:
-                    caja, ancho_ref, fuente = None, 0, None
-
-                if caja is not None:
-                    frames_sin_objetivo = 0
-                    error = error_horizontal(caja, ancho_ref)
-                    giro = calcular_giro(
-                        error, zona_muerta=args.zona_muerta, velocidad_base=args.velocidad_base,
-                        kp=args.kp, correccion_max=args.correccion_max,
-                    )
-                    giro_texto = f"objetivo por {fuente} -> L={giro.left} R={giro.right} ({'centrado' if giro.centrado else 'corrigiendo'})"
-                    error_texto = f"{error:+.2f}"
-                    giro_json = f"L={giro.left} R={giro.right}"
-                else:
-                    # Mismo barrido alternante que decision._buscar_bandera /
-                    # run_flag_tracker_ei.py cuando no hay objetivo: se simula
-                    # igual, aunque acá nunca se envie a ningun motor.
-                    frames_sin_objetivo += 1
-                    if frames_sin_objetivo % 90 == 0:
-                        sentido_busqueda = -sentido_busqueda
-                    v = args.velocidad_base
-                    giro_texto = f"sin objetivo -> buscaria girando (L={v * sentido_busqueda} R={-v * sentido_busqueda})"
-                    error_texto = "--"
-                    giro_json = f"buscando (L={v * sentido_busqueda} R={-v * sentido_busqueda})"
+                    accion = "buscando (pausa, pivotes, avance corto)"
+                    linea = "N"
+                    error_txt = error_off_txt = area_txt = "--"
+                    texto = "sin bandera: " + accion
 
                 ahora = time.monotonic()
                 if ahora - ultimo_fps_calculo >= 1.0:
@@ -509,19 +529,26 @@ def main() -> int:
                     ultimo_fps_calculo = ahora
 
                 vista = _dibujar_overlay(
-                    frame, detecciones_ei, ei_detector.frame_width, ei_detector.frame_height,
-                    detecciones_color, args.zona_muerta, giro_texto, fps_actual,
+                    frame, cajas_ei, detecciones_color, medicion, not args.ei_sin_recorte,
+                    args.zona_muerta, args.offset, texto, fps_actual,
                 )
                 ok, buf = cv2.imencode(".jpg", vista, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
+                objetivo_ei = EiFlagDetector.best(detecciones_ei, etiqueta_objetivo)
+                objetivo_color = ColorShapeDetector.best(detecciones_color, etiqueta_objetivo)
                 status = {
+                    "fuente": medicion.fuente or "no la ve",
+                    "linea": linea,
+                    "error": error_txt,
+                    "error_offset": error_off_txt,
+                    "area": area_txt,
+                    "accion": accion,
                     "clase_modelo": objetivo_ei.label if objetivo_ei is not None else "--",
                     "clase_color": (
-                        f"{objetivo_color.label} ({objetivo_color.orientation})"
-                        if objetivo_color is not None else "--"
+                        "color-cerca" if medicion.fuente == "color-cerca" else (
+                            f"{objetivo_color.label} ({objetivo_color.orientation})"
+                            if objetivo_color is not None else "--")
                     ),
-                    "error_x": error_texto,
-                    "giro": giro_json,
                     "latencia_ms": round(ei_detector.last_timing_ms, 1),
                     "frames": frames,
                     "fps": round(fps_actual, 1),

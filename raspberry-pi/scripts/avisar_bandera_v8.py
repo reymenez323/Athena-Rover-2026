@@ -48,11 +48,11 @@ sys.path.insert(0, str(REPO / "src"))
 
 import serial  # noqa: E402
 
-from athena.centering import error_horizontal  # noqa: E402
 from athena.color_shape_detector import ColorShapeDetector  # noqa: E402
 from athena.config import Config  # noqa: E402
 from athena.ei_flag_detector import EiFlagDetector  # noqa: E402
 from athena.link import PUERTO_AUTO, PUERTOS_CANDIDATOS  # noqa: E402
+from athena.medicion_bandera import medir_bandera  # noqa: E402
 
 log = logging.getLogger("avisar_bandera_v8")
 _parar = False
@@ -165,34 +165,6 @@ class EnlaceEsp32:
             self._serial = None
 
 
-def _medir(box, frame_w: int, frame_h: int) -> tuple[int, int]:
-    """(error -100..100, área % del cuadro) de una caja, contra SU propio cuadro."""
-    error = int(round(100 * error_horizontal(box, frame_w)))
-    area = int(round(100 * box.area / max(1, frame_w * frame_h)))
-    return max(-100, min(100, error)), max(0, min(100, area))
-
-
-def _medir_ei(box, ei_detector, frame, recorte_centrado: bool) -> tuple[int, int]:
-    """Como ``_medir``, pero llevando la caja del modelo al cuadro COMPLETO de la cámara.
-
-    Con el Impulse en "Fit shortest axis" el modelo NO ve el cuadro entero: recorta un
-    cuadrado centrado del lado del eje corto (480x480 de un 640x480) y lo reduce. Medir el
-    error contra ese cuadrado lo agranda por ancho_camara/lado_recorte (~1.33 en 4:3), y por
-    eso el modelo y el respaldo de color (que sí mide contra el cuadro completo) daban
-    errores distintos para la MISMA bandera (2026-09-24, visto en el journal: 25 vs 19,
-    42 vs 32). Con ``recorte_centrado=False`` (Impulse en "Squash", sin recorte) no se corrige.
-    """
-    alto, ancho = frame.shape[:2]
-    error_f = error_horizontal(box, ei_detector.frame_width)
-    area_f = box.area / max(1, ei_detector.frame_width * ei_detector.frame_height)
-    if recorte_centrado and ancho != alto:
-        lado = min(ancho, alto)
-        error_f *= lado / ancho
-        area_f *= (lado * lado) / (ancho * alto)
-    return (max(-100, min(100, int(round(100 * error_f)))),
-            max(0, min(100, int(round(100 * area_f)))))
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--equipo", default=None, choices=["rojo", "azul"],
@@ -281,32 +253,13 @@ def main() -> int:
                     time.sleep(0.01)
                     continue
 
-                # 0) bandera MUY cerca (mancha grande de su color): el modelo marca cajas mal
-                #    centradas y el detector por forma la rechaza porque el borde la corta;
-                # 1) modelo de Edge Impulse; 2) respaldo por color y forma
-                fuente = None
-                error = area = 0
-                alto, ancho = frame.shape[:2]
-                cerca = color_detector.detect_cerca(frame, etiqueta_objetivo, args.area_cerca)
-                if cerca is not None:
-                    fuente = "color-cerca"
-                    caja_cerca, fraccion_cerca = cerca
-                    error = max(-100, min(100, int(round(100 * error_horizontal(caja_cerca, ancho)))))
-                    area = max(0, min(100, int(round(100 * fraccion_cerca))))
-                    deteccion_ei = None
-                else:
-                    deteccion_ei = EiFlagDetector.best(ei_detector.detect(frame), etiqueta_objetivo)
-                if fuente == "color-cerca":
-                    pass
-                elif deteccion_ei is not None:
-                    fuente = "modelo"
-                    error, area = _medir_ei(deteccion_ei.box, ei_detector, frame, not args.ei_sin_recorte)
-                else:
-                    respaldo = ColorShapeDetector.best(color_detector.detect(frame), etiqueta_objetivo)
-                    if respaldo is not None:
-                        fuente = "color+forma"
-                        alto, ancho = frame.shape[:2]
-                        error, area = _medir(respaldo.box, ancho, alto)
+                # La MISMA medición que usa el visor (athena/medicion_bandera.py):
+                # color-cerca > modelo > color+forma, todo medido contra el cuadro completo.
+                medicion, _, _ = medir_bandera(
+                    frame, etiqueta_objetivo, ei_detector, color_detector,
+                    area_cerca=args.area_cerca, ei_recorte=not args.ei_sin_recorte,
+                )
+                fuente, error, area = medicion.fuente, medicion.error, medicion.area
 
                 if fuente is not None:
                     enlace.enviar("B %d %d\n" % (error, area))
