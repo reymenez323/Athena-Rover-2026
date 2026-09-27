@@ -542,54 +542,53 @@ switch para el porqué).
 
 ---
 
-## Alimentación — esquema real del equipo (una sola batería, con BEC)
+## Alimentación — esquema real del equipo (batería portátil TalentCell, dos salidas reguladas)
 
-A diferencia de lo que recomendaba antes este documento (dos baterías
-separadas), el equipo alimenta motores y servos/lógica desde **la misma
-batería física** — un BEC/regulador reduce esa misma fuente a 5–6 V para la
-rama de los servos. Eléctricamente siguen siendo dos rieles distintos (el
-PCA9685 y la Raspberry Pi ven 5–6 V regulados, no el crudo de 7.4–12 V),
-pero en el [código de colores](#código-de-colores-de-cableado) **los dos
-rieles ahora comparten Rojo** — decisión del equipo, no una consecuencia
-automática de compartir batería — así que la distinción entre ellos vive
-solo en la marquilla de cada punta ("MOTOR" vs "SERVO"), no en el color.
+El equipo usa una **batería portátil TalentCell** (paquete único de celdas)
+que trae **dos salidas ya reguladas de fábrica, independientes entre sí**:
+un terminal de 12 V (para los motores) y un puerto **USB de 5 V regulado**
+(el mismo que usarías para cargar un celular). Motores y Raspberry Pi salen
+de esos dos terminales distintos de la misma batería — **no** de la misma
+rama regulada.
+
+Dentro del robot sigue habiendo un **BEC/regulador propio**, pero ahora solo
+alimenta los servos (PCA9685) — la Raspberry Pi ya **no** pasa por él (cambio
+de cableado, 2026-09-27): un cable USB‑A a USB‑C de **2.5 A**, directo desde
+el puerto USB de la TalentCell hasta el puerto de energización de la Pi.
 
 ```
-Batería única (7.4–12 V)
-   ├──> L298N nº1  (12V crudo)
-   ├──> L298N nº2  (12V crudo)
-   └──> BEC 5–6 V
-           ├──> PCA9685 V+  (servos)
-           └──> Raspberry Pi 4B (5 V, 3 A)
+Batería portátil TalentCell (paquete único, dos salidas reguladas)
+   ├──> Terminal 12 V
+   │       ├──> L298N nº1  (12V crudo)
+   │       ├──> L298N nº2  (12V crudo)
+   │       └──> BEC 5–6 V ──> PCA9685 V+  (servos)
+   │
+   └──> Puerto USB propio (5 V regulado, independiente del BEC)
+           └──> Raspberry Pi 4B, cable USB-A a USB-C de 2.5 A
 
 ESP32-S3
-   └──> alimentado por el cable USB de la Raspberry Pi
+   └──> alimentado por el cable USB nativo de la Raspberry Pi (CAM_LINK)
 
-TODAS LAS MASAS UNIDAS EN UN SOLO PUNTO
+TODAS LAS MASAS UNIDAS EN UN SOLO PUNTO (misma batería física, así que la
+masa ya es común entre los dos terminales; no hace falta puentear nada aparte)
 ```
 
-> ⚠️ **Esto reintroduce justo el riesgo que la separación evitaba: un pico
-> de corriente de los motores puede hundir la tensión de la batería lo
-> bastante como para que el BEC ya no tenga margen para sostener 5–6 V a la
-> salida** (todo BEC necesita cierta diferencia mínima entre su entrada y
-> su salida — *dropout* — para regular bien). Si eso pasa, la caída se
-> propaga: Raspberry Pi → USB → ESP32-S3, y el ESP32 se reinicia solo
-> (brownout) justo cuando el robot arranca a moverse — el mismo síntoma que
-> ya se vio en banco con el firmware autónomo (reinicios y errores de I2C
-> intermitentes sin relación aparente con los sensores).
+> **Por qué este cambio reduce el riesgo de brownout documentado antes:** con
+> el esquema viejo, Raspberry Pi y servos compartían el mismo BEC del robot,
+> así que un pico de corriente de los motores podía hundir ese BEC y
+> propagarse Raspberry Pi → USB → ESP32-S3 (el síntoma de reinicios e I2C
+> intermitente que ya se vio en banco). Con la Pi en el puerto USB propio de
+> la batería, ese riel tiene su propio regulador, separado del BEC que
+> alimenta los servos. El acoplamiento no desaparece del todo — motores y Pi
+> siguen tirando de las mismas celdas internas — pero ya no comparten
+> regulador, que era la parte más frágil.
 >
-> Mitigaciones, de más a menos efectiva:
-> 1. **Usar un BEC con margen de corriente de sobra** (al menos el doble de
->    lo que piden servos + Raspberry Pi juntos en el peor caso) y **bajo
->    dropout**, para que aguante los picos de los motores sin que la salida
->    se hunda.
-> 2. **Agregar un capacitor electrolítico grande (1000–2200 µF o más) justo
->    a la salida del BEC**, cerca del PCA9685 y de la Raspberry Pi — absorbe
->    los picos rápidos de corriente sin esperar a que el BEC reaccione.
-> 3. Si los reinicios persisten en pruebas reales del robot en movimiento
->    (no solo en banco, con el robot quieto), **volver a la batería separada
->    que recomendaba este documento** es la solución definitiva: elimina el
->    acoplamiento por completo en vez de mitigarlo.
+> ⚠️ **Un punto a vigilar, no a cambiar de entrada:** la Raspberry Pi 4B pide
+> oficialmente 5 V / 3 A y el cable en uso es de 2.5 A. Con la cámara, el
+> Wi-Fi y el enlace USB al ESP32 a la vez, en el peor caso podría quedarse
+> corto. Hasta ahora ha funcionado bien en las pruebas; si en algún momento
+> la Pi se reinicia sola o pierde el Wi-Fi durante una corrida, este cable es
+> el primer sospechoso.
 
 ---
 
