@@ -4,12 +4,20 @@ Generado a partir de los pines reales declarados en `firmware-esp32/src/main.cpp
 (namespace `Pins`). **Si cambias un pin en el código, actualiza esta tabla.**
 
 > El robot ya **no tiene los 2 LED discretos rojo/azul** que documentaban
-> versiones anteriores de este archivo (GPIO 40/41) — el equipo los
-> reemplazó por un único **LED RGB** (sección 8), que ahora cumple la
-> identificación de equipo que exige el reglamento y queda disponible para
-> cualquier otra señal visual que haga falta más adelante. Ya está integrado
-> tanto en `firmware-esp32/` como en `pruebas-platformio/02-cuadro-color-rgb/`,
-> con los mismos GPIO en los dos.
+> versiones muy antiguas de este archivo (GPIO 40/41), ni el LED RGB de 3
+> canales que los reemplazó después — ese también se retiró (2026-09-27) y
+> en su lugar va una **tira WS2812B de 8 LED** (sección 9), que cumple la
+> identificación de equipo que exige el reglamento y además reporta el
+> estado de varios sensores. Está integrada y probada en
+> `standalones/v9-tira-sensor-trasero/` y en el banco
+> `pruebas-platformio/10-tira-ws2812/`.
+>
+> ⚠️ **`firmware-esp32/` (el firmware "de vuelo") todavía NO se actualizó** —
+> sigue con el driver del LED RGB de 3 canales viejo, porque el cambio
+> todavía no se promovió desde el standalone (ver el README de
+> `standalones/` para el criterio de promoción). Si algún día flasheas
+> `firmware-esp32/` tal cual está hoy, el GPIO 39 va a recibir PWM en vez
+> del protocolo WS2812 — no daña nada, pero la tira no va a funcionar.
 
 Placa asumida: **ESP32-S3-DevKitC-1**.
 
@@ -20,14 +28,14 @@ Placa asumida: **ESP32-S3-DevKitC-1**.
 3. [Código de colores de cableado](#código-de-colores-de-cableado)
 4. [Motores — 2× L298N](#motores--2-l298n)
 5. [Servos — PCA9685](#servos--pca9685-i2c-dirección-0x40)
-6. [Sensores de color — 2× TCS34725](#sensores-de-color--2-tcs34725)
+6. [Sensores de color — hasta 2× TCS34725 (vía multiplexor)](#sensores-de-color--hasta-2-tcs34725-delantero--trasero-vía-multiplexor)
 7. [ToF — VL53L1X (distancia frente al gripper)](#tof--vl53l1x-distancia-frente-al-gripper)
 8. [Reflectancia — 2× QTRX-HD-01A](#reflectancia--2-qtrx-hd-01a)
-9. [LED RGB indicador de equipo](#led-rgb-indicador-de-equipo)
+9. [LED de indicación — tira WS2812B (8 LED)](#led-de-indicación--tira-ws2812b-8-led)
 10. [Switch de 3 posiciones — selección de equipo](#switch-de-3-posiciones--selección-de-equipo)
 11. [Enlace con la Raspberry Pi 4B](#enlace-con-la-raspberry-pi-4b)
 12. [Resumen: mapa completo de pines usados](#resumen-mapa-completo-de-pines-usados)
-13. [Alimentación — esquema real del equipo (una sola batería, con BEC)](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
+13. [Alimentación — esquema real del equipo (batería portátil TalentCell, dos salidas reguladas)](#alimentación--esquema-real-del-equipo-batería-portátil-talentcell-dos-salidas-reguladas)
 14. [Orden sugerido para el montaje y las pruebas](#orden-sugerido-para-el-montaje-y-las-pruebas)
 
 ---
@@ -95,7 +103,7 @@ este orden:
 | **Rojo** | 🛑 **Compartido a propósito entre TRES dominios** — potencia de motores (batería 7.4–12 V cruda hacia los L298N), lógica 3.3 V (VIN de los QTRX y los TCS34725) **y** servos (salida 5–6 V del BEC hacia el V+ del PCA9685). Ver el aviso grande abajo: es el color más peligroso de todo el documento. |
 | **Amarillo** | **I2C — SDA, en ambos buses.** También: CTRL de los QTR (control de los emisores IR) — no se mezclan porque los QTR están en otra zona del chasis, lejos del I2C. |
 | **Verde** | **I2C — SCL, en ambos buses.** Exclusivo: al quedar liberado de la potencia de servos (ahora en Rojo), se dedicó por completo a esto. |
-| **Azul** | PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N), el LED de iluminación de cada TCS34725, y los 3 canales del LED RGB de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
+| **Azul** | PWM/salidas analógicas de motores y QTR (ENA/ENB, OUT), señales digitales de control (IN1–IN4 de los L298N), el LED de iluminación de cada TCS34725, y el `DATA` de la tira WS2812B de equipo — no se mezclan con el I2C porque están en otra zona del chasis. |
 
 > 🛑 **AVISO — Rojo lleva 7.4–12 V, 5–6 V Y 3.3 V a la vez: es el color
 > donde más fácil se quema algo.** El resto de este documento evita por
@@ -231,30 +239,56 @@ Cada driver mueve dos motores. El firmware controla cada lado en conjunto
 
 ---
 
-## Sensores de color — 1× TCS34725 (delantero; el trasero no se usa)
+## Sensores de color — hasta 2× TCS34725 (delantero + trasero, vía multiplexor)
 
 **Los dos sensores tienen la misma dirección fija (0x29) y no se puede
 cambiar**, y ninguno tiene pin de apagado por software — en cuanto tiene
 corriente, contesta. Compartir bus entre los dos (o con el ToF, que también
 es 0x29 de fábrica) los corrompe mutuamente; separarlos por dirección
-necesitaría un multiplexor I2C (TCA9548A), que el equipo no tiene. Historia
-completa de cómo se descubrió esto, incluido un "resuelto" que no lo era, en
+necesita un multiplexor I2C (TCA9548A). Historia completa de cómo se
+descubrió esto, incluido un "resuelto" que no lo era, en
 [`calibracion/tof/README.md`](../calibracion/tof/README.md).
 
-**Solución adoptada: solo el sensor DELANTERO está conectado**, en el bus
-I2C nº 1 junto al PCA9685 (direcciones distintas — 0x29 y 0x40 — sin
-choque). El TRASERO queda desconectado por completo. Si más adelante se
-consigue un multiplexor I2C, ahí se puede recuperar.
+> 🚧 **En progreso (2026-09-27):** hasta ahora **solo el sensor DELANTERO
+> estaba conectado**, directo en el bus I2C nº 1. Montse está incorporando
+> el multiplexor TCA9548A para recuperar el TRASERO — la tabla de abajo es
+> el plan objetivo. **Confirmar con el escáner I2C** (`pruebas-platformio/`,
+> pendiente de crear un banco dedicado si hace falta) que el multiplexor y
+> los dos TCS34725 responden en sus direcciones antes de darlo por
+> terminado. Mientras tanto, `standalones/v9-tira-sensor-trasero/` trae un
+> parámetro (`kSensorTraseroInstalado`) para activar el trasero solo cuando
+> esté confirmado — con el multiplexor a medio cablear, el firmware sigue
+> funcionando igual que hoy usando solo el delantero.
 
-### Sensor DELANTERO — bus I2C nº 1 (compartido con el PCA9685)
+**Plan de cableado, los tres detrás del mismo bus I2C nº 1 (47/48):**
+
+| Dispositivo | Dónde | Dirección I2C |
+|---|---|:---:|
+| TCA9548A (multiplexor) | Directo en el bus 1 | 0x71 (pin `A0` a 3.3 V — ver el aviso abajo) |
+| PCA9685 (gripper) | Directo en el bus 1, **no** por el multiplexor | 0x40 |
+| TCS34725 delantero | Canal 0 del multiplexor | 0x29 |
+| TCS34725 trasero | Canal 1 del multiplexor | 0x29 |
+
+> ⚠️ **Por qué `A0` del multiplexor va a 3.3 V:** el TCA9548A responde de
+> fábrica en 0x70, y el PCA9685 **también contesta en 0x70** por su modo
+> "all-call" — sin mover `A0`, chocan. Alimentar el multiplexor a **3.3 V**
+> (nunca a 5 V: sus pull-ups meterían 5 V en el SDA/SCL del ESP32).
+
+### Sensor DELANTERO — bus I2C nº 1, canal 0 del multiplexor
 
 | Pin | GPIO ESP32-S3 | Cable |
 |-----|:-------------:|:---:|
-| SDA | **47** | Amarillo |
-| SCL | **48** | Verde |
+| SDA | **47** (vía multiplexor) | Amarillo |
+| SCL | **48** (vía multiplexor) | Verde |
 | VIN | 3.3 V | Rojo |
 | GND | GND | Negro |
 | LED | **18** | Azul |
+
+### Sensor TRASERO — bus I2C nº 1, canal 1 del multiplexor
+
+Mismo cableado que el delantero (SDA/SCL por el multiplexor, VIN 3.3 V,
+GND, LED), sin GPIO propio para el LED — queda siempre encendido con su
+propio pull-up, igual que el delantero (ver la nota de abajo).
 
 > Cada bus necesita resistencias de pull-up de 4.7 kΩ a 3.3 V en SDA y SCL.
 > La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones dos
@@ -368,24 +402,50 @@ hardware) y el VL53L1X se queda en su 0x29 de fábrica.
 
 ---
 
-## LED RGB indicador de equipo
+## LED de indicación — tira WS2812B (8 LED)
 
-Un solo LED RGB en el chasis cumple la identificación de equipo que exige el
-reglamento (antes eran 2 LED discretos, rojo y azul — **el equipo ya no los
-tiene montados**, quedaron completamente reemplazados por este). Se controla
-por PWM (LEDC), un canal por color, y queda con margen para cualquier otra
-señal visual que haga falta más adelante (además de indicar equipo, la
-prueba `pruebas-platformio/02-cuadro-color-rgb/` ya lo usa para mostrar en
-vivo el color que detecta el TCS34725 delantero).
+> **Reemplazo físico 2026-09-27:** el LED RGB de 3 canales que describía esta
+> sección **ya no está montado** — Montse lo desoldó y soldó en su lugar una
+> tira WS2812B de 8 LED direccionables (1 solo cable de datos, protocolo
+> propio, sin PWM del ESP32 ni canales LEDC). Cumple lo mismo que exige el
+> reglamento (equipo siempre visible, rojo o azul) y además reporta más
+> información: QTR, color delantero/trasero, cámara/ToF, gripper y fase —
+> ver `standalones/v9-tira-sensor-trasero/` para el mapa completo de los 8
+> LED y `pruebas-platformio/10-tira-ws2812/` para el banco de prueba aislado.
 
-R y G usan dos de los GPIO que quedaban libres para ampliaciones en este
-documento (38 y 39). El canal B vivía en el tercero (GPIO 3), pero se movió a
-GPIO 41 para cederle el 3 al **XSHUT del VL53L1X** (ver la sección de
-[ToF](#tof--vl53l1x-distancia-frente-al-gripper)), que sí se beneficia de
-estar físicamente junto al bus I2C0. El GPIO que quedaba libre (**40**) ya no
-lo está: ahora es uno de los 2 pines del
-[switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo)
-de más abajo — ver esa sección para por qué no quedó ningún GPIO libre.
+| Pin de la tira | GPIO ESP32-S3 / Conexión | Cable | Nota |
+|---|:---:|:---:|---|
+| DATA (`IN`) | **39** | Azul | Un solo pin de datos, protocolo WS2812 (bit-banging por software) |
+| VCC | Buck, 5 V | Rojo, marcado "SERVO" | Ver el aviso de nivel de señal abajo |
+| GND | GND común | Negro | |
+
+> ⚠️ **Nivel de señal:** la tira espera ≥3.5 V en `DATA` y el ESP32 entrega
+> 3.3 V. Con el buck a 5.02 V (medido) y cable corto ha funcionado sin
+> adaptador de nivel ni diodo en la línea de `VCC` — si en algún momento la
+> tira falla de forma intermitente (colores incorrectos, parpadeo), ese es
+> el primer sospechoso.
+>
+> **Brillo limitado por software** (parámetro `kBrillo` en el firmware,
+> hoy ~15 %): a full blanco los 8 LED pueden pedir ~480 mA, y esa rama sale
+> del mismo buck que alimenta los servos — ver el aviso de
+> [alimentación](#alimentación--esquema-real-del-equipo-batería-portátil-talentcell-dos-salidas-reguladas)
+> más abajo. No subir el brillo sin medir el consumo real con todo
+> conectado.
+
+**Esto libera 2 GPIO que antes usaba el LED RGB (38 y 41)** — el 39 se
+reutilizó para el `DATA` de la tira, pero 38 y 41 quedan sin tarea. Es el
+primer GPIO libre que tiene el robot desde que se cablearon los 26 pines
+documentados aquí; si más adelante se decide cablear el IMU BNO085, esos 2
+pines alcanzarían para darle INT y RST (hoy se planea usarlo sin ellos, ver
+la conversación de incorporaciones del 2026-09-26).
+
+> **Polaridad, referencia del LED RGB viejo (ya no aplica):** cátodo común,
+> duty PWM alto = canal más brillante. Se deja esta nota por si alguna vez
+> se vuelve a montar un LED RGB simple en vez de la tira.
+
+<!-- Seccion anterior conservada como referencia historica del LED RGB de 3 canales -->
+<details>
+<summary>LED RGB de 3 canales (retirado 2026-09-27, ver arriba)</summary>
 
 | Canal | GPIO ESP32-S3 | Cable | Nota |
 |-------|:-------------:|:---:|------|
@@ -400,10 +460,15 @@ de más abajo — ver esa sección para por qué no quedó ningún GPIO libre.
 > en `false`); la constante se conserva en cada uno por si algún día se
 > reemplaza el LED por uno de ánodo común.
 
-Los 3 canales van en **Azul** (no comparten zona de cableado con el I2C,
-así que no hay riesgo de confundirlos con SDA/SCL) — mismo criterio que el
-resto de señales digitales/PWM de bajo amperaje de este robot (ENA/ENB, OUT
-de los QTR). Ver el [código de colores](#código-de-colores-de-cableado).
+Los 3 canales iban en **Azul** (no comparten zona de cableado con el I2C,
+así que no había riesgo de confundirlos con SDA/SCL) — mismo criterio que
+el resto de señales digitales/PWM de bajo amperaje de este robot (ENA/ENB,
+OUT de los QTR). Ver el [código de colores](#código-de-colores-de-cableado).
+
+</details>
+
+El cable `DATA` de la tira WS2812B sigue esa misma regla (azul), ver la
+tabla al principio de esta sección.
 
 ---
 
@@ -427,7 +492,7 @@ la posición equivocada justo al energizar podría dejar al ESP32-S3 sin
 arrancar el firmware, o (peor, porque el switch normalmente SÍ está en una
 posición de equipo durante toda la ronda) meterlo en modo bootloader si un
 brownout de motores lo reinicia a mitad de partida. Ver el aviso de
-brownout en la sección de [alimentación](#alimentación--esquema-real-del-equipo-una-sola-batería-con-bec)
+brownout en la sección de [alimentación](#alimentación--esquema-real-del-equipo-batería-portátil-talentcell-dos-salidas-reguladas)
 más abajo — es exactamente el escenario que se evitó no tocando esos pines.
 
 | Terminal del switch | Conexión | Cable | Nota |
@@ -519,22 +584,32 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 3 | XSHUT del VL53L1X (ToF) | 17 | L298N‑D ENB |
 | 4 | L298N‑I IN1 | 18 | LED TCS34725 delantero |
 | 5 | L298N‑I IN2 | 21 | Switch equipo — tiro ROJO |
-| 6 | L298N‑I ENA | 38 | LED RGB — canal G |
-| 7 | L298N‑I IN3 | 39 | LED RGB — canal R |
+| 6 | L298N‑I ENA | 38 | **libre** (antes: LED RGB, canal G) |
+| 7 | L298N‑I IN3 | 39 | Tira WS2812B — DATA |
 | 8 | I2C0 SDA (VL53L1X, solo) | 40 | Switch equipo — tiro AZUL |
-| 9 | I2C0 SCL (VL53L1X, solo) | 41 | LED RGB — canal B |
+| 9 | I2C0 SCL (VL53L1X, solo) | 41 | **libre** (antes: LED RGB, canal B) |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
-| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725 delantero + PCA9685) |
-| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725 delantero + PCA9685) |
+| 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725(s) vía multiplexor + PCA9685) |
+| 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725(s) vía multiplexor + PCA9685) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**26 pines usados. No queda ningún GPIO libre para ampliaciones.** El XSHUT
+**24 pines usados, 2 libres (38 y 41) desde el 2026-09-27.** Motivo: la
+tira WS2812B (ver [LED de indicación](#led-de-indicación--tira-ws2812b-8-led))
+solo necesita 1 pin de datos (39), y reemplazó al LED RGB de 3 canales que
+usaba 38, 39 y 41. El multiplexor TCA9548A y el TCS34725 trasero (si se
+instalan) tampoco piden GPIO nuevo — van detrás del mismo bus I2C nº1
+(47/48) que ya usan el PCA9685 y el TCS34725 delantero.
+Son los primeros GPIO libres desde que se cablearon los 26 pines
+originales; si se decide cablear el IMU BNO085 con INT y RST (hoy se
+cablea sin ellos), 38 y 41 alcanzarían para eso.
+
+Historia de cómo se llegó a este mapa (antes de liberar 38/41): el XSHUT
 del VL53L1X (ver [ToF](#tof--vl53l1x-distancia-frente-al-gripper)) se movió
-al GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del LED
-RGB (ver [LED RGB](#led-rgb-indicador-de-equipo)), que ahora vive en el GPIO
-41. El último GPIO libre (40) y el que liberó el LED trasero del TCS34725
-(21) se usaron para el
+al GPIO 3, físicamente junto al I2C0 — eso le cedió el 3 al canal B del
+viejo LED RGB, que vivía en el GPIO 41. El último GPIO libre de aquel
+entonces (40) y el que liberó el LED trasero del TCS34725 (21) se usaron
+para el
 [switch de selección de equipo](#switch-de-3-posiciones--selección-de-equipo) —
 GPIO 0 y GPIO 45/46, aunque también estaban técnicamente libres, se
 descartaron por ser pines de strapping de arranque (ver la sección del
@@ -596,11 +671,14 @@ masa ya es común entre los dos terminales; no hace falta puentear nada aparte)
 
 1. **Solo el ESP32** por USB. Cargar el firmware, ver el mensaje de arranque en el
    puerto de depuración a 115200.
-2. **Añadir el LED RGB** (GPIO 39/38/41). Comprobar que la Raspberry Pi lo
-   enciende en rojo y en azul. La polaridad ya está confirmada (cátodo
-   común), así que no hay nada que ajustar acá.
-3. **Añadir el I2C**, un chip a la vez. El firmware avisa por la consola si el
-   PCA9685 o algún TCS34725 no responde. **Dejar el VL53L1X para el final de
+2. **Añadir la tira WS2812B** (GPIO 39, `DATA`). Comprobar con
+   `pruebas-platformio/10-tira-ws2812/` que enciende en rojo y en azul antes
+   de integrarla a la misión.
+3. **Añadir el I2C**, un chip a la vez (el TCS34725 delantero, el trasero y
+   el IMU van detrás del multiplexor TCA9548A, si están instalados — ver
+   [LED de indicación](#led-de-indicación--tira-ws2812b-8-led) para el
+   porqué). El firmware avisa por la consola si el PCA9685 o algún
+   TCS34725 no responde. **Dejar el VL53L1X para el final de
    este paso**, después de confirmar que el TCS34725 delantero ya funciona
    bien por su cuenta: así, si algo se rompe al conectar el ToF, es fácil
    saber que fue por eso.
