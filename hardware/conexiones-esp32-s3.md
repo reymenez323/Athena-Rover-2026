@@ -249,16 +249,19 @@ necesita un multiplexor I2C (TCA9548A). Historia completa de cómo se
 descubrió esto, incluido un "resuelto" que no lo era, en
 [`calibracion/tof/README.md`](../calibracion/tof/README.md).
 
-> 🚧 **En progreso (2026-09-27):** hasta ahora **solo el sensor DELANTERO
-> estaba conectado**, directo en el bus I2C nº 1. Montse está incorporando
-> el multiplexor TCA9548A para recuperar el TRASERO — la tabla de abajo es
-> el plan objetivo. **Confirmar con el escáner I2C** (`pruebas-platformio/`,
-> pendiente de crear un banco dedicado si hace falta) que el multiplexor y
-> los dos TCS34725 responden en sus direcciones antes de darlo por
-> terminado. Mientras tanto, `standalones/v9-tira-sensor-trasero/` trae un
-> parámetro (`kSensorTraseroInstalado`) para activar el trasero solo cuando
-> esté confirmado — con el multiplexor a medio cablear, el firmware sigue
-> funcionando igual que hoy usando solo el delantero.
+> ✅ **Multiplexor cableado y confirmado (2026-09-27):** el TCA9548A/PCA9548A
+> y los dos TCS34725 responden en las direcciones de la tabla de abajo,
+> confirmado con un escáner I2C (0x71 el multiplexor, 0x29 cada TCS34725 en
+> su propio canal). `standalones/v9-tira-sensor-trasero/` tiene
+> `Mission::kSensorTraseroInstalado = true`.
+>
+> ⚠️ **Pendiente: el trasero responde por I2C, pero sus lecturas de color
+> NO están calibradas.** `ClassifyColor()` sigue usando un solo juego de
+> umbrales (calibrado para el delantero el 2026-09-07); el trasero es una
+> unidad física distinta, con otro montaje y otra luz. Antes de confiar en
+> sus lecturas (sobre todo NEGRO, para detectar que el robot se sale de la
+> pista al dar reversa) hay que separar los umbrales por sensor y medir el
+> trasero en banco.
 
 **Plan de cableado, los tres detrás del mismo bus I2C nº 1 (47/48):**
 

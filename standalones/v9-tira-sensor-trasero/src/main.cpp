@@ -471,11 +471,18 @@ constexpr uint32_t kIdlePasoMs = 70;   // ms entre cuadros de la animación de e
 
 // -- Sensor de color TRASERO + multiplexor I2C (2026-09-27) -----------------
 // false = el firmware se comporta EXACTAMENTE como v8: ignora el trasero y
-// el LED4 de la tira queda fijo en gris tenue ("no instalado"). Poner en
-// true SOLO después de confirmar con un escáner I2C que el multiplexor
-// (0x71) y el TCS34725 trasero (canal 1) responden -- ver
+// el LED4 de la tira queda fijo en gris tenue ("no instalado"). Confirmado
+// con el escáner I2C el 2026-09-27: multiplexor en 0x71 y los dos TCS34725
+// (0x29) responden cada uno en su canal (0 delantero, 1 trasero) -- ver
 // hardware/conexiones-esp32-s3.md, sección de sensores de color.
-constexpr bool kSensorTraseroInstalado = false;
+// OJO: esto solo confirma que el sensor RESPONDE por I2C, no que sus
+// umbrales de color (ClassifyColor(), calibrados para el delantero el
+// 2026-09-07) sirvan para el trasero -- es una unidad física distinta, con
+// otro montaje y otra luz. Pendiente calibrar el trasero (Montse, mañana),
+// sobre todo el umbral de NEGRO: su objetivo principal es avisar si el
+// robot se sale de la pista en reversa (sin IMU no hay otra forma de
+// saberlo), no solo reconocer colores.
+constexpr bool kSensorTraseroInstalado = true;
 constexpr uint8_t kMuxCanalDelantero = 0;
 constexpr uint8_t kMuxCanalTrasero   = 1;
 

@@ -60,17 +60,29 @@ hoy no parece necesario.
 
 ## Sensor trasero + multiplexor
 
-`Mission::kSensorTraseroInstalado` (por defecto **`false`**): con esto en
-`false`, el firmware se comporta EXACTAMENTE como v8 — ignora el
-multiplexor y el trasero por completo, y el LED4 queda fijo en gris muy
-tenue. Ponerlo en `true` **solo** después de confirmar con un escáner I2C
-que el multiplexor (0x71) y el TCS34725 trasero (canal 1) responden — ver
+`Mission::kSensorTraseroInstalado`: en `false` el firmware se comporta
+EXACTAMENTE como v8 — ignora el multiplexor y el trasero por completo, y
+el LED4 queda fijo en gris muy tenue. **En `true` desde el 2026-09-27**,
+tras confirmar con un escáner I2C que el multiplexor (0x71) y los dos
+TCS34725 (0x29, cada uno en su canal) responden — ver
 [`hardware/conexiones-esp32-s3.md`](../../hardware/conexiones-esp32-s3.md),
 sección de sensores de color, para el cableado y el porqué de la
 dirección 0x71.
 
 El color trasero **no participa en la lógica de la misión**, solo se
 muestra en el LED4 — no hay ningún paso de los 12 que dependa de él.
+
+> ⚠️ **El escáner solo confirma que el sensor RESPONDE, no que sus
+> umbrales de color sirvan.** `ClassifyColor()` está calibrado para el
+> TCS34725 delantero (2026-09-07); el trasero es una unidad física
+> distinta, con otro montaje y otra luz. Pendiente: calibrar el trasero
+> (Montse, con calma), sobre todo el umbral de **NEGRO** — su objetivo
+> principal es avisar si el robot se sale de la pista al dar reversa (sin
+> IMU no hay otra forma de saberlo), no solo reconocer colores. Hoy
+> `ClassifyColor()` es UNA sola función con UN solo juego de umbrales,
+> compartida por los dos sensores -- antes de calibrar el trasero hay que
+> separarlos en dos juegos (uno por sensor), para no desajustar el
+> delantero (ya validado) al ajustar el trasero.
 
 ## Uso
 
@@ -82,4 +94,5 @@ el resto de la misión: [`pruebas-platformio/10-tira-ws2812/`](../../pruebas-pla
 |---|---|
 | Compila | sí (2026-09-27) |
 | Tira en misión real | sin probar todavía — pendiente correr la misión completa y ver el mapa en pista |
-| Sensor trasero | sin probar — `kSensorTraseroInstalado=false` hasta confirmar el cableado del multiplexor |
+| Multiplexor + los 2 TCS34725 | cableado y confirmado con escáner I2C (2026-09-27): `kSensorTraseroInstalado = true` |
+| Lectura de color del trasero | sin calibrar — pendiente separar los umbrales de `ClassifyColor()` por sensor y medir NEGRO específicamente (uso: detectar que se sale de la pista en reversa) |
