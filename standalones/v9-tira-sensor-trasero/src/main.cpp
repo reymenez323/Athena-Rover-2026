@@ -601,9 +601,11 @@ namespace Pins {
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
     constexpr uint8_t TCS_LED_FRONT = 18;   // LED de iluminación del TCS34725 delantero, GPIO aparte (no I2C)
+    constexpr uint8_t TCS_LED_REAR  = 41;   // ídem, TCS34725 trasero -- uno de los 2 GPIO libres desde que se puso la tira (ver abajo)
 
     // -------- Tira WS2812B: 8 LED, reemplaza al LED RGB de 3 canales -------
-    // Libera los GPIO 38 y 41 que usaba el LED RGB (ver hardware/conexiones-esp32-s3.md).
+    // Libera los GPIO 38 y 41 que usaba el LED RGB (ver hardware/conexiones-esp32-s3.md);
+    // el 41 se reutilizó arriba para el LED del TCS34725 trasero.
     constexpr uint8_t TIRA_DATA = 39;
 
     // -------- Switch de 3 posiciones: elige equipo Y arma el robot ---------
@@ -1263,6 +1265,8 @@ void ColorSensorTask(void *) {
 
     bool rear_ok = false;
     if (Mission::kSensorTraseroInstalado) {
+        pinMode(Pins::TCS_LED_REAR, OUTPUT);
+        digitalWrite(Pins::TCS_LED_REAR, HIGH);   // mismo criterio que el delantero: iluminación fija propia
         if (I2c1Lock()) {
             rear_ok = Multiplexor::SeleccionarCanal(Mission::kMuxCanalTrasero) && Tcs34725::Init();
             I2c1Unlock();

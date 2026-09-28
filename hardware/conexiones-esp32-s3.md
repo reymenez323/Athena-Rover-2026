@@ -287,8 +287,11 @@ descubrió esto, incluido un "resuelto" que no lo era, en
 ### Sensor TRASERO — bus I2C nº 1, canal 1 del multiplexor
 
 Mismo cableado que el delantero (SDA/SCL por el multiplexor, VIN 3.3 V,
-GND, LED), sin GPIO propio para el LED — queda siempre encendido con su
-propio pull-up, igual que el delantero (ver la nota de abajo).
+GND) más el LED en **GPIO 41** (cable azul) — uno de los 2 GPIO que quedaron
+libres al reemplazar el LED RGB por la tira WS2812B (ver
+[LED de indicación](#led-de-indicación--tira-ws2812b-8-led)). El firmware
+lo enciende fijo igual que el delantero (GPIO 18); queda libre para
+apagarlo por software si algún día hace falta.
 
 > Cada bus necesita resistencias de pull-up de 4.7 kΩ a 3.3 V en SDA y SCL.
 > La mayoría de los módulos TCS34725 y PCA9685 ya las traen: si pones dos
@@ -587,22 +590,24 @@ Si `/dev/ttyACM0` no aparece, revisa con `ls /dev/ttyACM*` y ajusta
 | 6 | L298N‑I ENA | 38 | **libre** (antes: LED RGB, canal G) |
 | 7 | L298N‑I IN3 | 39 | Tira WS2812B — DATA |
 | 8 | I2C0 SDA (VL53L1X, solo) | 40 | Switch equipo — tiro AZUL |
-| 9 | I2C0 SCL (VL53L1X, solo) | 41 | **libre** (antes: LED RGB, canal B) |
+| 9 | I2C0 SCL (VL53L1X, solo) | 41 | LED TCS34725 trasero |
 | 10 | L298N‑D IN1 | 42 | QTR emisores (CTRL) |
 | 11 | L298N‑D IN2 | 47 | I2C1 SDA (TCS34725(s) vía multiplexor + PCA9685) |
 | 12 | L298N‑D ENA | 48 | I2C1 SCL (TCS34725(s) vía multiplexor + PCA9685) |
 | 13 | L298N‑D IN3 | | |
 | 14 | L298N‑D IN4 | | |
 
-**24 pines usados, 2 libres (38 y 41) desde el 2026-09-27.** Motivo: la
-tira WS2812B (ver [LED de indicación](#led-de-indicación--tira-ws2812b-8-led))
-solo necesita 1 pin de datos (39), y reemplazó al LED RGB de 3 canales que
-usaba 38, 39 y 41. El multiplexor TCA9548A y el TCS34725 trasero (si se
-instalan) tampoco piden GPIO nuevo — van detrás del mismo bus I2C nº1
-(47/48) que ya usan el PCA9685 y el TCS34725 delantero.
-Son los primeros GPIO libres desde que se cablearon los 26 pines
-originales; si se decide cablear el IMU BNO085 con INT y RST (hoy se
-cablea sin ellos), 38 y 41 alcanzarían para eso.
+**25 pines usados, 1 libre (38) desde el 2026-09-27.** Motivo: la tira
+WS2812B (ver [LED de indicación](#led-de-indicación--tira-ws2812b-8-led))
+solo necesita 1 pin de datos (39) y reemplazó al LED RGB de 3 canales que
+usaba 38, 39 y 41 — de los 2 GPIO que liberó, el 41 se reutilizó para el
+LED del TCS34725 trasero (ver la sección de sensores de color). El
+multiplexor TCA9548A y los TCS34725 delantero/trasero no piden GPIO
+aparte — van detrás del mismo bus I2C nº1 (47/48) que ya usan el PCA9685
+y (antes) el TCS34725 delantero solo.
+Si se decide cablear el IMU BNO085 con INT y RST (hoy se planea cablearlo
+sin ellos), solo queda el GPIO 38 disponible — alcanza para uno de los
+dos, no para ambos.
 
 Historia de cómo se llegó a este mapa (antes de liberar 38/41): el XSHUT
 del VL53L1X (ver [ToF](#tof--vl53l1x-distancia-frente-al-gripper)) se movió
