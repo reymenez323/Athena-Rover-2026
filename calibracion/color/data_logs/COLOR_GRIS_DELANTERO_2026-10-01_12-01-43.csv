@@ -1,0 +1,14 @@
+# ROVER COLOR SENSOR CHARACTERIZATION
+# Date: 2026-10-01 12:01:43.445116
+# Surface: GRIS
+# Sensor under test: DELANTERO
+# Number of points: 4
+# Samples per point: 60
+# Sample interval: 250 ms
+# Movement time between points: 10 s
+surface,sensor_under_test,point,sample,ok,clear,r,g,b
+GRIS,DELANTERO,1,1,1,1680,615,643,336
+GRIS,DELANTERO,1,2,1,1680,615,643,336
+GRIS,DELANTERO,1,3,1,1680,615,643,336
+GRIS,DELANTERO,1,4,1,1680,615,643,336
+GRIS,DELANTERO,1,5,1,1680,615,643,336
