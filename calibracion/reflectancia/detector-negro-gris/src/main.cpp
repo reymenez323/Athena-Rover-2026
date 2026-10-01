@@ -3,208 +3,225 @@
 //  Athena Rover 2026 · Retos del Rover H07 · INTEC · Reymildo & Montse
 // ===========================================================================
 //
-//  Lee los sensores A y B (QTRX-HD-01A analógicos) y clasifica NEGRO vs.
-//  GRIS. Imprime el resultado por consola cada 200 ms y enciende el LED
-//  RGB: rojo para negro, verde para gris (igual que siempre).
+//  Lee los dos QTRX-HD-01A (izquierdo GPIO1, derecho GPIO2) y clasifica cada
+//  uno por separado entre NEGRO (borde) y GRIS (pista). Imprime el resultado
+//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED (GPIO 39): los 4 LED
+//  de la izquierda (0-3) = QTR IZQUIERDO, los 4 de la derecha (4-7) = QTR
+//  DERECHO.
 //
-//  SOLO decide el sensor B — no es un umbral por capricho, es lo que dio
-//  menos errores probando contra los datos reales. Se probaron A solo, B
-//  solo, y varias combinaciones lineales de ambos (A+B, A-B, promedios,
-//  A + w·B para w entre -3 y 3) sobre las 740 muestras de
-//  ../data_logs/IR_NEGRO_2026-08-28_15-36-20.csv e
-//  IR_GRIS_2026-08-28_15-33-07.csv — capturadas ya con la atenuación del
-//  ADC fijada explícitamente (ADC_11db, ver setup() más abajo y
-//  ../firmware/src/main.cpp). B solo volvió a ganar:
+//      NEGRO          -> morado (el mismo morado que usan v9 y detector-tcs)
+//      GRIS           -> apagado
+//      sin señal      -> rojo tenue (el sensor está pegado al tope del ADC)
 //
-//      Umbral         Errores totales   Detalle
-//      A solo (3697)     102 / 740      79 negro→gris, 23 gris→negro
-//      A + 1.9·B          96 / 740      78 negro→gris, 18 gris→negro
-//      B solo (2910)       52 / 740      42 negro→gris, 10 gris→negro
+//  MEDICIÓN: la misma del robot (v8/v9) -- emisor IR apagado (>= 1 ms) ->
+//  "off"; encendido -> "on"; dif = on - off, y |dif| < umbral = NEGRO. Con el
+//  sensor DERECHO se midió negro |dif| ~ 1-8 y gris ~ 76-87, umbral 40.
 //
-//  Con B, el rango de NEGRO fue 2781–2938 y el de GRIS 2747–2935 — el
-//  solape (2781–2935) cubre casi todo el rango de ambas superficies. Fijar
-//  la atenuación del ADC (ver el historial de commits de este archivo) NO
-//  redujo el solape de forma notable: los rangos crudos apenas cambiaron
-//  respecto a las corridas de antes del fix. La causa del solape no es la
-//  configuración del ADC — es que ambas superficies se midieron a mano,
-//  sin altura ni ángulo fijos (el propio ../README.md ya documentaba esto
-//  mismo para el sensor A: el GRIS varía mucho según cómo se sostenga el
-//  sensor). Con el sensor MONTADO a altura fija en el chasis, como hace el
-//  robot real, el solape debería ser bastante menor — pero eso solo lo
-//  confirma la calibración en vivo del robot, no esta herramienta de
-//  banco.
+//  MEJORAS SOLO POR SOFTWARE (2026-10-01), para distinguir mejor sin tocar el
+//  hardware. Las tres son parámetros ajustables abajo:
+//    1. PROMEDIO: cada "off" y cada "on" es el promedio de kMuestrasPromedio
+//       lecturas del ADC (el ADC del ESP32 es ruidoso). Debe coincidir con el
+//       de ../firmware/ (la captura a CSV).
+//    2. HISTÉRESIS: para pasar de GRIS a NEGRO hace falta |dif| < umbral; para
+//       VOLVER a GRIS hace falta |dif| > umbral + histéresis. Una lectura que
+//       ronda justo el umbral ya no hace parpadear el resultado.
+//    3. CONFIRMACIÓN: un cambio de estado solo se acepta tras kLecturasConfirmar
+//       lecturas seguidas que lo apoyen (a 50 Hz, 3 lecturas = 60 ms; el robot
+//       usa kBordeDebounceMs = 50 ms).
+//  ⚠️ El robot (v9) todavía NO hace el promedio ni la histéresis: hoy decide
+//  con una sola lectura y 50 ms de antirrebote. Si estas mejoras funcionan en
+//  banco, hay que portarlas a v9 -- no se tocó porque es la lógica de
+//  seguridad del borde y falta validarlas con datos.
 //
-//  El sensor A se sigue leyendo e imprimiendo (para tenerlo a la vista),
-//  pero ya NO participa en la decisión.
+//  ⚠️ Los umbrales se midieron SOLO con el derecho. kUmbralIzquierdo es una
+//  copia SIN CALIBRAR; se ajusta mirando la columna dif sobre gris y negro.
 //
-//  Pines: cableado físico actual confirmado por el equipo — sensores en
-//  GPIO1/GPIO2, control compartido en GPIO42 (los mismos GPIO que
-//  QTR_LEFT_OUT/QTR_RIGHT_OUT/QTR_EMITTER_CTRL del diseño de vuelo, ver
-//  hardware/conexiones-esp32-s3.md) — más el LED RGB en los mismos GPIO
-//  que usa el diseño final (firmware-esp32/,
-//  pruebas-platformio/02-cuadro-color-rgb/). El módulo IR genérico no está
-//  en uso (no está cableado), así que este sketch no lo lee.
-//
-//  Como con cualquier umbral fijo sacado de un log puntual: si cambia la
-//  luz del lugar o se reposiciona el sensor, verifícalo de nuevo contra la
-//  superficie real. La calibración en vivo de pruebas-platformio/01 y 02
-//  (recalibra en cada arranque) sigue siendo la que manda para el robot de
-//  verdad — esto es solo una herramienta de banco.
-//
+//  Pines = cableado real (hardware/conexiones-esp32-s3.md): CTRL de los dos
+//  emisores IR compartido en GPIO42. ¡Los QTRX van a 3.3 V, nunca a 5 V!
 // ===========================================================================
 
 #include <Arduino.h>
-#include <QTRSensors.h>
+#include <Adafruit_NeoPixel.h>
 
 // =====================================================
 // PINES
 // =====================================================
 
-const uint8_t QTR_A_SENSOR = 1;   // = QTR_LEFT_OUT en hardware/conexiones-esp32-s3.md — se lee pero no decide
-const uint8_t QTR_A_CTRL   = 42;  // = QTR_EMITTER_CTRL en hardware/conexiones-esp32-s3.md
-const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md — el que decide
-const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL
-
-const uint8_t RGB_R = 39;
-const uint8_t RGB_G = 38;
-const uint8_t RGB_B = 3;
+constexpr uint8_t kPinQtrIzquierdo = 1;    // ADC1_CH0
+constexpr uint8_t kPinQtrDerecho   = 2;    // ADC1_CH1
+constexpr uint8_t kPinEmisor       = 42;   // CTRL de los emisores IR, compartido
+constexpr uint8_t kPinTira         = 39;   // DATA de la tira WS2812B
 
 // =====================================================
-// UMBRAL — ver el análisis completo en el encabezado
-// =====================================================
-//
-// Recalibrado 2026-08-28 con la atenuación del ADC ya fijada (ver
-// setup()). Reemplaza el valor anterior (2922), calibrado sin esa
-// atenuación fijada.
-
-constexpr uint16_t UMBRAL_NEGRO_GRIS = 2910;  // sensor B > esto => NEGRO, si no => GRIS
-
-// =====================================================
-// QTR OBJECTS
+// PARÁMETROS
 // =====================================================
 
-QTRSensors qtrA;
-QTRSensors qtrB;
+constexpr uint8_t  kMuestrasPromedio = 16;   // lecturas del ADC por cada off / on. IGUAL que ../firmware/
+constexpr int16_t  kUmbralDerecho    = 40;   // |dif| menor que esto = negro (negro ~1-8, gris ~76-87 medido en banco)
+constexpr int16_t  kUmbralIzquierdo  = 40;   // SIN CALIBRAR: copia del derecho hasta medir el izquierdo
+constexpr int16_t  kHisteresis       = 10;   // para volver a GRIS hace falta |dif| > umbral + esto
+constexpr uint8_t  kLecturasConfirmar = 3;   // lecturas seguidas que apoyan un cambio de estado antes de aceptarlo
+constexpr uint16_t kTopeAdc          = 4085; // off Y on >= esto = pegado al tope (igual que kQtrTopeAdc de v9)
+constexpr uint32_t kPeriodoLecturaMs = 20;   // 50 Hz, igual que el robot
+constexpr uint32_t kPeriodoImpresionMs = 200;
+constexpr uint8_t  kBrillo           = 40;   // 0-255, igual que pruebas-platformio/10-tira-ws2812
 
-uint16_t valuesA[1];
-uint16_t valuesB[1];
+Adafruit_NeoPixel tira(8, kPinTira, NEO_GRB + NEO_KHZ800);
 
 // =====================================================
-// LED RGB
+// LECTURA
 // =====================================================
-//
-// POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty alto
-// = canal más brillante. Mismo valor que firmware-esp32/. La constante se
-// conserva por si algún día se cambia el LED por uno de ánodo común.
 
-constexpr bool kCommonAnode = false;
+enum class Estado : uint8_t { GRIS, NEGRO, SIN_SENAL };
 
-namespace Pwm {
-    constexpr uint32_t RGB_FREQ_HZ    = 5000;  // fuera del rango audible
-    constexpr uint8_t  RGB_RESOLUTION = 8;     // duty 0..255
+struct Lectura {
+    uint16_t offIzq, onIzq, offDer, onDer;
+};
+
+uint16_t LeerPromedio(uint8_t pin) {
+    uint32_t suma = 0;
+    for (uint8_t i = 0; i < kMuestrasPromedio; ++i) suma += (uint32_t)analogRead(pin);
+    return (uint16_t)(suma / kMuestrasPromedio);
 }
 
-// La API de LEDC cambió entre el core 2.x y el 3.x de Arduino-ESP32.
-void PwmAttach(uint8_t pin, uint8_t channel, uint32_t freqHz, uint8_t resolution) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    (void)channel;
-    ledcAttach(pin, freqHz, resolution);
-#else
-    ledcSetup(channel, freqHz, resolution);
-    ledcAttachPin(pin, channel);
-#endif
+// Misma secuencia que ReflectanceTask en v9: apagar >= 1 ms, leer "off";
+// encender, asentar 200 us, leer "on". Los dos sensores comparten el CTRL,
+// así que se leen en el mismo ciclo.
+Lectura Leer() {
+    Lectura l;
+    digitalWrite(kPinEmisor, LOW);
+    delay(2);   // >= 1 ms: apagado real
+    l.offIzq = LeerPromedio(kPinQtrIzquierdo);
+    l.offDer = LeerPromedio(kPinQtrDerecho);
+
+    digitalWrite(kPinEmisor, HIGH);
+    delayMicroseconds(200);   // asentar el fototransistor con luz IR estable
+    l.onIzq = LeerPromedio(kPinQtrIzquierdo);
+    l.onDer = LeerPromedio(kPinQtrDerecho);
+    return l;
 }
 
-void PwmWrite(uint8_t pin, uint8_t channel, uint32_t duty) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    (void)channel;
-    ledcWrite(pin, duty);
-#else
-    (void)pin;
-    ledcWrite(channel, duty);
-#endif
-}
+// Estado de un sensor con histéresis y confirmación.
+struct Filtro {
+    Estado estable = Estado::GRIS;
+    uint8_t contador = 0;   // lecturas seguidas que apoyan el estado contrario
 
-namespace RgbLed {
-    constexpr uint8_t CH_R = 0;
-    constexpr uint8_t CH_G = 1;
-    constexpr uint8_t CH_B = 2;
+    Estado Actualizar(uint16_t off, uint16_t on, int16_t umbral) {
+        if (off >= kTopeAdc && on >= kTopeAdc) {
+            estable = Estado::SIN_SENAL;
+            contador = 0;
+            return estable;
+        }
+        const int16_t absDif = (int16_t)abs((int32_t)on - (int32_t)off);
 
-    void Setup() {
-        PwmAttach(RGB_R, CH_R, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
-        PwmAttach(RGB_G, CH_G, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
-        PwmAttach(RGB_B, CH_B, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
+        // ¿Esta lectura pide cambiar de estado? El umbral depende del estado
+        // actual (histéresis): entrar a NEGRO con dif < umbral, volver a GRIS
+        // con dif > umbral + kHisteresis.
+        bool pideCambio;
+        Estado destino;
+        if (estable == Estado::NEGRO) {
+            pideCambio = absDif > umbral + kHisteresis;
+            destino = Estado::GRIS;
+        } else {   // GRIS, o saliendo de SIN_SENAL
+            pideCambio = absDif < umbral;
+            destino = Estado::NEGRO;
+        }
+
+        if (estable == Estado::SIN_SENAL) {
+            // Con señal otra vez: se decide directo, sin esperar confirmación.
+            estable = absDif < umbral ? Estado::NEGRO : Estado::GRIS;
+            contador = 0;
+        } else if (pideCambio) {
+            if (++contador >= kLecturasConfirmar) {
+                estable = destino;
+                contador = 0;
+            }
+        } else {
+            contador = 0;
+        }
+        return estable;
     }
+};
 
-    void SetRaw(uint8_t r, uint8_t g, uint8_t b) {
-        if (kCommonAnode) { r = 255 - r; g = 255 - g; b = 255 - b; }
-        PwmWrite(RGB_R, CH_R, r);
-        PwmWrite(RGB_G, CH_G, g);
-        PwmWrite(RGB_B, CH_B, b);
+Filtro g_izq, g_der;
+
+const char *Nombre(Estado e) {
+    switch (e) {
+        case Estado::NEGRO:     return "NEGRO";
+        case Estado::SIN_SENAL: return "SIN SENAL";
+        default:                return "GRIS";
     }
 }
 
 // =====================================================
-// SETUP
+// TIRA
 // =====================================================
 
-void setup()
-{
+uint32_t ColorDe(Estado e) {
+    switch (e) {
+        case Estado::NEGRO:     return tira.Color(160, 0, 255);   // morado
+        case Estado::SIN_SENAL: return tira.Color(60, 0, 0);      // rojo tenue
+        default:                return 0;                         // gris: apagado
+    }
+}
+
+// LED 0-3 (izquierda) = QTR izquierdo, LED 4-7 (derecha) = QTR derecho.
+void Mostrar(Estado izq, Estado der) {
+    for (uint8_t i = 0; i < 4; i++) tira.setPixelColor(i, ColorDe(izq));
+    for (uint8_t i = 4; i < 8; i++) tira.setPixelColor(i, ColorDe(der));
+    tira.show();
+}
+
+// =====================================================
+// SETUP / LOOP
+// =====================================================
+
+void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\nDetector NEGRO/GRIS - banco de calibracion");
+    Serial.println("Medicion con rechazo de luz ambiente (dif = on - off), igual que el robot.");
+    Serial.printf("Mejoras por software: promedio de %u lecturas, histeresis %d, confirmacion de %u lecturas.\n",
+                  (unsigned)kMuestrasPromedio, (int)kHisteresis, (unsigned)kLecturasConfirmar);
+    Serial.println("Tira WS2812B (GPIO 39): LED 0-3 = QTR izquierdo, LED 4-7 = QTR derecho.");
+    Serial.println("NEGRO morado, GRIS apagado, SIN SENAL rojo tenue.");
+    Serial.println("Umbral izquierdo SIN CALIBRAR (copia del derecho): mira la columna dif.\n");
 
     analogReadResolution(12);
 
-    // Misma atenuación que firmware-esp32/ y que ../firmware/ (banco de
-    // calibración). Sin fijarla, el ADC queda en el valor por defecto del
-    // core, que puede desplazar las lecturas de sesión a sesión — fue la
-    // causa raíz de que ningún umbral fijo generalizara entre la
-    // calibración de las 07:xx y la de las 15:xx del 2026-08-28. Como este
-    // sketch lee EN VIVO (no contra un CSV), el cambio aquí ya corrige la
-    // lectura hacia adelante; el UMBRAL_NEGRO_GRIS de abajo sigue siendo
-    // el de las corridas viejas y hay que reconfirmarlo con datos nuevos
-    // capturados con esta atenuación fijada.
-    analogSetPinAttenuation(QTR_A_SENSOR, ADC_11db);
-    analogSetPinAttenuation(QTR_B_SENSOR, ADC_11db);
+    // Misma atenuación que firmware-esp32/ y v9. Sin fijarla, el ADC queda en
+    // el valor por defecto del core y las lecturas se desplazan de sesión en
+    // sesión.
+    analogSetPinAttenuation(kPinQtrIzquierdo, ADC_11db);
+    analogSetPinAttenuation(kPinQtrDerecho, ADC_11db);
 
-    qtrA.setTypeAnalog();
-    const uint8_t pinsA[] = { QTR_A_SENSOR };
-    qtrA.setSensorPins(pinsA, 1);
-    qtrA.setSamplesPerSensor(8);
-    qtrA.setEmitterPin(QTR_A_CTRL);
+    pinMode(kPinEmisor, OUTPUT);
+    digitalWrite(kPinEmisor, HIGH);
 
-    qtrB.setTypeAnalog();
-    const uint8_t pinsB[] = { QTR_B_SENSOR };
-    qtrB.setSensorPins(pinsB, 1);
-    qtrB.setSamplesPerSensor(8);
-    qtrB.setEmitterPin(QTR_B_CTRL);
-
-    RgbLed::Setup();
-    RgbLed::SetRaw(0, 0, 0);
+    tira.begin();
+    tira.setBrightness(kBrillo);
+    tira.clear();
+    tira.show();
 
     Serial.println("Listo.\n");
 }
 
-// =====================================================
-// LOOP
-// =====================================================
+void loop() {
+    static uint32_t ultimaLecturaMs = 0, ultimaImpresionMs = 0;
+    const uint32_t ahora = millis();
+    if ((uint32_t)(ahora - ultimaLecturaMs) < kPeriodoLecturaMs) return;
+    ultimaLecturaMs = ahora;
 
-void loop()
-{
-    qtrA.read(valuesA);
-    qtrB.read(valuesB);
+    const Lectura l = Leer();
+    const Estado izq = g_izq.Actualizar(l.offIzq, l.onIzq, kUmbralIzquierdo);
+    const Estado der = g_der.Actualizar(l.offDer, l.onDer, kUmbralDerecho);
+    Mostrar(izq, der);
 
-    const bool esNegro = valuesB[0] > UMBRAL_NEGRO_GRIS;
-
-    RgbLed::SetRaw(esNegro ? 255 : 0, esNegro ? 0 : 255, 0);
-
-    Serial.print(esNegro ? "NEGRO" : "GRIS ");
-    Serial.print("  B=");
-    Serial.print(valuesB[0]);
-    Serial.print("  A=");
-    Serial.print(valuesA[0]);
-    Serial.println("  (A no participa en la decision)");
-
-    delay(200);
+    if ((uint32_t)(ahora - ultimaImpresionMs) >= kPeriodoImpresionMs) {
+        ultimaImpresionMs = ahora;
+        Serial.printf(
+            "izq=%-9s (off=%4u on=%4u dif=%5d) | der=%-9s (off=%4u on=%4u dif=%5d)\n",
+            Nombre(izq), l.offIzq, l.onIzq, (int)l.onIzq - (int)l.offIzq,
+            Nombre(der), l.offDer, l.onDer, (int)l.onDer - (int)l.offDer);
+    }
 }

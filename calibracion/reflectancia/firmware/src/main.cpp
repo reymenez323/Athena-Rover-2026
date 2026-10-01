@@ -6,174 +6,102 @@
 //  No es el firmware del rover (ese vive en firmware-esp32/), pero SÍ corre
 //  sobre el mismo ESP32-S3 — el equipo usa un solo microcontrolador en todo
 //  el proyecto. Este sketch se sube aparte, con nada más conectado que los
-//  sensores bajo prueba (sin motores, sin PCA9685, sin TCS34725, sin LED
-//  RGB), para caracterizarlos antes de fijar umbrales — ver ../README.md
-//  para el procedimiento completo.
+//  sensores bajo prueba (sin motores, sin PCA9685, sin TCS34725), para
+//  caracterizarlos antes de fijar umbrales — ver ../README.md.
 //
-//  Pines: cableado físico actual confirmado por el equipo — sensores en
-//  GPIO1/GPIO2, control compartido en GPIO42. Son los MISMOS GPIO que
-//  QTR_LEFT_OUT/QTR_RIGHT_OUT/QTR_EMITTER_CTRL en
-//  hardware/conexiones-esp32-s3.md (el diseño de vuelo), así que además de
-//  válidos en ADC1 (GPIO1 y GPIO2 lo son) quedan documentados en dos
-//  sitios a la vez.
+//  ACTUALIZADO 2026-10-01: antes leía con QTRSensors en modo normal (emisor
+//  siempre encendido, valor crudo). Eso ya no es lo que hace el robot: desde
+//  el 2026-09-06 v8/v9 miden con rechazo de luz ambiente -- emisor IR
+//  apagado (>= 1 ms) -> lectura "off"; emisor encendido -> lectura "on";
+//  dif = on - off, y es la DIFERENCIA lo que se compara contra el umbral.
+//  Este sketch mide con EXACTAMENTE esa secuencia (la de ReflectanceTask en
+//  v9), y manda off y on de cada sensor para que el script calcule dif y se
+//  vea cómo se separan NEGRO y GRIS con el método real. Si midiera distinto
+//  que el robot, los datos no servirían para fijar umbrales.
 //
-//  AMBOS sensores son QTRX-HD-01A analógicos (no hay ningún sensor en modo
-//  RC conectado ahora mismo). Los nombres "B"/"segundo sensor" en vez de
-//  "RC" son a propósito, para no dar a entender un modo que ya no se usa.
+//  Pines = cableado real (hardware/conexiones-esp32-s3.md): QTR izquierdo
+//  GPIO1, QTR derecho GPIO2, CTRL de los emisores GPIO42 (compartido, se
+//  encienden y apagan juntos). ¡Los QTRX van a 3.3 V, nunca a 5 V!
 //
 //  Protocolo: este sketch no hace nada por su cuenta. Se queda esperando un
 //  comando por serial y responde una lectura cada vez que lo recibe. La
-//  orquestación (cuántos puntos, cuántas muestras, cuánto pausar entre
-//  puntos, y el guardado a CSV) vive en el script de Python de al lado
-//  (../calibrar_ir.py) — si cambias el formato de aquí, cámbialo allá
-//  también.
+//  orquestación (puntos, muestras, pausas, CSV) vive en ../calibrar_ir.py —
+//  si cambias el formato de aquí, cámbialo allá también.
 //
 //    Comando recibido : 'R'
-//    Respuesta enviada : DATA,<analog_a>,<analog_b>,<generic>
+//    Respuesta enviada : DATA,<off_izq>,<on_izq>,<off_der>,<on_der>
 //
 // ===========================================================================
 
 #include <Arduino.h>
-#include <QTRSensors.h>
 
-// =====================================================
-// PIN ASSIGNMENT - ESP32-S3 (mismo chip que firmware-esp32/)
-// =====================================================
-//
-// Cableado real del banco de pruebas. QTR_A_CTRL y QTR_B_CTRL son EL MISMO
-// pin a propósito: las dos luces IR (una por sensor) comparten un solo
-// cable de control físico, así que se encienden y apagan juntas.
+constexpr uint8_t kPinQtrIzquierdo = 1;    // ADC1_CH0
+constexpr uint8_t kPinQtrDerecho   = 2;    // ADC1_CH1
+constexpr uint8_t kPinEmisor       = 42;   // CTRL de los emisores IR, compartido
 
-// QTRX-HD-01A — sensor A
-const uint8_t QTR_A_SENSOR = 1;   // = QTR_LEFT_OUT en hardware/conexiones-esp32-s3.md
-const uint8_t QTR_A_CTRL   = 42;  // = QTR_EMITTER_CTRL en hardware/conexiones-esp32-s3.md
+// Lecturas del ADC que se promedian en CADA medida (off y on, cada una). El
+// ADC del ESP32 es ruidoso; promediar baja ese ruido sin tocar el hardware.
+// Debe ser el MISMO valor que kMuestrasPromedio de ../detector-negro-gris/:
+// si se captura con un promedio y se detecta con otro, el umbral que salga
+// de aquí no vale allá. Cada lectura del ADC cuesta decenas de microsegundos.
+constexpr uint8_t kMuestrasPromedio = 16;
 
-// QTRX-HD-01A — sensor B (mismo modelo que A, pin de control compartido)
-const uint8_t QTR_B_SENSOR = 2;   // = QTR_RIGHT_OUT en hardware/conexiones-esp32-s3.md
-const uint8_t QTR_B_CTRL   = QTR_A_CTRL;  // mismo pin físico que QTR_A_CTRL, ver nota arriba
-
-// Generic IR
-const uint8_t GENERIC_IR = 14;
-
-// =====================================================
-// QTR OBJECTS
-// =====================================================
-
-QTRSensors qtrA;
-QTRSensors qtrB;
-
-uint16_t valuesA[1];
-uint16_t valuesB[1];
-
-// =====================================================
-// FUNCTIONS
-// =====================================================
-
-void readSensors()
-{
-    qtrA.read(valuesA);
-    qtrB.read(valuesB);
-
-    int genericValue = digitalRead(GENERIC_IR);
-
-    /*
-       IMPORTANT:
-       Output format must remain:
-       DATA,analog_a,analog_b,generic
-    */
-    Serial.print("DATA,");
-    Serial.print(valuesA[0]);
-    Serial.print(",");
-    Serial.print(valuesB[0]);
-    Serial.print(",");
-    Serial.println(genericValue);
+uint16_t LeerPromedio(uint8_t pin) {
+    uint32_t suma = 0;
+    for (uint8_t i = 0; i < kMuestrasPromedio; ++i) suma += (uint32_t)analogRead(pin);
+    return (uint16_t)(suma / kMuestrasPromedio);
 }
 
-// =====================================================
-// SETUP
-// =====================================================
+void readSensors() {
+    // Misma secuencia que ReflectanceTask en v9.
+    digitalWrite(kPinEmisor, LOW);
+    delay(2);   // >= 1 ms: apagado real
+    const uint16_t offIzq = LeerPromedio(kPinQtrIzquierdo);
+    const uint16_t offDer = LeerPromedio(kPinQtrDerecho);
 
-void setup()
-{
+    digitalWrite(kPinEmisor, HIGH);
+    delayMicroseconds(200);   // asentar el fototransistor con luz IR estable
+    const uint16_t onIzq = LeerPromedio(kPinQtrIzquierdo);
+    const uint16_t onDer = LeerPromedio(kPinQtrDerecho);
+
+    // IMPORTANTE: el formato de salida debe mantenerse en sincronía con
+    // ../calibrar_ir.py: DATA,off_izq,on_izq,off_der,on_der
+    Serial.print("DATA,");
+    Serial.print(offIzq); Serial.print(",");
+    Serial.print(onIzq);  Serial.print(",");
+    Serial.print(offDer); Serial.print(",");
+    Serial.println(onDer);
+}
+
+void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    // FIX: fijamos explícitamente la resolución del ADC del ESP32
-    // (0-4095). Si no se fija, depende del valor por defecto del
-    // core Arduino-ESP32 instalado, lo que puede cambiar tus datos
-    // de calibración entre versiones del core o entre placas.
+    // Resolución y atenuación fijadas a propósito: sin esto dependen del
+    // valor por defecto del core y las lecturas se desplazan de sesión en
+    // sesión (ver el historial de este archivo). Mismas que firmware-esp32/
+    // y v9.
     analogReadResolution(12);
+    analogSetPinAttenuation(kPinQtrIzquierdo, ADC_11db);
+    analogSetPinAttenuation(kPinQtrDerecho, ADC_11db);
 
-    // FIX: mismo problema que con la resolución, pero con la atenuación.
-    // Sin fijarla explícitamente, dos sesiones de calibración del mismo
-    // sensor sobre la misma superficie dieron lecturas de sensor B
-    // desplazadas ~15-20 cuentas entre sí (ver el análisis que motivó este
-    // cambio: comparando IR_NEGRO/IR_GRIS de 07:xx vs. 15:xx del
-    // 2026-08-28, ningún umbral fijo servía bien para las dos sesiones a
-    // la vez). 11 dB es la misma atenuación que usa firmware-esp32/ para
-    // estos sensores.
-    analogSetPinAttenuation(QTR_A_SENSOR, ADC_11db);
-    analogSetPinAttenuation(QTR_B_SENSOR, ADC_11db);
-
-    // -------------------------
-    // QTRX-HD-01A — sensor A
-    // -------------------------
-    qtrA.setTypeAnalog();
-    const uint8_t pinsA[] = { QTR_A_SENSOR };
-    qtrA.setSensorPins(pinsA, 1);
-    // Average multiple ADC readings
-    qtrA.setSamplesPerSensor(8);
-    qtrA.setEmitterPin(QTR_A_CTRL);
-
-    // -------------------------
-    // QTRX-HD-01A — sensor B
-    // -------------------------
-    qtrB.setTypeAnalog();
-    const uint8_t pinsB[] = { QTR_B_SENSOR };
-    qtrB.setSensorPins(pinsB, 1);
-    // Average multiple ADC readings
-    qtrB.setSamplesPerSensor(8);
-    qtrB.setEmitterPin(QTR_B_CTRL);
-
-    // -------------------------
-    // Generic IR
-    // -------------------------
-    // NOTA: si el módulo IR genérico tiene salida en colector abierto
-    // y "flota" cuando no detecta nada (lecturas inestables), cambia
-    // esto a INPUT_PULLUP. Si el módulo ya trae su propia resistencia
-    // pull-up/pull-down en la placa, deja INPUT como está.
-    pinMode(GENERIC_IR, INPUT);
+    pinMode(kPinEmisor, OUTPUT);
+    digitalWrite(kPinEmisor, HIGH);
 
     Serial.println("READY");
 }
 
-// =====================================================
-// LOOP
-// =====================================================
+void loop() {
+    if (Serial.available()) {
+        const char command = Serial.read();
 
-void loop()
-{
-    /*
-       The ESP32 waits for commands from the computer.
-       Command:
-       R
-       Response:
-       DATA,analog_a,analog_b,generic
-    */
-    if (Serial.available())
-    {
-        char command = Serial.read();
-
-        if (command == 'R')
-        {
+        if (command == 'R') {
             readSensors();
         }
 
-        // FIX: descarta cualquier byte extra (\r, \n, etc.) que haya
-        // llegado junto al comando, para que no quede colgado en el
-        // buffer y se procese por error en el siguiente ciclo.
-        while (Serial.available())
-        {
+        // Descarta cualquier byte extra (\r, \n, etc.) que haya llegado junto
+        // al comando, para que no se procese por error en el siguiente ciclo.
+        while (Serial.available()) {
             Serial.read();
         }
     }
