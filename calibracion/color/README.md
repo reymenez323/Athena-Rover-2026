@@ -11,8 +11,8 @@ El robot tiene 2 TCS34725 (delantero y trasero). La CAPTURA de calibración
 (`firmware/` + `calibrar_color.py`) lee uno a la vez, pero cuál se elige con
 `--sensor DELANTERO`/`--sensor TRASERO` en `calibrar_color.py` (por
 defecto, delantero) — **no hace falta tocar el firmware ni reflashear** para
-cambiar de sensor entre corridas, el ESP32 ya tiene los dos buses I2C
-inicializados siempre y tan solo lee el que se le pida por comando serial
+cambiar de sensor entre corridas, el ESP32 selecciona el canal del
+multiplexor del sensor pedido y tan solo lee ese, por comando serial
 (`'F'`/`'T'`, ver el protocolo en `firmware/src/main.cpp`).
 
 (`detector-tcs/` es distinto: ese sketch lee los DOS sensores a la vez
@@ -44,34 +44,27 @@ hacen falta dos juegos de umbrales (uno por sensor) en `ClassifyColor()`.
 El equipo usa un único microcontrolador en todo el proyecto — el sketch de
 esta carpeta corre sobre el mismo ESP32-S3, no una placa aparte. Lo que sí
 es distinto es el contexto: se sube solo, con los DOS TCS34725 conectados y
-**nada más** (sin motores, sin PCA9685, sin QTR) — los dos buses se
-inicializan siempre aunque solo se lea uno, precisamente para que cambiar
-de sensor no requiera recablear nada.
+**nada más** (sin motores, sin PCA9685, sin QTR) — los dos LED se encienden
+siempre aunque solo se lea uno, para que cambiar de sensor no requiera
+recablear nada.
 
-> ⚠️ **Si el VL53L1X (ToF) sigue físicamente conectado, el sensor
-> DELANTERO deja de leer bien — el trasero no se ve afectado.** El ToF
-> comparte el bus I2C nº0 con el TCS34725 delantero y arranca SIEMPRE
-> respondiendo en la MISMA dirección fija 0x29 (ver la tabla de abajo).
-> Este firmware mantiene su pin XSHUT en reset (`Pins::TOF_XSHUT`, GPIO 3)
-> precisamente para esto, pero si el ToF nunca se desconectó del banco,
-> vale la pena confirmar que ese cable de XSHUT también siga en su lugar.
-> Si el sensor delantero da lecturas erráticas o "no responde" mientras el
-> trasero funciona normal, este es el primer sospechoso.
+> **Cableado (desde 2026-09-27, igual que `standalones/v9-tira-sensor-trasero/`):**
+> los dos TCS34725 van detrás de un multiplexor **TCA9548A en 0x71** (pin A0
+> a 3.3 V; de fábrica, 0x70, choca con el all-call del PCA9685), en el bus
+> I2C nº1. Delantero = canal 0, trasero = canal 1. El firmware selecciona el
+> canal antes de cada lectura. Si ambos dan `ok=0`, el primer sospechoso es
+> el multiplexor: al arrancar imprime un aviso si no responde en 0x71. El
+> ToF (bus 0) ya no interviene en este banco.
 
 | Señal | GPIO | Nota |
 |---|:---:|---|
-| I2C0 SDA (delantero) | **8** | Mismo bus que el PCA9685 en el diseño de vuelo — aquí solo tiene el TCS34725 conectado |
-| I2C0 SCL (delantero) | **9** | |
-| XSHUT del VL53L1X | **3** | Mantenido en LOW (reset) todo el tiempo — este banco no usa el ToF para nada |
-| I2C1 SDA (trasero) | **47** | Bus dedicado |
-| I2C1 SCL (trasero) | **48** | |
+| I2C1 SDA (multiplexor) | **47** | Bus 1; detrás del mux van los dos TCS34725 |
+| I2C1 SCL (multiplexor) | **48** | |
 | LED TCS delantero | **18** | Activo en alto, encendido fijo |
-| LED TCS trasero | **3.3V directo** | Ya no pasa por GPIO — ver `hardware/conexiones-esp32-s3.md`, GPIO21 quedó libre para el switch de equipo |
+| LED TCS trasero | **41** | Activo en alto, encendido fijo (GPIO liberado por la tira WS2812) |
 
 Los dos TCS34725 tienen la MISMA dirección I2C fija (0x29) y no se puede
-cambiar — por eso van en buses separados, igual que en `firmware-esp32/`.
-El VL53L1X, que comparte el bus 0 con el delantero en el robot real,
-**también** arranca en esa misma dirección — de ahí la fila de XSHUT.
+cambiar — el multiplexor es lo que los separa.
 
 ## Cinco partes
 

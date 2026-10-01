@@ -3,9 +3,17 @@
 //  Athena Rover 2026 · Retos del Rover H07 · INTEC · Reymildo & Montse
 // ===========================================================================
 //
-//  Lee el TCS34725 DELANTERO (único que queda conectado) y clasifica entre
+//  Lee los dos TCS34725 (delantero y trasero) y clasifica cada uno entre
 //  AZUL / ROJO / AMARILLO / NEGRO / GRIS. Imprime el resultado por consola
-//  cada 200 ms y lo muestra en el LED RGB de equipo.
+//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED: los 4 de la
+//  izquierda (LED 0-3) = sensor DELANTERO, los 4 de la derecha (LED 4-7) =
+//  sensor TRASERO. Cada mitad: ROJO rojo, AZUL azul, AMARILLO amarillo,
+//  NEGRO morado, GRIS apagada (y apagada también si ese sensor no lee).
+//
+//  ACTUALIZADO 2026-10-01: los sensores ahora están detrás del multiplexor
+//  TCA9548A (0x71, canal 0 delantero, canal 1 trasero), igual que en standalones/v9-tira-sensor-trasero/
+//  y ../firmware/; y el LED RGB de 3 canales se reemplazó por la tira (el
+//  GPIO 39 es su DATA; el 38 y el 41 ya no son del RGB).
 //
 //  ACTUALIZADO 2026-09-09 al cableado real vigente (ver
 //  ../../tof/README.md, "RESUELTO 2026-09-08 (de verdad)"): el TCS34725
@@ -15,13 +23,17 @@
 //  archivo antes leía dos sensores (delantero en bus0, trasero en bus1);
 //  ahora solo existe uno.
 //
+//  ⚠️ El TRASERO tiene sus propios umbrales (kUmbralTrasero), calibrados
+//  2026-10-01 solo para GRIS y AZUL; ROJO/AMARILLO/NEGRO usan aún los del
+//  delantero, sin medir.
+//
 //  UMBRALES RECALIBRADOS 2026-08-28 contra 970 muestras reales del sensor
 //  DELANTERO (ver ../analizar_umbrales_tcs.py y el comentario junto a
-//  Umbral:: más abajo para el detalle completo, con matriz de confusión).
+//  kUmbralDelantero más abajo para el detalle completo, con matriz de confusión).
 //  Error total 14.3% (era 58.1% con los umbrales originales sin calibrar).
 //  ⚠️ NEGRO es la clase que peor le va (58.5% de acierto) — es un límite
 //  estructural de esta clasificación por umbrales encadenados, no algo que
-//  se arregle recalibrando de nuevo; ver la explicación junto a Umbral::.
+//  se arregle recalibrando de nuevo; ver la explicación junto a kUmbralDelantero.
 //
 //  Esos umbrales se calibraron con el delantero en su bus VIEJO (bus0). Si
 //  el bus nuevo (bus1, junto al PCA9685) le cambia el ruido eléctrico
@@ -38,29 +50,40 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <Adafruit_NeoPixel.h>
 
 // ===========================================================================
 //  PINES — bus I2C nº1 (GPIO47/48), igual que ../../tof/firmware/src/main.cpp
 // ===========================================================================
 
 namespace Pins {
-    // TCS34725 delantero: bus I2C nº1, junto al PCA9685 (0x40, sin choque
-    // con 0x29). El bus I2C nº0 (GPIO8/9) queda para el VL53L1X solo -- este
-    // sketch no lo toca porque no necesita distancia, solo color.
+    // Bus I2C nº1 (GPIO47/48): multiplexor TCA9548A con el TCS34725 detrás.
+    // El bus I2C nº0 (GPIO8/9) queda para el VL53L1X solo -- este sketch no
+    // lo toca porque no necesita distancia, solo color.
     constexpr uint8_t I2C1_SDA = 47;
     constexpr uint8_t I2C1_SCL = 48;
 
     constexpr uint8_t TCS_LED_FRONT = 18;
+    constexpr uint8_t TCS_LED_REAR  = 41;   // igual que en v9
 
-    constexpr uint8_t RGB_R = 39;
-    constexpr uint8_t RGB_G = 38;
-    // GPIO 41, NO el 3: el diseño final le cedió el 3 al XSHUT del VL53L1X
-    // (ver hardware/conexiones-esp32-s3.md, sección del LED RGB).
-    constexpr uint8_t RGB_B = 41;
+    constexpr uint8_t TIRA_DATA = 39;   // DATA de la tira WS2812B
 }
 
 namespace I2CAddr {
     constexpr uint8_t TCS34725 = 0x29;   // fija, no se puede cambiar
+    // TCA9548A con A0 a 3.3V: de fábrica (0x70) choca con el all-call del PCA9685.
+    constexpr uint8_t MULTIPLEXOR = 0x71;
+}
+
+constexpr uint8_t kMuxCanalDelantero = 0;
+constexpr uint8_t kMuxCanalTrasero   = 1;
+
+// Un solo registro: escribir un byte con el bit del canal en 1 lo activa y
+// apaga los demás. Copia de Multiplexor:: de v9.
+bool SeleccionarCanalMux(TwoWire &bus, uint8_t canal) {
+    bus.beginTransmission(I2CAddr::MULTIPLEXOR);
+    bus.write((uint8_t)(1u << canal));
+    return bus.endTransmission() == 0;
 }
 
 // ===========================================================================
@@ -183,17 +206,33 @@ const char *LabelName(ColorLabel l) {
 // tener una distribución de color distinta (LED de iluminación propio,
 // posición distinta en el chasis). Aplicarle un umbral ajustado para el
 // delantero sería resolver a ciegas un problema que no se midió.
-namespace Umbral {
-    constexpr uint16_t CLEAR_NEGRO_MAX = 314;   // clear < esto -> NEGRO, sin mirar el resto
-    constexpr float ROJO_R_MIN     = 0.450f;
-    constexpr float ROJO_G_MAX     = 0.312f;
-    constexpr float ROJO_B_MAX     = 0.300f;
-    constexpr float AZUL_B_MIN     = 0.206f;
-    constexpr float AZUL_R_MAX     = 0.390f;
-    constexpr float AMARILLO_R_MIN = 0.420f;
-    constexpr float AMARILLO_G_MIN = 0.200f;
-    constexpr float AMARILLO_B_MAX = 0.140f;
-}
+struct Umbrales {
+    uint16_t clearNegroMax;   // clear < esto -> NEGRO, sin mirar el resto
+    float rojoRMin, rojoGMax, rojoBMax;
+    float azulBMin, azulRMax;
+    float amarilloRMin, amarilloGMin, amarilloBMax;
+};
+
+// DELANTERO: los de arriba (2026-09-07).
+constexpr Umbrales kUmbralDelantero = {
+    314, 0.450f, 0.312f, 0.300f, 0.206f, 0.390f, 0.420f, 0.200f, 0.140f
+};
+
+// TRASERO, 2026-10-01: SOLO se calibraron GRIS (240 muestras, 4 puntos) y
+// AZUL (100 muestras, 1 punto) -- ROJO, AMARILLO y NEGRO siguen con los
+// valores del delantero, sin medir. Con los del delantero el trasero fallaba
+// 137/340 (40%): 136 de 240 muestras de GRIS salían AZUL, porque el b/c del
+// GRIS trasero (mediana 0.211, máx 0.260) queda pegado a AZUL_B_MIN=0.206.
+// El AZUL trasero tiene b/c entre 0.299 y 0.366, así que se puso el umbral en
+// el punto medio de la brecha: AZUL_B_MIN = 0.28 (0 errores GRIS/AZUL sobre
+// esas muestras; ver el reporte en el commit/README).
+// ⚠️ La muestra de AZUL es de un solo punto: conviene capturar más puntos
+// (distinta distancia/luz) antes de darlo por bueno. Además 1 muestra de GRIS
+// (clear=276) cae bajo CLEAR_NEGRO_MAX y sale NEGRO; no se toca sin tener
+// datos de NEGRO trasero.
+constexpr Umbrales kUmbralTrasero = {
+    314, 0.450f, 0.312f, 0.300f, 0.280f, 0.390f, 0.420f, 0.200f, 0.140f
+};
 
 // Normaliza cada canal contra "clear" (luz total) antes de comparar, para
 // que la decisión no dependa del brillo absoluto — mismo razonamiento que
@@ -201,85 +240,61 @@ namespace Umbral {
 // división da NaN/Inf; todas las comparaciones con NaN son falsas, así que
 // esto cae de forma segura en GRIS sin crashear — mismo comportamiento sin
 // resolver que ya tiene firmware-esp32/, no es un bug nuevo de este archivo.
-ColorLabel Clasificar(const Tcs34725::Rgbc &s) {
-    if (s.c < Umbral::CLEAR_NEGRO_MAX) return ColorLabel::NEGRO;
+ColorLabel Clasificar(const Tcs34725::Rgbc &s, const Umbrales &u) {
+    if (s.c < u.clearNegroMax) return ColorLabel::NEGRO;
 
     const float total = (float)s.c;
     const float r = (float)s.r / total;
     const float g = (float)s.g / total;
     const float b = (float)s.b / total;
 
-    if (r > Umbral::ROJO_R_MIN && g < Umbral::ROJO_G_MAX && b < Umbral::ROJO_B_MAX) return ColorLabel::ROJO;
-    if (b > Umbral::AZUL_B_MIN && r < Umbral::AZUL_R_MAX) return ColorLabel::AZUL;
-    if (r > Umbral::AMARILLO_R_MIN && g > Umbral::AMARILLO_G_MIN && b < Umbral::AMARILLO_B_MAX) return ColorLabel::AMARILLO;
+    if (r > u.rojoRMin && g < u.rojoGMax && b < u.rojoBMax) return ColorLabel::ROJO;
+    if (b > u.azulBMin && r < u.azulRMax) return ColorLabel::AZUL;
+    if (r > u.amarilloRMin && g > u.amarilloGMin && b < u.amarilloBMax) return ColorLabel::AMARILLO;
 
     return ColorLabel::GRIS;   // ni negro, ni rojo, ni azul, ni amarillo -> piso/gris
 }
 
 // ===========================================================================
-//  LED RGB — muestra la clasificación del sensor delantero
+//  TIRA WS2812B — muestra la clasificación del sensor delantero
 // ===========================================================================
-//
-// POLARIDAD CONFIRMADA con el LED físico: es CÁTODO COMÚN, o sea duty alto
-// = canal más brillante. Mismo valor que firmware-esp32/. La constante se
-// conserva por si algún día se cambia el LED por uno de ánodo común.
 
-constexpr bool kCommonAnode = false;
+constexpr uint8_t kBrillo = 40;   // 0-255. Mismo valor que pruebas-platformio/10-tira-ws2812 (~100 mA toda la tira)
 
-namespace Pwm {
-    constexpr uint32_t RGB_FREQ_HZ    = 5000;
-    constexpr uint8_t  RGB_RESOLUTION = 8;
-}
+Adafruit_NeoPixel tira(8, Pins::TIRA_DATA, NEO_GRB + NEO_KHZ800);
 
-void PwmAttach(uint8_t pin, uint8_t channel, uint32_t freqHz, uint8_t resolution) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    (void)channel;
-    ledcAttach(pin, freqHz, resolution);
-#else
-    ledcSetup(channel, freqHz, resolution);
-    ledcAttachPin(pin, channel);
-#endif
-}
-
-void PwmWrite(uint8_t pin, uint8_t channel, uint32_t duty) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    (void)channel;
-    ledcWrite(pin, duty);
-#else
-    (void)pin;
-    ledcWrite(channel, duty);
-#endif
-}
-
-namespace RgbLed {
-    constexpr uint8_t CH_R = 0;
-    constexpr uint8_t CH_G = 1;
-    constexpr uint8_t CH_B = 2;
-
+namespace Tira {
     void Setup() {
-        PwmAttach(Pins::RGB_R, CH_R, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
-        PwmAttach(Pins::RGB_G, CH_G, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
-        PwmAttach(Pins::RGB_B, CH_B, Pwm::RGB_FREQ_HZ, Pwm::RGB_RESOLUTION);
+        tira.begin();
+        tira.setBrightness(kBrillo);
+        tira.clear();
+        tira.show();
     }
 
-    void SetRaw(uint8_t r, uint8_t g, uint8_t b) {
-        if (kCommonAnode) { r = 255 - r; g = 255 - g; b = 255 - b; }
-        PwmWrite(Pins::RGB_R, CH_R, r);
-        PwmWrite(Pins::RGB_G, CH_G, g);
-        PwmWrite(Pins::RGB_B, CH_B, b);
+    void Apagar() {
+        tira.clear();
+        tira.show();
     }
 
-    // Colores elegidos para que se reconozcan a simple vista, no son la
-    // paleta de equipo (esa es cosa de LedTask en firmware-esp32/).
-    void ApplyLabel(ColorLabel l) {
+    uint32_t ColorDe(ColorLabel l) {
         switch (l) {
-            case ColorLabel::ROJO:     SetRaw(255, 0, 0);   break;
-            case ColorLabel::AZUL:     SetRaw(0, 0, 255);   break;
-            case ColorLabel::AMARILLO: SetRaw(255, 190, 0); break;
-            case ColorLabel::NEGRO:    SetRaw(0, 0, 0);     break;
+            case ColorLabel::ROJO:     return tira.Color(255, 0, 0);
+            case ColorLabel::AZUL:     return tira.Color(0, 0, 255);
+            case ColorLabel::AMARILLO: return tira.Color(255, 190, 0);
+            case ColorLabel::NEGRO:    return tira.Color(160, 0, 255);   // morado, como "borde detectado" en v9
             case ColorLabel::GRIS:
-            default:                   SetRaw(40, 40, 40);  break;   // blanco tenue = "piso/gris"
+            default:                   return 0;                         // piso: sin señal
         }
+    }
+
+    // LED 0-3 (izquierda) = delantero, LED 4-7 (derecha) = trasero. Un sensor
+    // que no leyó (valid=false) deja su mitad apagada.
+    void Mostrar(bool frontValid, ColorLabel front, bool rearValid, ColorLabel rear) {
+        const uint32_t cf = frontValid ? ColorDe(front) : 0;
+        const uint32_t cr = rearValid  ? ColorDe(rear)  : 0;
+        for (uint8_t i = 0; i < 4; i++) tira.setPixelColor(i, cf);
+        for (uint8_t i = 4; i < 8; i++) tira.setPixelColor(i, cr);
+        tira.show();
     }
 }
 
@@ -288,26 +303,44 @@ namespace RgbLed {
 // ===========================================================================
 
 bool g_frontOk = false;
+bool g_rearOk  = false;
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\nDetector TCS34725 - clasificador de color (banco)");
-    Serial.println("Solo sensor delantero (bus I2C 1, GPIO47/48) -- trasero desconectado.");
-    Serial.println("Umbrales recalibrados 2026-08-28 (delantero) -- NEGRO es el mas debil, ver encabezado.\n");
+    Serial.println("Sensores detras del multiplexor TCA9548A (0x71, bus I2C 1, GPIO47/48): delantero canal 0, trasero canal 1.");
+    Serial.println("Tira WS2812B (GPIO 39): LED 0-3 = delantero, LED 4-7 = trasero. ROJO/AZUL/AMARILLO en su color, NEGRO morado, GRIS apagado.");
+    Serial.println("Umbrales por sensor; el trasero solo tiene GRIS y AZUL calibrados. NEGRO es el mas debil.\n");
 
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);
 
     pinMode(Pins::TCS_LED_FRONT, OUTPUT);
     digitalWrite(Pins::TCS_LED_FRONT, HIGH);
+    pinMode(Pins::TCS_LED_REAR, OUTPUT);
+    digitalWrite(Pins::TCS_LED_REAR, HIGH);
 
-    RgbLed::Setup();
-    RgbLed::SetRaw(0, 0, 0);
+    Tira::Setup();
 
-    g_frontOk = Tcs34725::Init(Wire1);
-    if (!g_frontOk) Serial.println("[Setup] TCS34725 delantero no responde (bus I2C 1).");
+    g_frontOk = SeleccionarCanalMux(Wire1, kMuxCanalDelantero) && Tcs34725::Init(Wire1);
+    g_rearOk  = SeleccionarCanalMux(Wire1, kMuxCanalTrasero)   && Tcs34725::Init(Wire1);
+    if (!g_frontOk) Serial.println("[Setup] TCS34725 delantero no responde (multiplexor 0x71 canal 0 / bus I2C 1).");
+    if (!g_rearOk)  Serial.println("[Setup] TCS34725 trasero no responde (multiplexor 0x71 canal 1 / bus I2C 1).");
 
     Serial.println("Listo.\n");
+}
+
+// Lee un sensor por su canal del multiplexor, reintentando su init si estaba
+// caído. Devuelve true si hubo lectura válida (y la clasifica en `label`).
+bool LeerSensor(uint8_t canal, bool &ok, Tcs34725::Rgbc &rgbc, const Umbrales &umbrales, ColorLabel &label) {
+    if (!ok) ok = SeleccionarCanalMux(Wire1, canal) && Tcs34725::Init(Wire1);
+    if (ok && SeleccionarCanalMux(Wire1, canal) && Tcs34725::Read(Wire1, rgbc)) {
+        label = Clasificar(rgbc, umbrales);
+        return true;
+    }
+    ok = false;
+    rgbc = Tcs34725::Rgbc{};
+    return false;
 }
 
 // ===========================================================================
@@ -315,32 +348,26 @@ void setup() {
 // ===========================================================================
 
 void loop() {
-    // Reintento perezoso del sensor si no respondió al arrancar, sin
-    // bloquear el resto — mismo patrón que ColorSensorTask en firmware-esp32/.
+    // Reintento perezoso de un sensor caído a 1 Hz, sin bloquear el resto —
+    // mismo patrón que ColorSensorTask en firmware-esp32/.
     static uint32_t lastRetryMs = 0;
     const uint32_t now = millis();
-    if (!g_frontOk && (uint32_t)(now - lastRetryMs) > 1000) {
-        lastRetryMs = now;
-        g_frontOk = Tcs34725::Init(Wire1);
-    }
+    const bool retryNow = (uint32_t)(now - lastRetryMs) > 1000;
+    if (retryNow) lastRetryMs = now;
 
-    Tcs34725::Rgbc front;
-    bool frontValid = false;
-    ColorLabel frontLabel = ColorLabel::GRIS;
+    Tcs34725::Rgbc front, rear;
+    ColorLabel frontLabel = ColorLabel::GRIS, rearLabel = ColorLabel::GRIS;
+    bool frontValid = false, rearValid = false;
 
-    if (g_frontOk && Tcs34725::Read(Wire1, front)) {
-        frontLabel = Clasificar(front);
-        frontValid = true;
-    } else {
-        g_frontOk = false;
-    }
+    if (g_frontOk || retryNow) frontValid = LeerSensor(kMuxCanalDelantero, g_frontOk, front, kUmbralDelantero, frontLabel);
+    if (g_rearOk  || retryNow) rearValid  = LeerSensor(kMuxCanalTrasero,   g_rearOk,  rear,  kUmbralTrasero, rearLabel);
 
-    RgbLed::SetRaw(0, 0, 0);
-    if (frontValid) RgbLed::ApplyLabel(frontLabel);
+    Tira::Mostrar(frontValid, frontLabel, rearValid, rearLabel);
 
     Serial.printf(
-        "delantero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s\n",
-        frontValid ? LabelName(frontLabel) : "?", front.c, front.r, front.g, front.b, frontValid ? "" : " SIN LEER");
+        "delantero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s | trasero=%-8s (c=%5u r=%5u g=%5u b=%5u)%s\n",
+        frontValid ? LabelName(frontLabel) : "?", front.c, front.r, front.g, front.b, frontValid ? "" : " SIN LEER",
+        rearValid  ? LabelName(rearLabel)  : "?", rear.c,  rear.r,  rear.g,  rear.b,  rearValid  ? "" : " SIN LEER");
 
     delay(200);
 }

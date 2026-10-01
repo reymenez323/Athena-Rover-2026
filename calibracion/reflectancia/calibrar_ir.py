@@ -2,10 +2,11 @@
 """Calibración de sensores IR — Athena Rover 2026.
 
 Coordina con el firmware de ``firmware/`` (mismo ESP32-S3 del rover, pero
-subido aparte con solo los sensores bajo prueba conectados — 2x QTRX-HD-01A
-analógicos más un módulo IR genérico): manda el comando ``'R'`` por serial,
-recibe ``DATA,<analog_a>,<analog_b>,<generic>``, y guarda las muestras en un
-.csv dentro de ``data_logs/``.
+subido aparte con solo los sensores bajo prueba conectados — los 2 QTRX-HD-01A):
+manda el comando ``'R'`` por serial, recibe
+``DATA,<off_izq>,<on_izq>,<off_der>,<on_der>`` (emisor apagado / encendido,
+igual que el robot) y guarda las muestras en un .csv dentro de ``data_logs/``,
+con la diferencia ``dif = on - off`` ya calculada para cada sensor.
 
 Uso::
 
@@ -51,18 +52,21 @@ def esperar_ready(ser: "serial.Serial", timeout_s: float = 5.0) -> None:
     )
 
 
-def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int, int]:
-    """Manda el comando 'R' y parsea la respuesta DATA,analog_a,analog_b,generic."""
+def leer_muestra(ser: "serial.Serial", timeout_s: float = 2.0) -> tuple[int, int, int, int]:
+    """Manda el comando 'R' y parsea DATA,off_izq,on_izq,off_der,on_der."""
     ser.write(b"R")
     limite = time.monotonic() + timeout_s
     while time.monotonic() < limite:
         linea = ser.readline().decode(errors="ignore").strip()
         if linea.startswith("DATA,"):
             partes = linea.split(",")
-            if len(partes) != 4:
+            if len(partes) != 5:
                 continue  # línea corrupta o de sobra, se ignora y se sigue leyendo
-            _, analog_a, analog_b, generic = partes
-            return int(analog_a), int(analog_b), int(generic)
+            try:
+                _, off_izq, on_izq, off_der, on_der = partes
+                return int(off_izq), int(on_izq), int(off_der), int(on_der)
+            except ValueError:
+                continue
     raise TimeoutError("El ESP32 no respondió a 'R' a tiempo.")
 
 
@@ -148,7 +152,8 @@ def main() -> int:
         f.write(f"# Sample interval: {args.intervalo_ms} ms\n")
         f.write(f"# Movement time between points: {args.pausa_s:.0f} s\n")
         writer = csv.writer(f)
-        writer.writerow(["surface", "point", "sample", "analog_QTRX_A", "analog_QTRX_B", "generic_IR"])
+        writer.writerow(["surface", "point", "sample",
+                         "off_izq", "on_izq", "dif_izq", "off_der", "on_der", "dif_der"])
         f.flush()
 
         capturadas = 0
@@ -157,11 +162,14 @@ def main() -> int:
             print(f"Punto {punto}/{args.puntos} — capturando {args.muestras} muestras...")
 
             for muestra in range(1, args.muestras + 1):
-                analog_a, analog_b, generic = leer_muestra(ser)
-                writer.writerow([superficie, punto, muestra, analog_a, analog_b, generic])
+                off_izq, on_izq, off_der, on_der = leer_muestra(ser)
+                dif_izq = on_izq - off_izq
+                dif_der = on_der - off_der
+                writer.writerow([superficie, punto, muestra,
+                                 off_izq, on_izq, dif_izq, off_der, on_der, dif_der])
                 f.flush()  # una muestra por línea en disco, no se pierde nada si algo falla a medio camino
                 capturadas += 1
-                print(f"\r  [{capturadas}/{total_muestras}] analog_a={analog_a} analog_b={analog_b} generic={generic}   ", end="", flush=True)
+                print(f"\r  [{capturadas}/{total_muestras}] dif_izq={dif_izq:5d} dif_der={dif_der:5d}   ", end="", flush=True)
                 time.sleep(args.intervalo_ms / 1000.0)
             print()
 
