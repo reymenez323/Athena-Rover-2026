@@ -1193,6 +1193,20 @@ void TofSensorTask(void *) {
 // el mejor caso de gris (~76), con margen generoso a los dos lados.
 constexpr int16_t kBordeRestadoUmbral = 40;
 
+// Mejoras solo por software (probadas en banco 2026-10-01):
+//  - Cada lectura (apagado y prendido) es el promedio de varias lecturas del
+//    ADC, porque el ADC del ESP32 es ruidoso.
+//  - Histéresis: ya en NEGRO, solo vuelve a GRIS con |restado| > umbral +
+//    kBordeHisteresis, para que no parpadee justo en el umbral.
+constexpr uint8_t kQtrMuestrasPromedio = 16;
+constexpr int16_t kBordeHisteresis     = 10;
+
+uint16_t QtrLeerPromedio(uint8_t pin) {
+    uint32_t suma = 0;
+    for (uint8_t i = 0; i < kQtrMuestrasPromedio; ++i) suma += (uint32_t)analogRead(pin);
+    return (uint16_t)(suma / kQtrMuestrasPromedio);
+}
+
 void ReflectanceTask(void *) {
     analogReadResolution(12);
 
@@ -1206,17 +1220,18 @@ void ReflectanceTask(void *) {
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::REFLECTANCE);
     TickType_t last_wake = xTaskGetTickCount();
+    bool right_prev = false;   // estado anterior, para la histéresis
 
     for (;;) {
         digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
         delay(2);   // >= 1 ms: apagado real, no un pulso de dimming
-        const uint16_t left_ambiente  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-        const uint16_t right_ambiente = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+        const uint16_t left_ambiente  = QtrLeerPromedio(Pins::QTR_LEFT_OUT);
+        const uint16_t right_ambiente = QtrLeerPromedio(Pins::QTR_RIGHT_OUT);
 
         digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
         delayMicroseconds(200);   // asentar el fototransistor con luz IR ya estable
-        const uint16_t left_raw  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-        const uint16_t right_raw = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+        const uint16_t left_raw  = QtrLeerPromedio(Pins::QTR_LEFT_OUT);
+        const uint16_t right_raw = QtrLeerPromedio(Pins::QTR_RIGHT_OUT);
 
         ReflectanceReading reading;
         reading.timestamp_ms = millis();
@@ -1224,7 +1239,8 @@ void ReflectanceTask(void *) {
         reading.right_raw    = right_raw;
 
         const int16_t right_restado = (int16_t)((int32_t)right_raw - (int32_t)right_ambiente);
-        reading.right_on_line = abs(right_restado) < kBordeRestadoUmbral;
+        reading.right_on_line = abs(right_restado) < kBordeRestadoUmbral + (right_prev ? kBordeHisteresis : 0);
+        right_prev = reading.right_on_line;
 
         // IZQUIERDO: sensor confirmado roto en banco -- pegado en 4095 sin
         // importar superficie NI estado del emisor (restado ronda 0

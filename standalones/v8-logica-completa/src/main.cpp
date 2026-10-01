@@ -363,6 +363,8 @@ constexpr bool     kProteccionBordeActiva = false;  // interruptor general. DESA
 constexpr bool     kQtrIzquierdoActivo    = false;  // el izquierdo está pegado al tope (sin señal útil, diagnosticado 2026-09-24): NO activar hasta repararlo
 constexpr int16_t  kBordeRestadoUmbral    = 40;     // |dif| menor que esto = negro (negro ~1-8, gris ~76-87 medido en banco)
 constexpr uint16_t kQtrTopeAdc            = 4085;   // off y on >= esto = sensor pegado al tope: NO cuenta como negro (sería un falso borde)
+constexpr uint8_t  kQtrMuestrasPromedio  = 16;     // lecturas del ADC que se promedian en CADA off y CADA on (el ADC del ESP32 es ruidoso). Igual que calibracion/reflectancia/. Probado en banco 2026-10-01
+constexpr int16_t  kBordeHisteresis       = 10;     // una vez en NEGRO, vuelve a GRIS solo con |dif| > kBordeRestadoUmbral + esto (evita parpadeo justo en el umbral)
 constexpr uint32_t kBordeDebounceMs       = 50;     // el borde debe verse sostenido este tiempo antes de reaccionar (filtra ruido)
 constexpr uint32_t kBordeParadaMs         = 200;    // parada total antes de retroceder
 constexpr uint32_t kBordeRetrocesoMs      = 300;    // retroceso corto (no hay sensor trasero: por eso corto y limitado)
@@ -1261,6 +1263,13 @@ void TofSensorTask(void *) {
 // solo lo atenúa) -> lectura off; ENCENDIDO -> lectura on; dif = on - off.
 // Un sensor con off y on pegados al tope del ADC no da información: se marca
 // pegado y NO cuenta como negro (leería dif=0 = negro todo el tiempo).
+// Promedio de varias lecturas del ADC de un pin (ver Mission::kQtrMuestrasPromedio).
+uint16_t QtrLeerPromedio(uint8_t pin) {
+    uint32_t suma = 0;
+    for (uint8_t i = 0; i < Mission::kQtrMuestrasPromedio; ++i) suma += (uint32_t)analogRead(pin);
+    return (uint16_t)(suma / Mission::kQtrMuestrasPromedio);
+}
+
 void ReflectanceTask(void *) {
     analogReadResolution(12);
     analogSetPinAttenuation(Pins::QTR_LEFT_OUT, ADC_11db);
@@ -1271,17 +1280,18 @@ void ReflectanceTask(void *) {
 
     const TickType_t period = pdMS_TO_TICKS(TaskPeriodMs::REFLECTANCE);
     TickType_t last_wake = xTaskGetTickCount();
+    bool right_prev = false, left_prev = false;   // estado anterior, para la histéresis
 
     for (;;) {
         digitalWrite(Pins::QTR_EMITTER_CTRL, LOW);
         delay(2);   // >= 1 ms: apagado real
-        const uint16_t left_off  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-        const uint16_t right_off = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+        const uint16_t left_off  = QtrLeerPromedio(Pins::QTR_LEFT_OUT);
+        const uint16_t right_off = QtrLeerPromedio(Pins::QTR_RIGHT_OUT);
 
         digitalWrite(Pins::QTR_EMITTER_CTRL, HIGH);
         delayMicroseconds(200);   // asentar el fototransistor con luz IR estable
-        const uint16_t left_on  = (uint16_t)analogRead(Pins::QTR_LEFT_OUT);
-        const uint16_t right_on = (uint16_t)analogRead(Pins::QTR_RIGHT_OUT);
+        const uint16_t left_on  = QtrLeerPromedio(Pins::QTR_LEFT_OUT);
+        const uint16_t right_on = QtrLeerPromedio(Pins::QTR_RIGHT_OUT);
 
         ReflectanceReading r;
         r.timestamp_ms  = millis();
@@ -1289,9 +1299,14 @@ void ReflectanceTask(void *) {
         r.right_restado = (int16_t)((int32_t)right_on - (int32_t)right_off);
         r.left_pegado   = left_off  >= Mission::kQtrTopeAdc && left_on  >= Mission::kQtrTopeAdc;
         r.right_pegado  = right_off >= Mission::kQtrTopeAdc && right_on >= Mission::kQtrTopeAdc;
-        r.right_on_line = !r.right_pegado && abs(r.right_restado) < Mission::kBordeRestadoUmbral;
+        // Histéresis: ya en NEGRO, el umbral para seguir en NEGRO es mayor.
+        const int16_t umbral_der = Mission::kBordeRestadoUmbral + (right_prev ? Mission::kBordeHisteresis : 0);
+        const int16_t umbral_izq = Mission::kBordeRestadoUmbral + (left_prev  ? Mission::kBordeHisteresis : 0);
+        r.right_on_line = !r.right_pegado && abs(r.right_restado) < umbral_der;
         r.left_on_line  = Mission::kQtrIzquierdoActivo && !r.left_pegado &&
-                          abs(r.left_restado) < Mission::kBordeRestadoUmbral;
+                          abs(r.left_restado) < umbral_izq;
+        right_prev = r.right_on_line;
+        left_prev  = r.left_on_line;
 
         PushDropOldest(g_reflectQueue, r);
 
