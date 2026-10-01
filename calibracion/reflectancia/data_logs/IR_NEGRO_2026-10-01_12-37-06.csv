@@ -1,0 +1,18 @@
+# ROVER IR SENSOR CHARACTERIZATION
+# Date: 2026-10-01 12:37:06.333900
+# Surface: NEGRO
+# Number of points: 10
+# Samples per point: 1
+# Sample interval: 250 ms
+# Movement time between points: 10 s
+surface,point,sample,analog_QTRX_A,analog_QTRX_B,generic_IR
+NEGRO,1,1,3051,2921,0
+NEGRO,2,1,2949,2903,0
+NEGRO,3,1,3721,2906,0
+NEGRO,4,1,3401,2912,0
+NEGRO,5,1,3424,2891,0
+NEGRO,6,1,3537,2915,0
+NEGRO,7,1,3290,2921,0
+NEGRO,8,1,3777,2910,0
+NEGRO,9,1,3505,2922,0
+NEGRO,10,1,3636,2928,0
