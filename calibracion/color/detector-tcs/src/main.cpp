@@ -5,10 +5,15 @@
 //
 //  Lee los dos TCS34725 (delantero y trasero) y clasifica cada uno entre
 //  AZUL / ROJO / AMARILLO / NEGRO / GRIS. Imprime el resultado por consola
-//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED: los 4 de la
-//  izquierda (LED 0-3) = sensor DELANTERO, los 4 de la derecha (LED 4-7) =
-//  sensor TRASERO. Cada mitad: ROJO rojo, AZUL azul, AMARILLO amarillo,
-//  NEGRO morado, GRIS apagada (y apagada también si ese sensor no lee).
+//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED, en los MISMOS
+//  índices y MISMOS colores que usará en la misión de verdad
+//  (Tira::DibujarMapa() / ColorARgb() en standalones/v9-tira-sensor-trasero/):
+//  LED 3 = delantero, LED 4 = trasero. ROJO rojo, AZUL azul, AMARILLO
+//  amarillo, GRIS (piso) gris tenue, NEGRO (o sensor sin leer) apagado. Los
+//  demás LED (0,1,2,5,6,7 -- equipo/QTR/cámara-ToF/gripper/fase) no
+//  aplican a este banco y quedan apagados -- ACTUALIZADO 2026-10-01 a
+//  pedido de Montse: antes usaba 4 LED por sensor y morado para NEGRO, un
+//  mapa propio de este banco que no coincidía con lo que se ve en pista.
 //
 //  ACTUALIZADO 2026-10-01: los sensores ahora están detrás del multiplexor
 //  TCA9548A (0x71, canal 0 delantero, canal 1 trasero), igual que en standalones/v9-tira-sensor-trasero/
@@ -227,11 +232,26 @@ constexpr Umbrales kUmbralDelantero = {
 // el punto medio de la brecha: AZUL_B_MIN = 0.28 (0 errores GRIS/AZUL sobre
 // esas muestras; ver el reporte en el commit/README).
 // ⚠️ La muestra de AZUL es de un solo punto: conviene capturar más puntos
-// (distinta distancia/luz) antes de darlo por bueno. Además 1 muestra de GRIS
-// (clear=276) cae bajo CLEAR_NEGRO_MAX y sale NEGRO; no se toca sin tener
-// datos de NEGRO trasero.
+// (distinta distancia/luz) antes de darlo por bueno.
+//
+// NEGRO trasero medido 2026-10-01 (480 muestras, 4 puntos, con
+// calibrar_color.py --sensor TRASERO --superficie NEGRO): clear
+// min=60 mediana=288 p95=536 max=804. Hay rachas de muestras altas (hasta
+// 400-600) hacia el final de cada punto de 30 s -- es la mano aflojando el
+// contacto con el negro, no ruido del sensor; en la próxima captura, menos
+// muestras por punto (40-50) reduce esa ventana.
+//
+// CLEAR_NEGRO_MAX recalibrado contra NEGRO (480 muestras) + GRIS (240
+// muestras) del trasero, barriendo el umbral y minimizando errores totales:
+//   314 (el del delantero, SIN CALIBRAR para el trasero): NEGRO 41.2% mal, GRIS 0.4% mal -- 199 errores
+//   600 (elegido):                                         NEGRO  2.9% mal, GRIS 4.2% mal --  24 errores
+//   606 (óptimo exacto):                                   NEGRO  2.5% mal, GRIS 4.6% mal --  23 errores
+// Se eligió 600 (redondo, prácticamente igual al óptimo). Si en pista se ve
+// que el robot no nota cuando se sale (falso NEGRO perdido es peor que una
+// falsa alarma), subir hacia 650 baja el error de NEGRO a 1.9% a costa de
+// subir el de GRIS a 7.5%.
 constexpr Umbrales kUmbralTrasero = {
-    314, 0.450f, 0.312f, 0.300f, 0.280f, 0.390f, 0.420f, 0.200f, 0.140f
+    600, 0.450f, 0.312f, 0.300f, 0.280f, 0.390f, 0.420f, 0.200f, 0.140f
 };
 
 // Normaliza cada canal contra "clear" (luz total) antes de comparar, para
@@ -276,24 +296,27 @@ namespace Tira {
         tira.show();
     }
 
+    // MISMOS colores que Tira::ColorARgb() en v9 (ColorLabel::FLOOR/YELLOW/
+    // RED/BLUE/BLACK-UNKNOWN) -- no inventar una paleta propia de este banco.
     uint32_t ColorDe(ColorLabel l) {
         switch (l) {
+            case ColorLabel::GRIS:     return tira.Color(60, 60, 60);    // piso
+            case ColorLabel::AMARILLO: return tira.Color(255, 170, 0);
             case ColorLabel::ROJO:     return tira.Color(255, 0, 0);
             case ColorLabel::AZUL:     return tira.Color(0, 0, 255);
-            case ColorLabel::AMARILLO: return tira.Color(255, 190, 0);
-            case ColorLabel::NEGRO:    return tira.Color(160, 0, 255);   // morado, como "borde detectado" en v9
-            case ColorLabel::GRIS:
-            default:                   return 0;                         // piso: sin señal
+            case ColorLabel::NEGRO:
+            default:                   return 0;                         // apagado, igual que v9
         }
     }
 
-    // LED 0-3 (izquierda) = delantero, LED 4-7 (derecha) = trasero. Un sensor
-    // que no leyó (valid=false) deja su mitad apagada.
+    // LED 3 = delantero, LED 4 = trasero -- MISMOS índices que usa la misión
+    // real (ver Tira::DibujarMapa() en v9). Un sensor que no leyó (valid=false)
+    // se muestra apagado, igual que v9 cuando el color es UNKNOWN. Los demás
+    // LED (equipo/QTR/cámara-ToF/gripper/fase) no aplican acá y quedan apagados.
     void Mostrar(bool frontValid, ColorLabel front, bool rearValid, ColorLabel rear) {
-        const uint32_t cf = frontValid ? ColorDe(front) : 0;
-        const uint32_t cr = rearValid  ? ColorDe(rear)  : 0;
-        for (uint8_t i = 0; i < 4; i++) tira.setPixelColor(i, cf);
-        for (uint8_t i = 4; i < 8; i++) tira.setPixelColor(i, cr);
+        tira.clear();
+        tira.setPixelColor(3, frontValid ? ColorDe(front) : 0);
+        tira.setPixelColor(4, rearValid  ? ColorDe(rear)  : 0);
         tira.show();
     }
 }
@@ -310,7 +333,7 @@ void setup() {
     delay(1000);
     Serial.println("\nDetector TCS34725 - clasificador de color (banco)");
     Serial.println("Sensores detras del multiplexor TCA9548A (0x71, bus I2C 1, GPIO47/48): delantero canal 0, trasero canal 1.");
-    Serial.println("Tira WS2812B (GPIO 39): LED 0-3 = delantero, LED 4-7 = trasero. ROJO/AZUL/AMARILLO en su color, NEGRO morado, GRIS apagado.");
+    Serial.println("Tira WS2812B (GPIO 39): LED 3 = delantero, LED 4 = trasero (mismos indices y colores que v9 en mision). ROJO/AZUL/AMARILLO en su color, GRIS tenue, NEGRO/sin leer apagado.");
     Serial.println("Umbrales por sensor; el trasero solo tiene GRIS y AZUL calibrados. NEGRO es el mas debil.\n");
 
     Wire1.begin(Pins::I2C1_SDA, Pins::I2C1_SCL);

@@ -5,13 +5,16 @@
 //
 //  Lee los dos QTRX-HD-01A (izquierdo GPIO1, derecho GPIO2) y clasifica cada
 //  uno por separado entre NEGRO (borde) y GRIS (pista). Imprime el resultado
-//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED (GPIO 39): los 4 LED
-//  de la izquierda (0-3) = QTR IZQUIERDO, los 4 de la derecha (4-7) = QTR
-//  DERECHO.
+//  cada 200 ms y lo muestra en la tira WS2812B de 8 LED (GPIO 39), en los
+//  MISMOS índices y MISMOS colores que usará en la misión de verdad
+//  (Tira::DibujarMapa() en standalones/v9-tira-sensor-trasero/): LED 1 = QTR
+//  IZQUIERDO, LED 2 = QTR DERECHO -- ACTUALIZADO 2026-10-01 a pedido de
+//  Montse (antes usaba 4 LED por sensor y su propia paleta, que no
+//  coincidía con lo que se ve en pista).
 //
-//      NEGRO          -> morado (el mismo morado que usan v9 y detector-tcs)
-//      GRIS           -> apagado
-//      sin señal      -> rojo tenue (el sensor está pegado al tope del ADC)
+//      NEGRO (borde)   -> morado   (160, 0, 200)
+//      GRIS (pista)    -> verde tenue (0, 40, 0)
+//      sin señal       -> gris tenue (25, 25, 25) -- sensor pegado al tope del ADC
 //
 //  MEDICIÓN: la misma del robot (v8/v9) -- emisor IR apagado (>= 1 ms) ->
 //  "off"; encendido -> "on"; dif = on - off, y |dif| < umbral = NEGRO. Con el
@@ -28,13 +31,15 @@
 //    3. CONFIRMACIÓN: un cambio de estado solo se acepta tras kLecturasConfirmar
 //       lecturas seguidas que lo apoyen (a 50 Hz, 3 lecturas = 60 ms; el robot
 //       usa kBordeDebounceMs = 50 ms).
-//  ⚠️ El robot (v9) todavía NO hace el promedio ni la histéresis: hoy decide
-//  con una sola lectura y 50 ms de antirrebote. Si estas mejoras funcionan en
-//  banco, hay que portarlas a v9 -- no se tocó porque es la lógica de
-//  seguridad del borde y falta validarlas con datos.
+//  El robot (v8/v9/firmware-esp32) YA tiene el PROMEDIO y la HISTÉRESIS
+//  (portados 2026-10-01) -- ver kQtrMuestrasPromedio/kBordeHisteresis en
+//  Mission::. Lo único que NO se portó es la CONFIRMACIÓN de 3 lecturas: el
+//  robot sigue con su propio antirrebote por tiempo (kBordeDebounceMs = 50
+//  ms), un enfoque distinto, no necesariamente peor -- si hace falta la
+//  confirmación por lecturas también, hay que agregarla aparte.
 //
 //  ⚠️ Los umbrales se midieron SOLO con el derecho. kUmbralIzquierdo es una
-//  copia SIN CALIBRAR; se ajusta mirando la columna dif sobre gris y negro.
+//  (YA NO: 2026-10-02 ambos umbrales se midieron con el robot quieto sobre la pista real.)
 //
 //  Pines = cableado real (hardware/conexiones-esp32-s3.md): CTRL de los dos
 //  emisores IR compartido en GPIO42. ¡Los QTRX van a 3.3 V, nunca a 5 V!
@@ -57,8 +62,8 @@ constexpr uint8_t kPinTira         = 39;   // DATA de la tira WS2812B
 // =====================================================
 
 constexpr uint8_t  kMuestrasPromedio = 16;   // lecturas del ADC por cada off / on. IGUAL que ../firmware/
-constexpr int16_t  kUmbralDerecho    = 40;   // |dif| menor que esto = negro (negro ~1-8, gris ~76-87 medido en banco)
-constexpr int16_t  kUmbralIzquierdo  = 40;   // SIN CALIBRAR: copia del derecho hasta medir el izquierdo
+constexpr int16_t  kUmbralDerecho    = 90;   // |dif| menor que esto = negro. 2026-10-02, robot quieto sobre la pista real: negro 31-49, gris 141-204 (antes 40: el negro llegó a 49)
+constexpr int16_t  kUmbralIzquierdo  = 900;  // 2026-10-02, robot quieto sobre la pista real: negro 42-694, gris 1140-1377. Es el sensor menos consistente (el negro varía mucho según el punto)
 constexpr int16_t  kHisteresis       = 10;   // para volver a GRIS hace falta |dif| > umbral + esto
 constexpr uint8_t  kLecturasConfirmar = 3;   // lecturas seguidas que apoyan un cambio de estado antes de aceptarlo
 constexpr uint16_t kTopeAdc          = 4085; // off Y on >= esto = pegado al tope (igual que kQtrTopeAdc de v9)
@@ -157,18 +162,22 @@ const char *Nombre(Estado e) {
 // TIRA
 // =====================================================
 
+// MISMOS colores que Tira::DibujarMapa() en v9 para los LED 1/2 (QTR).
 uint32_t ColorDe(Estado e) {
     switch (e) {
-        case Estado::NEGRO:     return tira.Color(160, 0, 255);   // morado
-        case Estado::SIN_SENAL: return tira.Color(60, 0, 0);      // rojo tenue
-        default:                return 0;                         // gris: apagado
+        case Estado::NEGRO:     return tira.Color(160, 0, 200);   // borde detectado
+        case Estado::SIN_SENAL: return tira.Color(25, 25, 25);    // pegado al tope -- sin señal útil
+        default:                return tira.Color(0, 40, 0);      // pista libre
     }
 }
 
-// LED 0-3 (izquierda) = QTR izquierdo, LED 4-7 (derecha) = QTR derecho.
+// LED 1 = QTR izquierdo, LED 2 = QTR derecho -- MISMOS índices que usa la
+// misión real. Los demás LED (equipo/color/cámara-ToF/gripper/fase) no
+// aplican a este banco y quedan apagados.
 void Mostrar(Estado izq, Estado der) {
-    for (uint8_t i = 0; i < 4; i++) tira.setPixelColor(i, ColorDe(izq));
-    for (uint8_t i = 4; i < 8; i++) tira.setPixelColor(i, ColorDe(der));
+    tira.clear();
+    tira.setPixelColor(1, ColorDe(izq));
+    tira.setPixelColor(2, ColorDe(der));
     tira.show();
 }
 
@@ -183,9 +192,9 @@ void setup() {
     Serial.println("Medicion con rechazo de luz ambiente (dif = on - off), igual que el robot.");
     Serial.printf("Mejoras por software: promedio de %u lecturas, histeresis %d, confirmacion de %u lecturas.\n",
                   (unsigned)kMuestrasPromedio, (int)kHisteresis, (unsigned)kLecturasConfirmar);
-    Serial.println("Tira WS2812B (GPIO 39): LED 0-3 = QTR izquierdo, LED 4-7 = QTR derecho.");
-    Serial.println("NEGRO morado, GRIS apagado, SIN SENAL rojo tenue.");
-    Serial.println("Umbral izquierdo SIN CALIBRAR (copia del derecho): mira la columna dif.\n");
+    Serial.println("Tira WS2812B (GPIO 39): LED 1 = QTR izquierdo, LED 2 = QTR derecho (mismos indices y colores que v9 en mision).");
+    Serial.println("NEGRO morado, GRIS pista libre verde tenue, SIN SENAL gris tenue.");
+    Serial.printf("Umbrales (2026-10-02): derecho %d, izquierdo %d.\n\n", (int)kUmbralDerecho, (int)kUmbralIzquierdo);
 
     analogReadResolution(12);
 
