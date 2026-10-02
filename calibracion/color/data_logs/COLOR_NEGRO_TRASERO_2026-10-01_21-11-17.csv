@@ -1,9 +1,0 @@
-# ROVER COLOR SENSOR CHARACTERIZATION
-# Date: 2026-10-01 21:11:17.553916
-# Surface: NEGRO
-# Sensor under test: TRASERO
-# Number of points: 4
-# Samples per point: 120
-# Sample interval: 250 ms
-# Movement time between points: 10 s
-surface,sensor_under_test,point,sample,ok,clear,r,g,b
