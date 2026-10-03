@@ -301,7 +301,7 @@ constexpr int kVelocidadRetrocesoTrasCaja = 70;   // % de PWM
 // 2026-09-11: 120-140° de comando hacían falta para despejar la caja (no
 // 90° como se había puesto de entrada) -- 130° ~ 2166 ms era el punto
 // medio con el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
-constexpr uint32_t kDuracionGiroEsquiveMs = 2000;
+constexpr uint32_t kDuracionGiroEsquiveMs = 1600;   // bajado de 2000 el 2026-10-02 (-10 %): con el motor trasero derecho ya bien conectado (el GND estaba casi suelto) el carro gira mas y se pasaba
 // true = gira hacia la derecha (visto desde arriba) al esquivar; false =
 // hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
 // respecto al robot -- ajustar según la pista real, no es simétrico.
@@ -311,7 +311,7 @@ constexpr bool kGiroEsquiveHaciaDerecha = true;
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
 // esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
 // Sin medir en banco todavía, punto de partida conservador.
-constexpr uint32_t kAvanceTrasEsquiveMs = 1250;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
+constexpr uint32_t kAvanceTrasEsquiveMs = 1200;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
 constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 
 // Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
@@ -384,7 +384,12 @@ constexpr int16_t  kBordeRestadoUmbralIzq = 900;    // IZQUIERDO: negro 42-694, 
 constexpr uint16_t kQtrTopeAdc            = 4085;   // off y on >= esto = sensor pegado al tope: NO cuenta como negro (sería un falso borde)
 constexpr uint8_t  kQtrMuestrasPromedio  = 16;     // lecturas del ADC que se promedian en CADA off y CADA on (el ADC del ESP32 es ruidoso). Igual que calibracion/reflectancia/. Probado en banco 2026-10-01
 constexpr int16_t  kBordeHisteresis       = 10;     // una vez en NEGRO, vuelve a GRIS solo con |dif| > umbral del sensor + esto (evita parpadeo justo en el umbral)
-constexpr uint32_t kBordeDebounceMs       = 50;     // el borde debe verse sostenido este tiempo antes de reaccionar (filtra ruido)
+// BORDE POR COLOR (2026-10-02, pedido de Montse): como los QTR estan apagados, el color NEGRO del sensor DELANTERO tambien cuenta como borde.
+// Es una red de seguridad FLOJA: con clear<314 se le escapa ~63 % del negro real (a cambio de pocas falsas alarmas). Por eso se exigen varias lecturas seguidas.
+// Funciona aunque kProteccionBordeActiva (QTR) este en false. RIESGO: con poca luz el delantero leyo NEGRO 2.7 s antes de ver su franja en el retorno (2026-09-24) -> podria frenar ahi.
+constexpr bool     kBordePorColorActivo   = true;
+constexpr uint8_t  kBordeColorLecturasSeguidas = 3;   // lecturas de color NEGRO consecutivas (una cada TaskPeriodMs::COLOR_SENSOR) antes de contar como borde
+constexpr uint32_t kBordeDebounceMs       = 50;    // el borde debe verse sostenido este tiempo antes de reaccionar (filtra ruido)
 constexpr uint32_t kBordeParadaMs         = 200;    // parada total antes de retroceder
 constexpr uint32_t kBordeRetrocesoMs      = 300;    // retroceso corto (no hay sensor trasero: por eso corto y limitado)
 constexpr int      kBordeVelocidadRetroceso = 60;   // % de PWM del retroceso
@@ -406,7 +411,7 @@ constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos
 struct PasoManiobra { int izq; int der; uint32_t ms; };
 constexpr PasoManiobra kManiobra[] = {
     {-100, 100,  1400},   // 1: pivote a la IZQUIERDA, igual que el giro de esquive de la zona amarilla (100 %, 2000 ms) pero al lado contrario y 30 % mas corto
-    { 40, 100,  1200},   // 2: avance girando a la izquierda
+    {-20, 100,  1000},   // 2: avance girando a la izquierda. 2026-10-02: la rueda izquierda pasa de +40 a -20 (reversa suave) para que doble MAS a la izquierda -- con 40 casi iba recto y el paso 3 no alcanzaba a terminar de girar
     {-100, -40,  1300},   // 3: reversa otra vez para quedar mirando hacia la zona propia
 };
 constexpr int      kManiobraPasos         = (int)(sizeof(kManiobra) / sizeof(kManiobra[0]));
@@ -1739,6 +1744,7 @@ void MissionTask(void *pvTeam) {
     // Protección de borde (M1): cuánto lleva visto el negro, a qué fase volver
     // tras reaccionar, cuántas veces ha reaccionado y si ya se avisó de un QTR pegado.
     uint32_t borde_desde_ms = 0;   // 0 = no se está confirmando ahora
+    uint8_t  color_negro_seguidos = 0;   // lecturas NEGRO consecutivas del color delantero (borde por color)
     Mission::Phase fase_interrumpida = Mission::Phase::ARRANQUE;
     uint32_t borde_eventos = 0;
     bool aviso_qtr_pegado_dado = false;
@@ -1785,7 +1791,11 @@ void MissionTask(void *pvTeam) {
         CamaraBandera::EnviarEquipo(team);
 
         ColorReading c;
-        while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) last_color = c;
+        while (xQueueReceive(g_colorQueue, &c, 0) == pdTRUE) {
+            last_color = c;
+            if (c.valid && c.color == ColorLabel::BLACK) { if (color_negro_seguidos < 255) ++color_negro_seguidos; }
+            else color_negro_seguidos = 0;
+        }
         TofReading t;
         while (xQueueReceive(g_tofQueue, &t, 0) == pdTRUE) {
             if (t.valid) {
@@ -1849,17 +1859,23 @@ void MissionTask(void *pvTeam) {
                     phase == Mission::Phase::ESQUIVAR_CAJA ||
                     phase == Mission::Phase::AVANZAR_TRAS_ESQUIVE ||
                     phase == Mission::Phase::GIRO_RECENTRAR;
-                const bool en_borde = last_reflect.right_on_line || last_reflect.left_on_line;
-                if (Mission::kProteccionBordeActiva && fase_con_borde && en_borde) {
+                const bool borde_qtr   = Mission::kProteccionBordeActiva &&
+                                         (last_reflect.right_on_line || last_reflect.left_on_line);
+                const bool borde_color = Mission::kBordePorColorActivo &&
+                                         color_negro_seguidos >= Mission::kBordeColorLecturasSeguidas;
+                const bool en_borde = borde_qtr || borde_color;
+                if (fase_con_borde && en_borde) {
                     if (borde_desde_ms == 0) {
                         borde_desde_ms = millis();
                     } else if ((uint32_t)(millis() - borde_desde_ms) >= Mission::kBordeDebounceMs) {
                         ++borde_eventos;
                         fase_interrumpida = phase;
-                        DEBUG_LINK.printf("[Borde] #%u en fase %s -- QTR der dif=%d, izq dif=%d (%s). Parando.\n",
+                        DEBUG_LINK.printf("[Borde] #%u en fase %s -- origen: %s%s | QTR der dif=%d, izq dif=%d (%s), color=%s. Parando.\n",
                                            (unsigned)borde_eventos, Mission::PhaseName(phase),
+                                           borde_qtr ? "QTR" : "", borde_color ? (borde_qtr ? "+COLOR" : "COLOR") : "",
                                            (int)last_reflect.right_restado, (int)last_reflect.left_restado,
-                                           Mission::kQtrIzquierdoActivo ? "izq activo" : "izq desactivado");
+                                           Mission::kQtrIzquierdoActivo ? "izq activo" : "izq desactivado",
+                                           ColorLabelName(color_activo));
                         phase = Mission::Phase::BORDE_PARAR;
                         phase_started_ms = millis();
                         borde_desde_ms = 0;
