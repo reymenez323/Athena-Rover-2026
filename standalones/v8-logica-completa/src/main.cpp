@@ -285,7 +285,7 @@ constexpr int kVelocidadRetrocesoTrasCaja = 70;   // % de PWM
 // 2026-09-11: 120-140° de comando hacían falta para despejar la caja (no
 // 90° como se había puesto de entrada) -- 130° ~ 2166 ms era el punto
 // medio con el ms_por_grado de entonces. AJUSTAR ACÁ, en ms, directamente.
-constexpr uint32_t kDuracionGiroEsquiveMs = 2000;
+constexpr uint32_t kDuracionGiroEsquiveMs = 1700;   // bajado 15 % (de 2000) el 2026-10-02, pedido de Montse
 // true = gira hacia la derecha (visto desde arriba) al esquivar; false =
 // hacia la izquierda. Cuál conviene depende de dónde queda la caja/pista
 // respecto al robot -- ajustar según la pista real, no es simétrico.
@@ -295,7 +295,7 @@ constexpr bool kGiroEsquiveHaciaDerecha = true;
 // salir de la huella de la zona amarilla antes de girar otra vez -- sin
 // esto, el segundo giro (más grande) podía volver a pasar sobre la caja.
 // Sin medir en banco todavía, punto de partida conservador.
-constexpr uint32_t kAvanceTrasEsquiveMs = 1250;   // subido de 900 (2026-09-24): con 900 el giro 2 arrancaba aún encima de la caja
+constexpr uint32_t kAvanceTrasEsquiveMs = 1125;   // bajado 10 % (de 1250) el 2026-10-02, pedido de Montse
 constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 
 // Segundo giro: volver a centrarse hacia donde va a estar la bandera, tras
@@ -304,7 +304,7 @@ constexpr int kVelocidadAvanceTrasEsquive = 70;   // % de PWM, moderado
 // el ms_por_grado de entonces. kDuracionGiroRecentrarMs YA NO es la
 // duración garantizada de este giro -- ver "SEÑAL DE CÁMARA" más abajo --
 // es el TOPE de seguridad si la cámara nunca avisa.
-constexpr uint32_t kDuracionGiroRecentrarMs = 2880;
+constexpr uint32_t kDuracionGiroRecentrarMs = 3170;   // subido 10 % (de 2880) el 2026-10-02, pedido de Montse (es el TOPE; la camara puede cortarlo antes)
 // Gira para el lado CONTRARIO al de esquive por defecto (deshace parte del
 // desvío y sigue de largo hacia el otro lado) -- confirmar con la pista
 // real cuál sentido deja al robot mejor apuntado hacia la bandera.
@@ -383,7 +383,7 @@ constexpr int      kVelocidadRetorno      = 60;     // % de PWM al avanzar recto
 // Cada paso = rueda izquierda %, rueda derecha %, duracion ms (positivo = adelante, negativo = reversa). Ajustar UNO A UNO en pista.
 // Reversa con la cola a la derecha = rueda izq. atras mas rapida que la der. Avance girando a la izquierda = rueda der. mas rapida.
 // Valores iniciales = ESTIMACION sin calibrar (calibrados a 7.60 V). Las reversas van a ciegas: no hay sensor trasero ni QTR.
-constexpr bool     kRetornoConManiobra    = true;   // true = vuelta en 3 puntos (kManiobra). false = pivote unico de kGiroRetornoMs. El REINTENTO tras kVolverTopeMs siempre usa el pivote (evita reversas a ciegas en mitad de la pista)
+constexpr bool     kRetornoConManiobra    = false;  // PRUEBA 2026-10-02: false = media vuelta en su propio eje (pivote unico a la izquierda de kGiroRetornoMs). true = vuelta en 3 puntos (kManiobra). El REINTENTO tras kVolverTopeMs siempre usa el pivote (evita reversas a ciegas en mitad de la pista)
 struct PasoManiobra { int izq; int der; uint32_t ms; };
 constexpr PasoManiobra kManiobra[] = {
     {-100, 100,  1400},   // 1: pivote a la IZQUIERDA, igual que el giro de esquive de la zona amarilla (100 %, 2000 ms) pero al lado contrario y 30 % mas corto
